@@ -1,0 +1,5 @@
+[
+  { "name": "workspace", "version": 2, "tables": ["workspaces"], "hasGlobal": true },
+  { "name": "session_projcache", "version": 3, "tables": ["sessions"], "hasGlobal": false },
+  { "name": "message_feedback", "version": 0, "tables": ["sessions"], "hasGlobal": false }
+]

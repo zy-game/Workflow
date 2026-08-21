@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "kind": "dsh-workflow-production-cutover",
+  "template": true,
+  "run": {
+    "id": "DISCOVER:UTC timestamp plus change identifier",
+    "change_id": "DISCOVER:approved operational change identifier",
+    "environment": "production",
+    "started_at_utc": null,
+    "completed_at_utc": null,
+    "result": "pending",
+    "rollback_mode": "none",
+    "operators": [],
+    "operational_approvals": []
+  },
+  "safety": {
+    "production_touched_during_artifact_preparation": false,
+    "network_contacted_during_artifact_preparation": false,
+    "credentials_or_private_keys_recorded": false,
+    "allowed_evidence": ["counts", "schema versions", "revisions", "aggregate hashes", "file SHA-256", "service states", "listener bindings", "HTTP status codes"],
+    "forbidden_evidence": ["passwords", "password hashes", "cookies", "tokens", "private keys", "environment blocks", "database rows", "session or model content", "Workflow document bodies"]
+  },
+  "scope": {
+    "deferred": ["model API keys", "real model replies", "DSH approval and question flows", "Windows execution bridge", "EXE packaging"]
+  },
+  "architecture": {
+    "public_tui_base": {"value": "https://139.155.78.241:8710/dsh", "source": "verified-local", "runtime_verified": false},
+    "dsh_upstream": {"value": "127.0.0.1:3081", "source": "approved-plan", "runtime_verified": false},
+    "workflow_context": {"value": "http://127.0.0.1:8711/api/internal/v1/workflow/context", "max_chars": 6000, "source": "verified-local", "runtime_verified": false},
+    "legacy_socat": {"unit": "DISCOVER:confirm dsh-web-public.service", "port": 3080, "source": "approved-plan", "runtime_verified": false, "disable_only_after_final_acceptance": true},
+    "server_authoritative": true,
+    "client_cache_rebuildable": true,
+    "session_search_rebuildable": true,
+    "legacy_files_read_only_after_cutover": true
+  },
+  "production_discovery": {
+    "host_id": "DISCOVER:non-secret production host identifier",
+    "observed_at_utc": null,
+    "node_version": "DISCOVER:effective Node version",
+    "application_release": "DISCOVER:release identifier",
+    "application_release_sha256": "DISCOVER:64 lowercase hex",
+    "config_sha256": "DISCOVER:64 lowercase hex of non-secret or redacted artifact",
+    "certificate_backup_reference": "DISCOVER:identifier only; never key material",
+    "filesystems": [],
+    "all_writers_accounted_for": false,
+    "unknown_writers": [],
+    "capacity_gate_passed": false
+  },
+  "services": {
+    "stop_order": [
+      {"order": 1, "role": "public application writer", "unit": "DISCOVER:confirm wf-api.service", "runtime_verified": false},
+      {"order": 2, "role": "external listener writer", "unit": "DISCOVER:listener unit", "runtime_verified": false},
+      {"order": 3, "role": "queue or poll worker", "unit": "DISCOVER:worker unit", "runtime_verified": false},
+      {"order": 4, "role": "watchdog or restart writer", "unit": "DISCOVER:watchdog unit", "runtime_verified": false},
+      {"order": 5, "role": "DSH writer", "unit": "DISCOVER:DSH unit", "runtime_verified": false}
+    ],
+    "start_order_after_write_boundary": ["DISCOVER:DSH unit", "DISCOVER:confirm wf-api.service", "DISCOVER:watchdog unit", "DISCOVER:worker unit", "DISCOVER:listener unit"],
+    "socat_unit": "DISCOVER:confirm dsh-web-public.service",
+    "socat_untouched_until_final_acceptance": true,
+    "preflight_states": [],
+    "post_freeze_states": [],
+    "final_states": []
+  },
+  "paths": {
+    "backup_root": "DISCOVER:restricted production backup root",
+    "evidence_dir": "DISCOVER:restricted run evidence directory",
+    "legacy_source_list": "DISCOVER:reviewed absolute-path list",
+    "auth_sources": [],
+    "workflow_sources": [],
+    "dsh_session_source": "DISCOVER:legacy JSONL session root",
+    "dsh_storage_source": "DISCOVER:legacy JSON domain root",
+    "dsh_attachment_root": "DISCOVER:attachment v1 root",
+    "auth_db": "DISCOVER:effective auth.db path",
+    "workflow_db": "DISCOVER:effective workflow.db path",
+    "app_db": "DISCOVER:effective app.db path",
+    "dsh_session_db": {"value": "/home/ubuntu/.dsh/sessions.db", "source": "verified-local-default", "effective_runtime_verified": false},
+    "dsh_state_db": {"value": "/home/ubuntu/.dsh/dsh-state.db", "source": "verified-local-default", "effective_runtime_verified": false},
+    "dsh_session_query_db": {"value": "/home/ubuntu/.dsh/session-query.db", "source": "verified-local-default", "effective_runtime_verified": false, "rebuild_only": true},
+    "dsh_descriptor_file": "DISCOVER:deployed domain-descriptors.rc7.json",
+    "dsh_migrator_dir": "DISCOVER:deployed dsh-workflow migrator directory"
+  },
+  "expected_versions": {
+    "dsh_session_application_id_decimal": 1146308688,
+    "dsh_session_application_id_hex": "0x44534850",
+    "dsh_session_user_version": 15,
+    "dsh_storage_application_id": 0,
+    "dsh_storage_user_version": 1,
+    "dsh_packages": "0.1.0-rc.7",
+    "auth_schema_version": "DISCOVER:from deployed application migration",
+    "workflow_schema_version": "DISCOVER:from deployed application migration",
+    "app_schema_version": "DISCOVER:from deployed application migration"
+  },
+  "domain_descriptors": [
+    {"name": "workspace", "version": 2, "tables": ["workspaces"], "has_global": true},
+    {"name": "session_projcache", "version": 3, "tables": ["sessions"], "has_global": false},
+    {"name": "message_feedback", "version": 0, "tables": ["sessions"], "has_global": false}
+  ],
+  "preflight": {
+    "status": "pending",
+    "checks": [
+      {"id": "all-values-discovered", "result": "pending", "evidence_sha256": null},
+      {"id": "all-writers-inventoried", "result": "pending", "evidence_sha256": null},
+      {"id": "bindings-correct", "result": "pending", "evidence_sha256": null},
+      {"id": "capacity-sufficient", "result": "pending", "evidence_sha256": null},
+      {"id": "auth-app-workflow-dry-run", "result": "pending", "evidence_sha256": null},
+      {"id": "dsh-dry-run", "result": "pending", "evidence_sha256": null},
+      {"id": "source-manifests-stable", "result": "pending", "evidence_sha256": null}
+    ]
+  },
+  "freeze": {
+    "started_at_utc": null,
+    "completed_at_utc": null,
+    "all_writers_inactive": false,
+    "source_revision_after_freeze": null,
+    "source_manifest_sha256_after_freeze": null,
+    "socat_still_unchanged": true
+  },
+  "backups": {
+    "pre_cutover": {"path": "DISCOVER:RUN_ID/pre-cutover", "created_at_utc": null, "file_count": null, "total_bytes": null, "archive_sha256": null, "sha256sums_sha256": null, "verification": "pending", "private_keys_included": false},
+    "sqlite_cutover_point": {"path": "DISCOVER:RUN_ID/sqlite-cutover-point", "created_at_utc": null, "database_set_id": "DISCOVER:single coherent set identifier", "databases": [], "sha256sums_sha256": null, "verification": "pending", "includes_rebuildable_session_query": false, "includes_client_cache": false}
+  },
+  "migrations": {
+    "application_schema_precheck": {"command_id": "DISCOVER:deployed migration command and version; no secret arguments", "result": "pending", "evidence_sha256": null},
+    "auth": {"command_id": "DISCOVER:deployed auth importer and version", "transactional": null, "result": "pending", "evidence_sha256": null},
+    "app": {"command_id": "DISCOVER:deployed application-state importer and version", "transactional": null, "result": "pending", "evidence_sha256": null},
+    "workflow": {"command_id": "DISCOVER:deployed Workflow importer and version", "staged_then_transactionally_published": null, "shadow_read_match": null, "result": "pending", "evidence_sha256": null},
+    "dsh_offline": {"command_id": "dsh-persistence-overlay@1.0.0 src/migrate.mjs", "source_compression": "DISCOVER:zstd or none", "destinations_previously_absent": null, "result": "pending", "evidence_sha256": null},
+    "session_query": {"migrated": false, "rebuild_result": "pending", "evidence_sha256": null}
+  },
+  "reconciliation": {
+    "status": "pending",
+    "databases": [
+      {"role": "auth", "integrity_check": "pending", "foreign_key_rows": null, "counts_match": null, "revision_match": null, "hash_match": null},
+      {"role": "app", "integrity_check": "pending", "foreign_key_rows": null, "counts_match": null, "revision_match": null, "hash_match": null},
+      {"role": "workflow", "integrity_check": "pending", "foreign_key_rows": null, "counts_match": null, "revision_match": null, "hash_match": null},
+      {"role": "dsh-sessions", "integrity_check": "pending", "foreign_key_rows": null, "counts_match": null, "revision_match": null, "hash_match": null},
+      {"role": "dsh-state", "integrity_check": "pending", "foreign_key_rows": null, "counts_match": null, "revision_match": null, "hash_match": null}
+    ],
+    "auth": {"counts_match": null, "stable_id_hash_match": null, "timestamp_hash_match": null, "credential_digest_aggregate_match": null},
+    "app": {"counts_match": null, "runtime_event_count_match": null, "stable_aggregate_hash_match": null},
+    "workflow": {"counts_match": null, "server_revision_match": null, "cursor_match": null, "stable_id_hash_match": null, "content_hash_match": null, "fts_counts_match": null},
+    "dsh_sessions": {"session_count_match": null, "event_count_match": null, "per_session_revision_match": null, "seq_contiguous": null, "logical_hash_match": null, "attachment_hash_match": null},
+    "dsh_domains": {"record_counts_match": null, "global_values_match": null, "logical_hash_match": null},
+    "evidence_sha256": null
+  },
+  "cutover": {
+    "staged_config_activated_at_utc": null,
+    "loopback_smoke_passed": false,
+    "public_head_passed": false,
+    "sqlite_write_boundary_crossed": false,
+    "sqlite_write_boundary_crossed_at_utc": null,
+    "first_new_write_kind": null,
+    "legacy_authorities_remained_read_only": null
+  },
+  "acceptance": {
+    "status": "pending",
+    "checks": [
+      {"id": "loopback-dsh-readonly", "result": "pending", "evidence_sha256": null},
+      {"id": "loopback-wf-api-readonly", "result": "pending", "evidence_sha256": null},
+      {"id": "internal-workflow-context", "result": "pending", "evidence_sha256": null},
+      {"id": "public-https-certificate-and-head", "result": "pending", "evidence_sha256": null},
+      {"id": "tui-login-and-unary-rpc", "result": "pending", "evidence_sha256": null},
+      {"id": "tui-events-mux-websocket", "result": "pending", "evidence_sha256": null},
+      {"id": "tui-events-host-websocket", "result": "pending", "evidence_sha256": null},
+      {"id": "linux-session-resume-and-cwd", "result": "pending", "evidence_sha256": null},
+      {"id": "restart-persistence", "result": "pending", "evidence_sha256": null},
+      {"id": "session-query-rebuild", "result": "pending", "evidence_sha256": null},
+      {"id": "client-cache-empty-rebuild", "result": "pending", "evidence_sha256": null},
+      {"id": "legacy-files-no-new-writes", "result": "pending", "evidence_sha256": null}
+    ],
+    "explicitly_not_tested": ["real model reply", "approval flow", "question flow", "Windows execution bridge", "EXE package"]
+  },
+  "rollback": {
+    "selected": "none",
+    "decision_rule": "Use A only when sqlite_write_boundary_crossed is definitively false; otherwise use B.",
+    "before_new_writes": {"mode": "A", "restore_legacy_sources": true, "restore_fresh_sqlite_targets": false, "merge_legacy_and_sqlite": false},
+    "after_new_sqlite_writes": {"mode": "B", "restore_coherent_sqlite_cutover_set": true, "reactivate_legacy_file_writers": false, "merge_legacy_and_sqlite": false, "rebuild_session_query": true, "rebuild_client_cache": true},
+    "incident_snapshot_sha256": null,
+    "rollback_completed_at_utc": null,
+    "verification_evidence_sha256": null
+  },
+  "socat_retirement": {
+    "final_acceptance_completed_at_utc": null,
+    "disabled_at_utc": null,
+    "unit_disabled": false,
+    "unit_inactive": false,
+    "port_3080_closed": false,
+    "evidence_sha256": null
+  },
+  "final_evidence": {
+    "manifest_sha256": null,
+    "service_states_sha256": null,
+    "listener_bindings_sha256": null,
+    "release_and_config_sha256": null,
+    "database_backup_set_sha256": null,
+    "signoffs": []
+  }
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=Workflow Core isolated Worker
+After=network-online.target workflow-core.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/workflow-core/current
+EnvironmentFile=/etc/workflow-worker/worker.env
+ExecStart=/opt/node24/bin/node packages/worker/src/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/var/lib/workflow-worker
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

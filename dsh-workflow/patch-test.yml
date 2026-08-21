@@ -1,0 +1,37 @@
+- id: session-persistence-jsonl
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  disabled: true
+
+- insert:
+    - id: session-persistence-sqlite
+      name: '@deepseek-ai/dsh-session-persistence-sqlite'
+      config:
+        path: !!js process.env.DSH_SESSION_DB || 'E:/Workflow/dsh-workflow/.test-state/sessions.db'
+        journalMode: wal
+
+- id: session-query-sqlite
+  config:
+    path: !!js process.env.DSH_SESSION_QUERY_DB || 'E:/Workflow/dsh-workflow/.test-state/session-query.db'
+    openAt: first-search
+    journalMode: wal
+
+- id: storage-domain
+  config:
+    backend: sqlite
+    routes:
+      workspace: sqlite
+      session_projcache: sqlite
+      message_feedback: sqlite
+
+- insert:
+    - id: storage-sqlite
+      name: '@deepseek-ai/dsh-storage-sqlite'
+      config:
+        path: !!js process.env.DSH_STATE_DB || 'E:/Workflow/dsh-workflow/.test-state/dsh-state.db'
+        journalMode: wal
+
+    - id: workflow-context
+      name: file:///E:/Workflow/dsh-workflow/workflow-context.mjs
+      config:
+        providerUrl: http://127.0.0.1:18711/api/internal/v1/workflow/context
+        maxChars: 6000

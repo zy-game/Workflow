@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.test-state/
+data/
+*.db
+*.db-wal
+*.db-shm
+.env

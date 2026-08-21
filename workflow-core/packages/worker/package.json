@@ -1,0 +1,11 @@
+{
+  "name": "@workflow-core/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "dependencies": {
+    "@workflow-core/shared": "0.1.0",
+    "ws": "^8.18.0"
+  }
+}

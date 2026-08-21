@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "dsh-client",
+  "version": "1.0.0",
+  "platform": "win32",
+  "arch": "x64",
+  "node": "24.15.0",
+  "unsigned": true,
+  "executable": {
+    "file": "dsh-client.exe",
+    "bytes": 92555776,
+    "sha256": "06976b093651e52c405ed84b8f307a6b5160d8b8804a319e264275bb7e69ec75"
+  },
+  "archive": {
+    "file": "dsh-client-1.0.0-windows-x64.zip",
+    "bytes": 35402874,
+    "sha256": "0cb67242970281d2ef8f81aafef51ef57923c0cf542d249dcfbc8ccc06d7beb3"
+  },
+  "tools": {
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
+    "rcedit": "5.0.2",
+    "yazl": "3.3.1"
+  }
+}

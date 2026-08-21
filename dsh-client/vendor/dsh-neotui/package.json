@@ -1,0 +1,43 @@
+{
+  "name": "dsh-neotui",
+  "version": "0.3.0-dsh.1",
+  "description": "Keyboard-first Vim/tmux-style terminal client for DeepSeek Harness",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "dsh-neotui": "bin/dsh-tui.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/dsh-tui.js",
+    "test": "node --test test/*.test.mjs",
+    "test:pty": "python3 test/pty-crash.py",
+    "test:rc": "npm test && npm run test:pty"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edabchann/dsh-neotui.git"
+  },
+  "homepage": "https://github.com/edabchann/dsh-neotui#readme",
+  "keywords": [
+    "dsh",
+    "deepseek",
+    "harness",
+    "tui",
+    "terminal",
+    "cli"
+  ],
+  "license": "MIT"
+}

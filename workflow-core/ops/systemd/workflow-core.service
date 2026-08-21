@@ -1,0 +1,25 @@
+[Unit]
+Description=Workflow Core
+After=network-online.target dsh-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/workflow-core/current
+EnvironmentFile=/etc/workflow-core/core.env
+ExecStart=/opt/node24/bin/node packages/core/src/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/workflow-core
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

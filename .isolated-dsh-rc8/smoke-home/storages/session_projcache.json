@@ -1,0 +1,136 @@
+{
+  "unit": {
+    "name": "session_projcache",
+    "version": 3
+  },
+  "global": null,
+  "tables": {
+    "sessions": {
+      "session-8d516f39-cb31-4979-91b5-1cc1531c6659": {
+        "identity": {
+          "createdAt": 1787211712641,
+          "cwd": "E:/Workflow/.isolated-dsh-rc8/workspace"
+        },
+        "rows": {
+          "sessionStats": {
+            "ver": 1,
+            "seq": 979,
+            "val": {
+              "turns": 1,
+              "steps": 1,
+              "llmMs": 7637,
+              "toolMs": 0,
+              "ttftMs": 615,
+              "ttftSteps": 1,
+              "decodeMs": 7022,
+              "decodeTokens": 957,
+              "lastTurn": 1,
+              "openStep": null,
+              "pendingCalls": {}
+            }
+          },
+          "title": {
+            "ver": 1,
+            "seq": 979,
+            "val": "Help"
+          },
+          "goal": {
+            "ver": 4,
+            "seq": 979,
+            "val": null
+          },
+          "tokenUsage": {
+            "ver": 1,
+            "seq": 979,
+            "val": {
+              "totals": {
+                "uncachedInputTokens": 8998,
+                "outputTokens": 957,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0
+              },
+              "last": {
+                "turn": 1,
+                "step": 1,
+                "buckets": {
+                  "uncachedInputTokens": 8998,
+                  "outputTokens": 957,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": 0
+                }
+              }
+            }
+          },
+          "contextPressure": {
+            "ver": 4,
+            "seq": 979,
+            "val": {
+              "surfaceTokens": 1337,
+              "contextWindow": 1000000,
+              "pressureTokens": 8998,
+              "sampledSurfaceTokens": 764
+            }
+          },
+          "contextBreakdown": {
+            "ver": 2,
+            "seq": 979,
+            "val": {
+              "systemTokens": 1622,
+              "toolsTokens": 6703,
+              "messageTokens": 1337
+            }
+          },
+          "subagentTiming": {
+            "ver": 2,
+            "seq": 979,
+            "val": {
+              "descriptorSeen": false,
+              "settledMs": 0
+            }
+          },
+          "subagent": {
+            "ver": 2,
+            "seq": 979,
+            "val": {}
+          },
+          "permissions": {
+            "ver": 1,
+            "seq": 979,
+            "val": {
+              "preset": "workspace-write",
+              "sandbox": "workspace-write",
+              "approval": "ask"
+            }
+          },
+          "sessionListMetadata": {
+            "ver": 1,
+            "seq": 979,
+            "val": {
+              "blank": false,
+              "lastPromptAt": 1787211762106
+            }
+          },
+          "imageLimits": {
+            "ver": 1,
+            "seq": 979,
+            "val": null
+          },
+          "todos": {
+            "ver": 2,
+            "seq": 979,
+            "val": null
+          },
+          "plan": {
+            "ver": 2,
+            "seq": 979,
+            "val": {
+              "active": false,
+              "wanted": null,
+              "running": null
+            }
+          }
+        }
+      }
+    }
+  }
+}
