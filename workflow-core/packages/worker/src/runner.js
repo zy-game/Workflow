@@ -1,366 +1,155 @@
-// runner.js - executes dispatched tasks inside the local DSH and streams the
-// session back to the core. Completion marker: a `turn/end` event (the fake
-// DSH in tests implements it; the real-DSH marker is verified at deployment).
-import { PROMPT_POLL_MS } from './dsh-local.js';
+import crypto from 'node:crypto';
 
 const MAX_SLOTS_DEFAULT = 2;
-
-const CONTINUATION_PROMPT = [
-  '任务因服务重启被中断。请基于会话中已有的进展继续完成任务；',
-  '若已基本完成，请直接输出最终结论。不要重复已完成的段落。',
-].join('');
-
-function resumeError(code, message) {
-  const error = new Error(message);
-  error.code = code;
-  return error;
-}
-
-// Real DSH delivers assistant output as streaming assistant/chunk events plus
-// a final assistant/message whose content is an array of typed parts; the
-// test fake uses a flat data.text. Both shapes must resolve to plain text or
-// summaries, cards, and knowledge extraction stay empty.
-export function assistantText(event) {
-  const data = event?.data;
-  if (typeof data?.text === 'string') return data.text;
-  const parts = data?.message?.content;
-  if (Array.isArray(parts)) {
-    const text = parts
-      .filter((part) => part?.type === 'text' && typeof part.text === 'string')
-      .map((part) => part.text)
-      .join('');
-    return text || null;
-  }
-  return null;
-}
+const RESUME_FAILURE_CODES = new Set([
+  'resume_state_missing', 'resume_session_missing', 'backend_resume_unsupported', 'awaiting_input_unresumable',
+]);
+function resumeError(code, message) { const error = new Error(message); error.code = code; return error; }
 
 export class TaskRunner {
-  constructor({
-    core, dsh, stateStore = null, workspaceResolver = () => null, log = () => {}, pollMs = PROMPT_POLL_MS,
-    defaultWorkspace = '.', maxSlots = MAX_SLOTS_DEFAULT,
-  }) {
-    this.core = core;
-    this.dsh = dsh;
-    this.stateStore = stateStore;
-    this.workspaceResolver = workspaceResolver;
-    this.log = log;
-    this.pollMs = pollMs;
-    this.defaultWorkspace = defaultWorkspace;
-    this.maxSlots = maxSlots;
-    this.slots = new Map(); // task_id -> { task, sessionId, lastSeq, timer, lastAssistant }
-    this.operations = new Set();
-    this.stopping = false;
-  }
-
-  // Slot factory fields shared by fresh dispatch and resume: approvals maps
-  // DSH approvalId -> { rpcId, payload } for turns blocked on permission.
-
-  // Queued injections open another turn after the current one ends; the task
-  // may only complete after the last injected turn finishes.
-
-  async #track(operation) {
-    if (this.stopping) return false;
-    const pending = Promise.resolve().then(operation);
-    this.operations.add(pending);
-    try {
-      return await pending;
-    } finally {
-      this.operations.delete(pending);
-    }
-  }
-
-  get busyCount() {
-    return this.slots.size;
-  }
-
-  handleDispatch(task, options = {}) {
-    return this.#track(() => this.#handleDispatch(task, options));
-  }
-
-  async #handleDispatch(task, { resumed = false } = {}) {
-    const existingSlot = this.slots.get(task.task_id);
-    if (existingSlot) return existingSlot.task.claim_token === task.claim_token;
-    if (this.slots.size >= this.maxSlots) return false;
-
-    const persisted = this.stateStore?.get(task.task_id) ?? null;
-    if (resumed) {
-      if (!persisted || persisted.claimToken !== task.claim_token) {
-        throw resumeError('resume_state_missing', 'resumed task has no matching local session state');
-      }
-      if (!['running', 'completion_pending'].includes(persisted.phase)) {
-        throw resumeError('resume_state_ambiguous', `cannot safely resume task from phase ${persisted.phase}`);
-      }
-      const slot = {
-        task,
-        sessionId: persisted.sessionId,
-        lastSeq: persisted.lastSeq,
-        timer: null,
-        lastAssistant: persisted.lastAssistant,
-        phase: persisted.phase,
-        pendingInjections: 0,
-        continuations: 0,
-        approvals: new Map(),
-        ticking: false,
-        tickPromise: null,
-        detached: false,
-      };
-      let sessionReady = true;
-      try {
-        await this.dsh.pollEvents(slot.sessionId, slot.lastSeq);
-      } catch (error) {
-        if (error.code === 'not_found') {
-          this.stateStore?.delete(task.task_id);
-          throw resumeError('dsh_session_missing', 'persisted DSH session does not exist');
+  constructor({ core, backendRegistry, runStore, projectRegistry = null, interactionBridge = null, log = () => {}, maxSlots = MAX_SLOTS_DEFAULT } = {}) {
+    if (!core || !backendRegistry || !runStore) throw new TypeError('core, backendRegistry and runStore are required');
+    this.core = core; this.backendRegistry = backendRegistry; this.runStore = runStore; this.projectRegistry = projectRegistry; this.interactionBridge = interactionBridge; this.log = log; this.maxSlots = maxSlots;
+    this.slots = new Map(); this.operations = new Set(); this.stopping = false;
+    this.core.onAck?.((frameId) => {
+      for (const run of this.runStore.list()) {
+        if (run.phase === 'completion_pending' && run.terminalFrameId === frameId) {
+          this.runStore.delete(run.taskId);
         }
-        sessionReady = false;
-        this.log(`[runner] session validation deferred for ${task.task_id}: ${error.message}`);
       }
-      this.slots.set(task.task_id, slot);
-      if (slot.phase === 'completion_pending') {
-        await this.#finish(slot, 'done', { summary: slot.lastAssistant ?? '' });
-      } else if (sessionReady) {
-        await this.#tick(slot);
-      }
-      if (this.slots.has(task.task_id)) this.#startPolling(slot);
-      this.log(`[runner] task ${task.task_id} resumed -> session ${slot.sessionId}`);
-      return true;
-    }
-
-    if (persisted) {
-      await this.dsh.cancel(persisted.sessionId).catch(() => {});
-      this.stateStore?.delete(task.task_id);
-    }
-    const workspace = this.workspaceResolver(task) ?? task.brief?.workspace ?? this.defaultWorkspace;
-    const session = await this.dsh.createSession({ workspace, title: task.title ?? task.type });
-    const slot = {
-      task,
-      sessionId: session.sessionId ?? session.id ?? session,
-      lastSeq: -1,
-      timer: null,
-      lastAssistant: null,
-      phase: 'created',
-      pendingInjections: 0,
-      continuations: 0,
-      approvals: new Map(),
-      ticking: false,
-      tickPromise: null,
-      detached: false,
-    };
-    this.stateStore?.put({
-      taskId: task.task_id,
-      claimToken: task.claim_token,
-      sessionId: slot.sessionId,
-      phase: 'created',
     });
+  }
+  async #track(operation) { if (this.stopping) return false; const pending = Promise.resolve().then(operation); this.operations.add(pending); try { return await pending; } finally { this.operations.delete(pending); } }
+  handleDispatch(task, options = {}) {
+    return this.#track(async () => {
+      try {
+        return await this.#dispatch(task, options);
+      } catch (error) {
+        if (options.resumed && RESUME_FAILURE_CODES.has(error?.code)) {
+          this.#failClosed(task, error);
+          return false;
+        }
+        throw error;
+      }
+    });
+  }
+  async #dispatch(task, { resumed = false } = {}) {
+    const existing = this.slots.get(task.task_id); if (existing) return existing.task.claim_token === task.claim_token;
+    if (this.slots.size >= this.maxSlots) return false;
+    const entry = this.backendRegistry.get(task.backend_kind); if (!entry) throw resumeError('backend_unavailable', `backend is not configured: ${task.backend_kind}`);
+    const prior = this.runStore.get(task.task_id);
+    const sessionRef = prior?.sessionRef ?? task.session_ref ?? null;
+    if (resumed) {
+      if (!prior || prior.claimToken !== task.claim_token) throw resumeError('resume_state_missing', 'resumed task has no matching local run');
+      if (prior.phase === 'awaiting_input') throw resumeError('awaiting_input_unresumable', 'worker restarted while the task awaited local input; the backend session cannot be restored');
+      if (!sessionRef) throw resumeError('resume_session_missing', 'resumed task has no persisted session ref');
+      if (typeof entry.backend.resume !== 'function') throw resumeError('backend_resume_unsupported', 'backend does not support resume');
+    }
+    const slot = { task, backend: entry.backend, sessionRef, controller: new AbortController(), detached: false };
+    this.runStore.put({ taskId: task.task_id, claimToken: task.claim_token, projectId: task.project_id, backendKind: task.backend_kind, sessionRef, phase: resumed ? 'running' : 'dispatched', lastEventSeq: prior?.lastEventSeq ?? -1, lastAssistant: prior?.lastAssistant ?? null, interactionId: prior?.interactionId ?? null });
     this.slots.set(task.task_id, slot);
-    this.stateStore?.update(task.task_id, { phase: 'prompting' });
-    slot.phase = 'prompting';
+    const emit = (event) => this.#emit(slot, event);
+    const progress = (note, percent, events = []) => this.core.send('progress', { task_id: task.task_id, claim_token: task.claim_token, note, percent, events });
     try {
-      await this.dsh.prompt(slot.sessionId, buildPrompt(task));
+      progress(resumed ? 'resumed' : 'started', 0);
+      const project = task.project_id ? this.projectRegistry?.resolve(task.project_id) : null;
+      const options = {
+        task,
+        projectId: task.project_id ?? null,
+        conversationId: task.conversation_id ?? task.conversationId ?? null,
+        workspace: project?.root ?? null,
+        sessionRef: slot.sessionRef,
+        signal: slot.controller.signal,
+        emit,
+        progress,
+        setSessionRef: (ref) => { slot.sessionRef = ref; this.runStore.update(task.task_id, { sessionRef: ref }); },
+      };
+      const result = resumed ? await slot.backend.resume(options) : await slot.backend.run(options);
+      if (slot.controller.signal.aborted || slot.detached) return false;
+      const sessionRefResult = result?.sessionRef || slot.sessionRef;
+      return this.#complete(slot, task, {
+        kind: result?.kind || 'done',
+        result: result?.result ?? result ?? {},
+        sessionRef: sessionRefResult,
+      });
     } catch (error) {
-      this.slots.delete(task.task_id);
+      if (!slot.controller.signal.aborted && !slot.detached) {
+        this.#complete(slot, task, {
+          kind: 'failed',
+          result: { error: error.message },
+          sessionRef: slot.sessionRef,
+        });
+      }
       throw error;
     }
-    this.stateStore?.update(task.task_id, { phase: 'running' });
-    slot.phase = 'running';
-    this.core.send('progress', { task_id: task.task_id, claim_token: task.claim_token, note: 'session started' });
-    this.#startPolling(slot);
-    this.log(`[runner] task ${task.task_id} -> session ${slot.sessionId}`);
-    return true;
   }
-
-  #startPolling(slot) {
-    slot.timer = setInterval(() => {
-      if (slot.ticking || slot.detached) return;
-      slot.ticking = true;
-      slot.tickPromise = this.#tick(slot)
-        .catch((error) => this.log(`[runner] tick failed for ${slot.task.task_id}: ${error.message}`))
-        .finally(() => {
-          slot.ticking = false;
-          slot.tickPromise = null;
-        });
-    }, this.pollMs);
-    slot.timer.unref();
+  #complete(slot, task, { kind, result, sessionRef }) {
+    const terminalType = kind === 'failed' ? 'task_failed' : 'task_done';
+    const terminalFrameId = crypto.randomUUID();
+    this.runStore.update(task.task_id, { sessionRef, phase: 'completion_pending', result, terminalFrameId });
+    const payload = { task_id: task.task_id, claim_token: task.claim_token, session_ref: sessionRef, result };
+    if (terminalType === 'task_done') payload.kind = kind;
+    const sent = this.core.send(terminalType, payload, { id: terminalFrameId });
+    this.slots.delete(task.task_id);
+    return sent;
   }
-
-  async #tick(slot) {
-    if (slot.phase === 'completion_pending') {
-      await this.#finish(slot, 'done', { summary: slot.lastAssistant ?? '' });
-      return;
-    }
-    const { events, hasMore } = await this.dsh.pollEvents(slot.sessionId, slot.lastSeq);
-    const sentEvents = [];
-    for (const event of events) {
-      if (slot.detached) return;
-      if (event.kind === 'assistant') {
-        const text = assistantText(event.event);
-        if (text !== null) slot.lastAssistant = text;
-      }
-      const sent = this.core.send('session_event', { task_id: slot.task.task_id, event });
-      if (!sent) return;
-      sentEvents.push(event);
-      slot.lastSeq = event.seq;
-      this.stateStore?.update(slot.task.task_id, {
-        lastSeq: slot.lastSeq,
-        lastAssistant: slot.lastAssistant,
-      });
-      if (String(event.event?.type) === 'turn/end') {
-        const reason = event.event?.data?.reason?.kind;
-        // A worker restart kills the local DSH process mid-turn; the session
-        // persists but the turn ends "interrupted". Re-prompt the same session
-        // once (context is preserved, the original prompt is never replayed).
-        // A second interruption falls through and completes with what exists.
-        if (reason === 'interrupted'
-            && slot.continuations < 1
-            && this.slots.get(slot.task.task_id) === slot) {
-          slot.continuations += 1;
-          this.stateStore?.update(slot.task.task_id, { phase: 'running' });
-          await this.dsh.prompt(slot.sessionId, CONTINUATION_PROMPT);
-          this.log(`[runner] task ${slot.task.task_id} interrupted; continuation prompted`);
-          return;
-        }
-        if (slot.pendingInjections > 0) {
-          // A queued injection opens another turn; wait for it before done.
-          slot.pendingInjections -= 1;
-          this.stateStore?.update(slot.task.task_id, { phase: 'running' });
-          return;
-        }
-        slot.phase = 'completion_pending';
-        this.stateStore?.update(slot.task.task_id, { phase: 'completion_pending' });
-        await this.#finish(slot, 'done', { summary: slot.lastAssistant ?? '' });
-        return;
-      }
-    }
-    if (sentEvents.length || hasMore) {
-      this.core.send('progress', {
-        task_id: slot.task.task_id,
-        claim_token: slot.task.claim_token,
-        events: sentEvents.map((event) => event.event),
-      });
-    }
-  }
-
-  async #finish(slot, kind, result) {
-    if (!this.slots.has(slot.task.task_id)) return false;
-    slot.phase = 'completion_pending';
-    this.stateStore?.update(slot.task.task_id, { phase: 'completion_pending' });
-    let exportMeta = null;
-    try {
-      const exported = await this.dsh.exportSession(slot.sessionId);
-      exportMeta = { format: exported.format, events: exported.events.length };
-    } catch (error) {
-      this.log(`[runner] export failed for ${slot.task.task_id}: ${error.message}`);
-    }
-    const sent = this.core.send('task_done', {
-      task_id: slot.task.task_id, claim_token: slot.task.claim_token, kind,
-      result: { ...result, session_id: slot.sessionId, export: exportMeta },
+  #failClosed(task, error) {
+    const terminalFrameId = crypto.randomUUID();
+    const result = { error: error.message };
+    this.runStore.put({
+      taskId: task.task_id, claimToken: task.claim_token, projectId: task.project_id ?? null,
+      backendKind: task.backend_kind, sessionRef: task.session_ref ?? null,
+      phase: 'completion_pending', result, terminalFrameId,
     });
-    if (!sent) return false;
-    this.slots.delete(slot.task.task_id);
-    clearInterval(slot.timer);
-    this.stateStore?.delete(slot.task.task_id);
-    this.log(`[runner] task ${slot.task.task_id} finished (${kind})`);
-    return true;
+    const sent = this.core.send('task_failed', {
+      task_id: task.task_id, claim_token: task.claim_token, session_ref: task.session_ref ?? null, result,
+    }, { id: terminalFrameId });
+    this.log(`[worker] fail closed ${task.task_id}: ${error.message}`);
+    return sent;
   }
-
-  handleInject(taskId, content) {
-    return this.#track(() => this.#handleInject(taskId, content));
+  #emit(slot, event) {
+    if (slot.detached) return false;
+    if (event?.type === 'interaction_required' && this.interactionBridge) {
+      const interaction = event.interaction ?? event.payload ?? event;
+      this.runStore.update(slot.task.task_id, { phase: 'awaiting_input', interactionId: interaction.interaction_id ?? null });
+      return this.interactionBridge.required({ task: slot.task, interaction, sessionRef: slot.sessionRef });
+    }
+    return this.core.send('session_event', { task_id: slot.task.task_id, claim_token: slot.task.claim_token, session_ref: slot.sessionRef, event });
   }
-
-  async #handleInject(taskId, content) {
-    const slot = this.slots.get(taskId);
-    if (!slot) return false;
-    await this.dsh.prompt(slot.sessionId, content);
-    slot.pendingInjections += 1;
-    return true;
-  }
-
+  handleInject(taskId, content) { return this.#track(async () => { const slot = this.slots.get(taskId); if (!slot) return false; return slot.backend.inject?.({ task: slot.task, sessionRef: slot.sessionRef, content }) !== false; }); }
   handleCancel(taskId) {
-    return this.#track(() => this.#handleCancel(taskId));
-  }
-
-  // Called by the local DSH mux connection when a turn blocks on permission.
-  handleApprovalWaiting(payload, rpcId) {
-    const slot = this.#slotForSession(payload.sessionId);
-    if (!slot) return;
-    slot.approvals.set(payload.approvalId, { rpcId, payload });
-    const sent = this.core.send('approval_request', {
-      task_id: slot.task.task_id,
-      tool: payload.toolName ?? null,
-      reason: payload.reason ?? null,
-      dsh_approval_id: payload.approvalId,
-      dsh_rpc_id: rpcId,
-      dsh_session_id: payload.sessionId,
-    });
-    if (!sent) slot.approvals.delete(payload.approvalId);
-    else this.log(`[runner] approval ${payload.approvalId} pending for task ${slot.task.task_id} (${payload.toolName ?? 'tool'})`);
-  }
-
-  // Core relayed a decision (Feishu card/reply or admin console).
-  handleApprovalResult({ task_id: taskId, dsh_approval_id: approvalId, dsh_rpc_id: rpcId, dsh_session_id: sessionId, approved }) {
     return this.#track(async () => {
-      if (!approvalId || !rpcId || !sessionId) {
-        this.log(`[runner] approval result for task ${taskId} lacks DSH identifiers; cannot answer local DSH`);
-        return false;
-      }
-      const outcome = approved ? 'allowed-once' : 'rejected';
-      await this.dsh.respondApproval({ rpcId, sessionId, approvalId, outcome });
       const slot = this.slots.get(taskId);
-      slot?.approvals.delete(approvalId);
-      this.log(`[runner] approval ${approvalId} for task ${taskId} answered: ${outcome}`);
+      const run = this.runStore.get(taskId);
+      if (!slot && !run) return false;
+      if (slot) {
+        slot.controller.abort();
+        slot.cancelled = true;
+        await slot.backend.cancel?.({ task: slot.task, sessionRef: slot.sessionRef });
+        this.slots.delete(taskId);
+      }
+      if (run && !(run.phase === 'completion_pending' && run.terminalFrameId)) this.runStore.delete(taskId);
       return true;
     });
   }
-
-  #slotForSession(sessionId) {
-    for (const slot of this.slots.values()) {
-      if (slot.sessionId === sessionId) return slot;
-    }
-    return null;
+  handleInteractionResponse(payload) {
+    return this.#track(async () => {
+      const slot = this.slots.get(payload.task_id);
+      if (!slot || !this.interactionBridge) return false;
+      const ok = await this.interactionBridge.response({ task: slot.task, interaction_id: payload.interaction_id, response: payload.response });
+      if (ok) {
+        const current = this.runStore.get(payload.task_id);
+        if (current && current.phase !== 'completion_pending') {
+          this.runStore.update(payload.task_id, { phase: 'running', interactionId: null });
+        }
+      }
+      return ok;
+    });
   }
-
-  async #handleCancel(taskId) {
-    const slot = this.slots.get(taskId);
-    const persisted = this.stateStore?.get(taskId) ?? null;
-    if (!slot && !persisted) return false;
-    if (slot) clearInterval(slot.timer);
-    this.slots.delete(taskId);
-    await this.dsh.cancel(slot?.sessionId ?? persisted.sessionId).catch(() => {});
-    this.stateStore?.delete(taskId);
-    this.log(`[runner] task ${taskId} cancelled`);
-    return true;
-  }
-
-  async detachAll() {
-    this.stopping = true;
-    await Promise.allSettled([...this.operations]);
-    const pending = [];
-    for (const slot of this.slots.values()) {
-      slot.detached = true;
-      clearInterval(slot.timer);
-      if (slot.tickPromise) pending.push(slot.tickPromise);
-    }
-    this.slots.clear();
-    await Promise.allSettled(pending);
-  }
-
-  async stopAll() {
-    await this.detachAll();
-  }
+  handleInteractionCancel(payload) { return this.#track(async () => { const slot = this.slots.get(payload.task_id); if (!slot || !this.interactionBridge) return false; return this.interactionBridge.cancel({ task: slot.task, interaction_id: payload.interaction_id }); }); }
+  async detachAll() { this.stopping = true; await Promise.allSettled([...this.operations]); for (const slot of this.slots.values()) slot.detached = true; this.slots.clear(); }
+  async stopAll() { return this.detachAll(); }
 }
 
-export function buildPrompt(task) {
-  const brief = task.brief ?? {};
-  const lines = [];
-  if (brief.prompt) {
-    lines.push(String(brief.prompt));
-  } else {
-    lines.push(`目标：${brief.goal ?? task.type}`);
-    if (Array.isArray(brief.acceptance) && brief.acceptance.length) {
-      lines.push(`验收标准：\n${brief.acceptance.map((item) => `- ${item}`).join('\n')}`);
-    }
-    if (brief.context) lines.push(`上下文：\n${brief.context}`);
-  }
-  lines.push('完成全部工作后输出最终结论。');
-  return lines.join('\n\n');
-}
+export function buildPrompt(task) { const brief = task.brief ?? {}; if (brief.prompt) return String(brief.prompt); const lines = [`目标：${brief.goal ?? task.type}`]; if (Array.isArray(brief.acceptance) && brief.acceptance.length) lines.push(`验收标准：\n${brief.acceptance.map((item) => `- ${item}`).join('\n')}`); if (brief.context) lines.push(`上下文：\n${brief.context}`); return `${lines.join('\n\n')}\n\n完成全部工作后输出最终结论。`; }
+export function assistantText(event) { return typeof event?.text === 'string' ? event.text : null; }

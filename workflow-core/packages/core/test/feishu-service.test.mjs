@@ -9,6 +9,7 @@ import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { CoreDatabase } from '../src/db/core-db.js';
 import { TaskRepository } from '../src/tasks/repository.js';
+import { InteractionRepository } from '../src/interactions/repository.js';
 import { FeishuService } from '../src/feishu/service.js';
 import { buildTaskCard, latestView } from '../src/feishu/client.js';
 import { createCoreServer } from '../src/http/server.js';
@@ -17,6 +18,7 @@ import { AuthRepository } from '../src/auth/repository.js';
 let dir;
 let coreDb;
 let tasks;
+let interactions;
 let sentCards;
 let updatedCards;
 let frames;
@@ -54,6 +56,21 @@ function fakeChannel() {
       frames.push({ workerId, frame: frameValue });
       return true;
     },
+    resolveInteraction(interactionId, response) {
+      const interaction = interactions.answer(interactionId, response);
+      const task = tasks.get(interaction.task_id);
+      const delivered = this.sendToWorker(task.claim_worker_id, {
+        type: 'interaction_response',
+        payload: {
+          task_id: task.task_id,
+          claim_token: task.claim_token,
+          interaction_id: interaction.interaction_id,
+          response: interaction.response,
+        },
+      });
+      if (delivered) interactions.markDelivered(interactionId);
+      return { ok: true, interaction: interactions.get(interactionId), delivered };
+    },
   };
 }
 
@@ -61,13 +78,21 @@ before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-m5-'));
   coreDb = new CoreDatabase({ dataDir: dir });
   tasks = new TaskRepository({ coreDb, claimTimeoutMs: 60_000 });
+  interactions = new InteractionRepository({ coreDb });
   const client = fakeClient();
   sentCards = client.sent;
   updatedCards = client.updated;
   const channel = fakeChannel();
   frames = channel.frames;
   dispatchCalls = () => channel.dispatches;
-  service = new FeishuService({ client, taskRepository: tasks, workerChannel: channel, coreDb, log: () => {} });
+  service = new FeishuService({
+    client,
+    taskRepository: tasks,
+    interactionRepository: interactions,
+    workerChannel: channel,
+    coreDb,
+    log: () => {},
+  });
 
   // A small server instance just for the console page + webhook route checks.
   const auth = new AuthRepository({ dataDir: dir });
@@ -91,10 +116,43 @@ after(() => {
 
 function activeTask(tag = 'm5') {
   const { task } = tasks.create({
-    type: 'dsh.run', brief: { goal: '被观察的任务' },
+    type: 'workflow.run', brief: { goal: '被观察的任务' },
     created_by: 'account:owner', worker_selector: { tag },
   });
-  return { task, claimed: tasks.claim({ worker_id: 'machine:w1', selector: { tag } }) };
+  return {
+    task,
+    claimed: tasks.claim({
+      worker_id: 'machine:w1',
+      selector: { tag },
+      backends: [{ kind: 'workflow-jsonl', capabilities: ['interactions'] }],
+    }),
+  };
+}
+
+function createInteraction(claimed, {
+  id,
+  kind = 'approval',
+  schema = {
+    tool: 'shell:rm',
+    risk: 'high',
+    reason: '删除构建目录',
+    questions: [{
+      id: 'decision',
+      required: true,
+      options: [{ id: 'approve', label: '批准' }, { id: 'deny', label: '拒绝' }],
+    }],
+  },
+} = {}) {
+  const interaction = interactions.create({
+    interaction_id: id || `i-${claimed.task_id}`,
+    task_id: claimed.task_id,
+    worker_id: claimed.claim_worker_id,
+    backend_kind: claimed.backend_kind,
+    kind,
+    schema,
+  });
+  tasks.enterAwaitingInput(claimed.task_id, claimed.claim_token, interaction.interaction_id);
+  return interaction;
 }
 
 test('inbound message creates a watched task and sends a live card', async () => {
@@ -151,34 +209,28 @@ test('reply in the watched chat injects into the running session, not a new task
   assert.equal(injectedEvents.length, 1);
 });
 
-test('bare approve/deny replies decide a pending approval instead of injecting', async () => {
+test('bare approve and deny replies answer pending interactions by stable option id', async () => {
   const { claimed } = activeTask('m5-appr-reply');
   coreDb.db.prepare('INSERT INTO watch_subscriptions(id, task_id, chat_id, message_id, last_card_at, active, created_at) VALUES (?,?,?,?,?,1,?)')
     .run(`ws-aprr-${claimed.task_id}`, claimed.task_id, 'oc-main', 'fm-y', new Date().toISOString(), new Date().toISOString());
-  const { approval_id: approvalId } = await service.handleApprovalRequest({
-    task_id: claimed.task_id, tool: 'shell:rm', reason: '删除构建目录',
-    dsh_approval_id: 'dsh-ap-9', dsh_rpc_id: 'rpc-9', dsh_session_id: 'sess-9',
-  });
+  const first = createInteraction(claimed, { id: `i-approve-${claimed.task_id}` });
 
   const approved = await service.handleInboundMessage({ messageId: 'om-appr-a', chatId: 'oc-main', text: '批准', senderId: 'ou-user' });
-  assert.equal(approved.approval_resolved, true);
+  assert.equal(approved.interaction_resolved, true);
   assert.equal(approved.approved, true);
-  const status = coreDb.db.prepare('SELECT status FROM pending_approvals WHERE approval_id = ?').get(approvalId);
-  assert.equal(status.status, 'approved');
-  const frame = frames.find((entry) => entry.frame.type === 'approval_result');
-  assert.ok(frame, 'approval_result delivered to worker');
-  assert.equal(frame.frame.payload.dsh_approval_id, 'dsh-ap-9');
-  assert.equal(frame.frame.payload.dsh_rpc_id, 'rpc-9');
+  assert.equal(interactions.get(first.interaction_id).status, 'delivered');
+  const frame = frames.find((entry) => entry.frame.type === 'interaction_response' && entry.frame.payload.interaction_id === first.interaction_id);
+  assert.deepEqual(frame.frame.payload.response.answers, { decision: 'approve' });
+  assert.equal(frame.frame.payload.response.answered_by, 'feishu:ou-user');
   const injectFrames = frames.filter((entry) => entry.frame.type === 'inject' && entry.frame.payload.task_id === claimed.task_id);
-  assert.equal(injectFrames.length, 0, 'keyword reply did not inject');
+  assert.equal(injectFrames.length, 0);
 
-  // A second approval is denied the same way; other prose still injects.
-  const second = await service.handleApprovalRequest({ task_id: claimed.task_id, tool: 'fs:write' });
+  interactions.markConsumed(first.interaction_id, claimed.claim_worker_id);
+  tasks.resumeAfterInput(claimed.task_id, claimed.claim_token, first.interaction_id, claimed.claim_worker_id);
+  const second = createInteraction(tasks.get(claimed.task_id), { id: `i-deny-${claimed.task_id}` });
   const denied = await service.handleInboundMessage({ messageId: 'om-appr-b', chatId: 'oc-main', text: '拒绝。', senderId: 'ou-user' });
   assert.equal(denied.approved, false);
-  assert.equal(coreDb.db.prepare('SELECT status FROM pending_approvals WHERE approval_id = ?').get(second.approval_id).status, 'denied');
-  const prose = await service.handleInboundMessage({ messageId: 'om-appr-c', chatId: 'oc-main', text: '顺便看下日志', senderId: 'ou-user' });
-  assert.equal(prose.injected, true);
+  assert.deepEqual(interactions.get(second.interaction_id).response.answers, { decision: 'deny' });
 });
 
 test('cancel button cancels the task and notifies the worker', async () => {
@@ -190,30 +242,64 @@ test('cancel button cancels the task and notifies the worker', async () => {
   assert.ok(cancelFrame, 'cancel frame delivered');
 });
 
-test('approval request becomes an approve/deny card and resolves back to the worker', async () => {
+test('approval interaction becomes a stable-id card and resolves to interaction_response', async () => {
   const { claimed } = activeTask('m5-appr');
   coreDb.db.prepare('INSERT INTO watch_subscriptions(id, task_id, chat_id, message_id, last_card_at, active, created_at) VALUES (?,?,?,?,?,1,?)')
     .run(`ws-appr-${claimed.task_id}`, claimed.task_id, 'oc-main', 'fm-appr', new Date().toISOString(), new Date().toISOString());
-  const { approval_id: approvalId } = await service.handleApprovalRequest({
-    task_id: claimed.task_id, tool: 'shell:rm', risk: 'high', reason: '删除 build 目录',
-  });
-  const pending = coreDb.db.prepare('SELECT * FROM pending_approvals WHERE approval_id = ?').get(approvalId);
-  assert.equal(pending.status, 'pending');
-  await new Promise((resolve) => setTimeout(resolve, 100)); // immediate refresh
-  const cardWithApproval = updatedCards.map((entry) => JSON.stringify(entry.card)).find((rendered) => rendered.includes('待审批'));
-  assert.ok(cardWithApproval, 'approval rendered into card');
-  assert.ok(cardWithApproval.includes('批准') && cardWithApproval.includes('拒绝'));
+  const interaction = createInteraction(claimed, { id: `i-card-${claimed.task_id}` });
+  await service.handleInteractionRequired(interaction);
+  const rendered = updatedCards.map((entry) => JSON.stringify(entry.card)).find((card) => card.includes(interaction.interaction_id));
+  assert.ok(rendered, 'interaction rendered into card');
+  assert.ok(rendered.includes('待审批') && rendered.includes('批准') && rendered.includes('拒绝'));
+  assert.ok(rendered.includes('question_id') && rendered.includes('option_id'));
 
-  const approved = await service.handleCardAction({ kind: 'approve', approval_id: approvalId, task_id: claimed.task_id });
+  const approved = await service.handleCardAction({
+    kind: 'interaction_response',
+    interaction_id: interaction.interaction_id,
+    task_id: claimed.task_id,
+    question_id: 'decision',
+    option_id: 'approve',
+    response_id: `feishu-card-${interaction.interaction_id}-decision-approve`,
+  });
   assert.equal(approved.ok, true);
-  assert.equal(approved.approved, true);
-  const resultFrame = frames.find((entry) => entry.frame.type === 'approval_result');
-  assert.ok(resultFrame, 'approval_result delivered to worker');
-  assert.equal(resultFrame.frame.payload.approved, true);
-  const resolved = coreDb.db.prepare('SELECT * FROM pending_approvals WHERE approval_id = ?').get(approvalId);
-  assert.equal(resolved.status, 'approved');
-  const deniedAgain = await service.handleCardAction({ kind: 'approve', approval_id: approvalId, task_id: claimed.task_id });
-  assert.equal(deniedAgain.ok, false);
+  assert.equal(approved.delivered, true);
+  assert.deepEqual(interactions.get(interaction.interaction_id).response.answers, { decision: 'approve' });
+  assert.equal(frames.at(-1).frame.type, 'interaction_response');
+  const replay = await service.handleCardAction({
+    kind: 'interaction_response',
+    interaction_id: interaction.interaction_id,
+    task_id: claimed.task_id,
+    question_id: 'decision',
+    option_id: 'approve',
+    response_id: `feishu-card-${interaction.interaction_id}-decision-approve`,
+  });
+  assert.equal(replay.ok, true);
+});
+
+test('free-text question is answered in chat while local interactions stay off cards', async () => {
+  const { claimed } = activeTask('m5-question');
+  coreDb.db.prepare('INSERT INTO watch_subscriptions(id, task_id, chat_id, message_id, last_card_at, active, created_at) VALUES (?,?,?,?,?,1,?)')
+    .run(`ws-q-${claimed.task_id}`, claimed.task_id, 'oc-question', 'fm-question', new Date().toISOString(), new Date().toISOString());
+  const question = createInteraction(claimed, {
+    id: `i-question-${claimed.task_id}`,
+    kind: 'question',
+    schema: { questions: [{ id: 'branch', prompt: '使用哪个分支？', required: true }] },
+  });
+  await service.handleInteractionRequired(question);
+  const answer = await service.handleInboundMessage({
+    messageId: 'om-question', chatId: 'oc-question', text: 'release/next', senderId: 'ou-user',
+  });
+  assert.equal(answer.interaction_resolved, true);
+  assert.deepEqual(interactions.get(question.interaction_id).response.answers, { branch: 'release/next' });
+
+  interactions.markConsumed(question.interaction_id, claimed.claim_worker_id);
+  tasks.resumeAfterInput(claimed.task_id, claimed.claim_token, question.interaction_id, claimed.claim_worker_id);
+  const credential = createInteraction(tasks.get(claimed.task_id), {
+    id: `i-credential-${claimed.task_id}`,
+    kind: 'credential',
+    schema: { questions: [{ id: 'token', required: true }] },
+  });
+  assert.deepEqual(await service.handleInteractionRequired(credential), { routed: false });
 });
 
 test('card builders classify events and gate buttons by status', () => {
@@ -224,9 +310,9 @@ test('card builders classify events and gate buttons by status', () => {
   ]);
   assert.equal(view.currentTool, 'shell');
   assert.equal(view.toolCount, 2);
-  const running = buildTaskCard({ task: { task_id: 't-x', type: 'dsh.run', status: 'running', priority: 3, attempts: 1, max_attempts: 3, brief: { goal: 'g' } } });
+  const running = buildTaskCard({ task: { task_id: 't-x', type: 'workflow.run', status: 'running', priority: 3, attempts: 1, max_attempts: 3, brief: { goal: 'g' } } });
   assert.ok(JSON.stringify(running).includes('取消任务'));
-  const done = buildTaskCard({ task: { task_id: 't-x', type: 'dsh.run', status: 'done', priority: 3, attempts: 1, max_attempts: 3, brief: { goal: 'g' }, result: { summary: 'ok' } } });
+  const done = buildTaskCard({ task: { task_id: 't-x', type: 'workflow.run', status: 'done', priority: 3, attempts: 1, max_attempts: 3, brief: { goal: 'g' }, result: { summary: 'ok' } } });
   assert.ok(!JSON.stringify(done).includes('取消任务'));
 });
 
@@ -236,7 +322,7 @@ test('admin console page and feishu webhook route are served', async () => {
   const html = await page.text();
   assert.ok(html.includes('Workflow Core'));
   assert.ok(html.includes("document.querySelectorAll('form input,form textarea,form select')"));
-  assert.ok(html.includes('finally{restoreDraft(draft)}'));
+  assert.ok(html.includes('finally{restoreDraft(draft);document.documentElement.scrollTop=scrollTop}'));
   assert.ok(html.includes('@media(max-width:640px)'));
   assert.ok(html.includes('table{display:block;max-width:100%;overflow-x:auto;white-space:nowrap}'));
   assert.ok(html.includes("var draft=$('#injectText')?$('#injectText').value:''"));

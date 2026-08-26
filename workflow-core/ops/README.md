@@ -10,11 +10,10 @@
 - Public HTTPS entrypoint: `0.0.0.0:8710` (Nginx, IP allowlisted)
 - Core API upstream: `127.0.0.1:18710`
 - Core internal API: `127.0.0.1:18711` (loopback only)
-- Central DSH: `127.0.0.1:3081`
-- Central DSH public route: `https://<host>:8710/dsh/`
+- Worker JSONL backend: configured per Worker with `WFC_JSONL_COMMAND`
 - Knowledge repository: `/var/lib/workflow-core/workflow.db`
 
-Nginx routes both `/worker` and `/dsh/` to Core with WebSocket upgrade headers, and all other paths to Core. Core authenticates `/dsh/api/*` with a live client bearer token before forwarding approved HTTP and WebSocket traffic to the loopback-only central DSH. Install `ops/nginx/workflow-admin.conf` as `/etc/nginx/sites-available/workflow-admin`, symlink it into `sites-enabled`, and require `nginx -t` to pass before reload. Port `3080` must remain closed; the former `dsh-web-public.service` forwarding process is retired. `wf-api.service`, `feishu-listener.service`, and `ai-engine.service` must remain disabled so they cannot compete with Core for traffic or Feishu events.
+Nginx routes `/worker` and all other paths to Core; the Worker WebSocket uses the `/worker` route. Install `ops/nginx/workflow-admin.conf` as `/etc/nginx/sites-available/workflow-admin`, symlink it into `sites-enabled`, and require `nginx -t` to pass before reload. `wf-api.service`, `feishu-listener.service`, and `ai-engine.service` must remain disabled so they cannot compete with Core for traffic or Feishu events.
 
 ## Feishu application requirements
 
@@ -65,22 +64,30 @@ The verification script prints only state and never prints credentials, task con
 
 ## Linux Worker install
 
-Each Linux Worker uses its own local DSH and state directory. Create the runtime directories with owner `ubuntu`, keep the environment file root-only, and install `ops/systemd/workflow-worker.service` as `/etc/systemd/system/workflow-worker.service`.
+Each Linux Worker uses its own state directory and a configured generic Workflow JSONL backend. Create the runtime directories with owner `ubuntu`, keep the environment file root-only, and install `ops/systemd/workflow-worker.service` as `/etc/systemd/system/workflow-worker.service`.
 
-The server's DSH package is a Node-backed CLI, so the environment file must set both the Node executable and the script entrypoint:
+The environment file selects the vendor-neutral JSONL command and optional pipe-delimited arguments:
 
 ```text
 WFC_CORE_URL=http://127.0.0.1:18710
 WFC_WORKER_ID=isolated-worker-1
-WFC_WORKER_CAPABILITIES=dsh
+WFC_WORKER_CAPABILITIES=workflow-jsonl
 WFC_WORKER_STATE_DIR=/var/lib/workflow-worker
-WFC_WORKER_WORKSPACE=/var/lib/workflow-worker/workspace
-WFC_DSH_NODE=/opt/node24/bin/node
-WFC_DSH_BIN=/opt/node24/lib/node_modules/@deepseek-ai/dsh/lib/bin.js
-WFC_DSH_HOME=/var/lib/workflow-worker/dsh
+WFC_JSONL_COMMAND=/opt/workflow-tools/bin/workflow-jsonl-bridge
+WFC_JSONL_ARGS=
 ```
 
-`WFC_WORKER_TOKEN` is the only secret in this file. Write it through a protected process, set owner `root:root` and mode `0600`, and never print or log it. The Worker strips this variable before spawning DSH. `WFC_WORKER_STATE_DIR` holds the task-to-session recovery database; `WFC_DSH_HOME` holds the DSH session itself. The daemon pins `HOME`, `DSH_HOME`, `DSH_SESSION_DB`, `DSH_STATE_DB`, and `DSH_SESSION_QUERY_DB` inside `WFC_DSH_HOME` because DSH resolves its databases from the account's passwd home when they are unset - without those variables the Worker would share the central DSH's databases. Preserve both directories across restarts so an active claim can resume without sending its prompt again. The Worker unit keeps `NoNewPrivileges=true`; `ProtectHome=false` is required because DSH persists SQLite state below its isolated HOME. The writable surface remains `/var/lib/workflow-worker`.
+`WFC_WORKER_TOKEN` is the only secret in this file. Write it through a protected process, set owner `root:root` and mode `0600`, and never print or log it. `WFC_WORKER_STATE_DIR` holds recovery state. `WFC_JSONL_COMMAND` reads Workflow JSONL requests from stdin and emits JSONL events/results on stdout; arguments are separated with `|`. Preserve the state directory across restarts. The writable surface remains `/var/lib/workflow-worker`.
+
+### Local configuration, projects and recovery
+
+After first start the Worker writes `<stateDir>/config.json` (mode `0600`, revisioned): the authoritative source for registered projects, backend descriptors and admin settings. Environment variables only bootstrap Core connection, the state directory and the optional first JSONL backend; later changes go through the loopback admin API, never through Core.
+
+The loopback admin server binds `127.0.0.1` only. When started without `WFC_ADMIN_TOKEN` it generates a token, writes it to `<stateDir>/admin.token` (mode `0600`), and persists the chosen port into `config.json`. Mutations require the bearer token plus an `X-CSRF-Token` header. It exposes status/drain, project, backend, environment, credential, run and interaction management; credential responses never include secret values. On Windows, credential values are DPAPI-encrypted before being written; on Linux only external references (for example `systemd://name`) are stored, never local plaintext.
+
+Environment profiles reject secret-like keys (`TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `*_KEY`) and `WFC_*` variables; profiles hold only bridge application settings. Backend child processes receive a filtered environment that strips all `WFC_*` and secret-like variables.
+
+Recovery: terminal results stay in `<stateDir>/worker.db` as `completion_pending` runs with a stable frame id until Core acknowledges them; after a restart, unacknowledged terminal frames are replayed from the outbox and acknowledged runs are dropped. Mid-flight runs are resumed only when the backend supports `resume` and a session ref was persisted; otherwise the Worker fails the task closed with a clear terminal error and never replays the original prompt.
 
 After installing the unit:
 
@@ -90,28 +97,29 @@ sudo systemctl enable --now workflow-worker.service
 sudo systemctl is-active --quiet workflow-worker.service
 ```
 
-Readiness requires `workers_online` and `workers_connected` to be non-zero, and the Worker journal should report local DSH readiness followed by a Core connection. Do not grant the Worker admin actions or reuse the central DSH state directory.
+Readiness requires `workers_online` and `workers_connected` to be non-zero, and the Worker journal should report the JSONL backend followed by a Core connection.
 
 ## Windows Worker install
 
-Windows requires Node 24 and an elevated Windows PowerShell 5.1 session. Build the DSH runtime with `npm ci` from the committed `dsh-workflow/package-lock.json`, smoke-test it with isolated `HOME`, `DSH_HOME`, `DSH_SESSION_DB`, `DSH_STATE_DB`, and `DSH_SESSION_QUERY_DB` paths, and pass that exact DSH `0.1.0-rc.8` runtime to the installer. The installer rejects a lock whose `@deepseek-ai/dsh*` package family is not entirely pinned to RC.8 and does not re-resolve that dependency tree during production installation.
+Windows requires Node 24 and an elevated Windows PowerShell 5.1 session. The execution engine (JSONL bridge command) is configured **after** installation through the Worker's loopback admin UI (Backends page, which also persists it into `config.json`); the installer's `-JsonlCommand` is therefore optional and only needed to have the backend in place from the first start. Without it the Worker connects to Core with no backend capabilities and does not claim tasks until you add one.
 
-The installer reads the one-time worker token from standard input, restricts `C:\ProgramData\WorkflowCore` to `SYSTEM` and Administrators, immediately encrypts the token with LocalMachine DPAPI, and registers the `Workflow Core Worker` startup task under `SYSTEM`. The token must not appear in command arguments, environment files, logs, or intermediate files.
+The installer reads the one-time worker token from standard input, restricts `C:\ProgramData\WorkflowCore` to `SYSTEM` and Administrators, immediately encrypts the token with LocalMachine DPAPI, and registers the `Workflow Core Worker` startup task under `SYSTEM`. The token must not appear in command arguments, environment files, logs, or intermediate files. Non-secret settings (Core URL, worker id, capabilities, JSONL command/args, admin port) are written to `secrets\worker-settings.json` inside the ACL-protected tree; the start script reads them and no longer depends on machine-level environment variables.
 
 ```powershell
 $tokenProducer | powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
   -File E:\Workflow\workflow-core\ops\windows\install-workflow-worker.ps1 `
-  -DshRuntimeSource C:\path\to\verified-dsh-runtime
+  -JsonlCommand C:\path\to\workflow-jsonl-bridge.exe `
+  -CoreUrl https://<core-address>:8710
 ```
 
 `$tokenProducer` must emit only the one-time plaintext token. The installation is ready only after all of these checks pass:
 
 1. The scheduled task is Running under `SYSTEM`, with restart-on-failure configured.
-2. The latest worker log reports `local DSH ready` and `connected` with an empty error log.
-3. Core reports `windows-<hostname>` online with the current model revision.
+2. The latest worker log reports `JSONL backend ready` and `connected` with an empty error log.
+3. Core reports `windows-<hostname>` online with the registered JSONL backend and config revision.
 4. A task constrained by `worker_selector.capabilities = ["powershell"]` completes on that worker.
-5. Stopping and starting the scheduled task creates a new Worker/DSH process pair and reconnects without reissuing credentials.
-6. Worker recovery state remains below `C:\ProgramData\WorkflowCore\state`, while DSH profile and session storage remain below `C:\ProgramData\WorkflowCore\dsh-home`; the SYSTEM profile must stay unused.
+5. Stopping and starting the scheduled task creates a new Worker/JSONL bridge process pair and reconnects without reissuing credentials.
+6. Worker recovery state remains below `C:\ProgramData\WorkflowCore\state`, while the bridge must not use the SYSTEM profile.
 
 ## Production acceptance
 
@@ -130,13 +138,13 @@ curl -fsS -H 'content-type: application/json' \
 6. Confirm the retired services and port remain absent:
 
 ```bash
-systemctl is-active workflow-core.service workflow-worker.service dsh-web.service
-systemctl is-enabled wf-api.service feishu-listener.service ai-engine.service dsh-web-public.service
-ss -ltn | grep -E ':(3080|3081|8710|18710|18711)\b'
+systemctl is-active workflow-core.service workflow-worker.service
+systemctl is-enabled wf-api.service feishu-listener.service ai-engine.service
+ss -ltn | grep -E ':(8710|18710|18711)\b'
 sudo ufw status numbered
 ```
 
-The three retained units must be active. The four retired units must be disabled, nothing may listen on `3080`, and UFW must not contain a `3080/tcp` rule.
+The retained units must be active and retired units disabled.
 
 ## Knowledge cutover
 
@@ -159,4 +167,4 @@ sudo systemctl start workflow-core.service
 
 Restoring a pre-import `workflow.db` discards knowledge changes made after that backup. Do it only after preserving the current database and only when the incident specifically requires repository rollback.
 
-Reactivating the legacy stack is a separate disaster-recovery operation. Restore the known-good legacy Nginx configuration first, stop Core and its Worker, and then enable the legacy services. Never run both Feishu listeners at once. Reopening `3080/tcp` is not required when DSH remains available through the `8710` Nginx gateway.
+Rollback restores the previous Core and Worker release together; never run duplicate Core or Feishu listeners.

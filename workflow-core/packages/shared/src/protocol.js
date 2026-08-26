@@ -1,7 +1,15 @@
 // protocol.js - wire contract between Workflow Core and workers.
 // Envelope: { type, id, ts, payload }. Every frame validates against this module.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 4;
+
+export const INTERACTION_KINDS = Object.freeze([
+  'question', 'approval', 'credential', 'file_select', 'control',
+]);
+
+export const INTERACTION_STATUSES = Object.freeze([
+  'pending', 'answered', 'delivered', 'consumed', 'expired', 'cancelled',
+]);
 
 export const TASK_STATUSES = Object.freeze([
   'queued', 'dispatched', 'running', 'done', 'failed', 'blocked', 'awaiting_input', 'cancelled',
@@ -16,13 +24,14 @@ export const DEFAULT_PRIORITY = 5;
 
 // worker -> core
 export const WORKER_FRAME_TYPES = Object.freeze([
-  'register', 'heartbeat', 'progress', 'session_event', 'task_done',
-  'models_ack', 'capabilities_update', 'approval_request', 'error',
+  'register', 'heartbeat', 'status', 'progress', 'session_event',
+  'interaction_required', 'interaction_resolved', 'task_done', 'task_failed',
+  'error',
 ]);
 
-// core -> worker
 export const CORE_FRAME_TYPES = Object.freeze([
-  'dispatch', 'cancel', 'inject', 'models', 'config', 'ping', 'approval_result', 'error',
+  'config', 'dispatch', 'inject', 'cancel', 'pause', 'resume',
+  'interaction_response', 'interaction_cancel', 'ping', 'ack', 'error',
 ]);
 
 const FRAME_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -56,16 +65,30 @@ export function isCoreFrame(frameValue) {
   return CORE_FRAME_TYPES.includes(frameValue?.type);
 }
 
-export function modelPushEntry({ provider, model, key, baseUrl, priority }) {
-  if (typeof provider !== 'string' || !provider) throw new TypeError('provider must be a non-empty string');
-  if (typeof model !== 'string' || !model) throw new TypeError('model must be a non-empty string');
-  if (typeof key !== 'string' || !key) throw new TypeError('key must be a non-empty string');
-  if (typeof baseUrl !== 'string' || !/^https?:\/\//.test(baseUrl)) throw new TypeError('baseUrl must be an http(s) URL');
-  const priorityValue = Number(priority);
-  if (!Number.isInteger(priorityValue) || priorityValue < PRIORITY_MIN || priorityValue > PRIORITY_MAX) {
-    throw new TypeError(`priority must be an integer ${PRIORITY_MIN}-${PRIORITY_MAX}`);
+export function validateInteractionRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('interaction request must be an object');
+  for (const field of ['interaction_id', 'task_id', 'kind']) {
+    if (typeof value[field] !== 'string' || !value[field]) throw new TypeError(`${field} is required`);
   }
-  return { provider, model, key, baseUrl, priority: priorityValue };
+  if (!INTERACTION_KINDS.includes(value.kind)) throw new TypeError(`unsupported interaction kind: ${value.kind}`);
+  if (value.expires_at !== undefined && (typeof value.expires_at !== 'string' || Number.isNaN(Date.parse(value.expires_at)))) {
+    throw new TypeError('expires_at must be an ISO timestamp');
+  }
+  if (value.schema !== undefined && (!value.schema || typeof value.schema !== 'object' || Array.isArray(value.schema))) {
+    throw new TypeError('interaction schema must be an object');
+  }
+  return value;
+}
+
+export function validateInteractionResponse(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('interaction response must be an object');
+  for (const field of ['interaction_id', 'response_id']) {
+    if (typeof value[field] !== 'string' || !value[field]) throw new TypeError(`${field} is required`);
+  }
+  if (value.answers !== undefined && (value.answers === null || typeof value.answers !== 'object' || Array.isArray(value.answers))) {
+    throw new TypeError('answers must be an object');
+  }
+  return value;
 }
 
 export function validatePriority(priority) {

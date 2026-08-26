@@ -1,27 +1,24 @@
-// service.js - Feishu backend of the core: inbound messages become watched
-// tasks, live task events refresh the watch card (throttled), replies to the
-// card inject corrections into the running session, buttons cancel/pause, and
-// worker approval requests turn into approve/deny cards routed back to the
-// worker. The Feishu WebSocket long connection is owned by start(); tests
-// drive the service handlers directly.
+// service.js - Feishu task intake, live cards, session correction, and
+// backend-neutral question/approval responses. Credential and file selection
+// interactions never pass through this surface.
 import crypto from 'node:crypto';
 import { buildTaskCard } from './client.js';
-import { parseDecisionJson } from '../ai/driver.js';
-import { ApprovalRegistry } from '../approvals/registry.js';
 
 const CARD_THROTTLE_MS = 3000;
-const IMMEDIATE_EVENT_TYPES = new Set(['done', 'failed', 'cancelled', 'approval_request', 'injected']);
+const IMMEDIATE_EVENT_TYPES = new Set([
+  'done', 'failed', 'cancelled', 'awaiting_input', 'input_delivered',
+  'interaction_cancelled', 'injected',
+]);
 const APPROVE_REPLY = /^(?:批准|同意|允许|approve|allow)[!。.!，,\s]*$/i;
 const DENY_REPLY = /^(?:拒绝|不同意|deny|reject)[!。.!，,\s]*$/i;
 
 export class FeishuService {
-  constructor({ client, taskRepository, workerChannel, coreDb, db = null, driver = null, approvals = null, log = () => {} } = {}) {
+  constructor({ client, taskRepository, interactionRepository, workerChannel, coreDb, db = null, log = () => {} } = {}) {
     this.client = client;
     this.tasks = taskRepository;
+    this.interactions = interactionRepository;
     this.channel = workerChannel;
     this.db = db || coreDb.db;
-    this.driver = driver;
-    this.approvals = approvals ?? new ApprovalRegistry({ db: this.db });
     this.log = log;
     this.connection = null;
     this.timers = new Map(); // task_id -> pending flush timer
@@ -55,31 +52,56 @@ export class FeishuService {
     return changes > 0;
   }
 
-  async handleInboundMessage({ messageId, chatId, text, senderId = null }) {
+  async handleInboundMessage({ messageId, chatId, text, senderId = null, projectId = null, project_id = null }) {
     if (!messageId || !chatId || typeof text !== 'string' || !text.trim()) return { ok: false, error: 'invalid_message' };
     if (!this.#deduped(messageId, chatId)) return { ok: true, duplicate: true };
 
-    // A reply in a chat with an active watched task is a correction, not a
-    // new task. A bare 批准/拒绝 reply decides a pending approval instead.
+    // A reply in a watched chat is first offered to a pending approval. Other
+    // text remains a correction for the active task instead of creating work.
     const watched = this.#activeWatchForChat(chatId);
-    if (watched && watched.task_id) {
-      const pending = this.approvals.pendingForTask(watched.task_id);
-      if (pending) {
-        const operator = `feishu:${senderId ?? 'user'}`;
-        if (APPROVE_REPLY.test(text.trim())) {
-          const resolved = this.channel?.resolveApproval
-            ? this.channel.resolveApproval(pending.approval_id, true, operator)
-            : this.#resolveApproval(pending.approval_id, true, operator);
-          return { ok: resolved.ok !== false, approval_resolved: true, approved: true, task_id: watched.task_id };
-        }
-        if (DENY_REPLY.test(text.trim())) {
-          const resolved = this.channel?.resolveApproval
-            ? this.channel.resolveApproval(pending.approval_id, false, operator)
-            : this.#resolveApproval(pending.approval_id, false, operator);
-          return { ok: resolved.ok !== false, approval_resolved: true, approved: false, task_id: watched.task_id };
+    const watchedTask = watched?.task_id ? this.tasks.get(watched.task_id) : null;
+    const requestedProjectId = projectId || project_id || watchedTask?.project_id || null;
+    if (watched?.task_id) {
+      const pending = this.#pendingRemoteInteraction(watched.task_id);
+      const operator = `feishu:${senderId ?? 'user'}`;
+      if (pending?.kind === 'approval') {
+        const approved = APPROVE_REPLY.test(text.trim()) ? true
+          : DENY_REPLY.test(text.trim()) ? false : null;
+        if (approved !== null) {
+          const result = this.#resolveInteraction(
+            pending,
+            approvalAnswers(pending, approved),
+            operator,
+            `feishu-message-${messageId}`,
+          );
+          return {
+            ok: result.ok,
+            interaction_resolved: result.ok,
+            approved,
+            task_id: watched.task_id,
+            ...(result.ok ? {} : { error: result.error }),
+          };
         }
       }
-      const delivered = await this.#inject(watched.task_id, text, `feishu:${senderId ?? 'user'}`);
+      if (pending?.kind === 'question') {
+        const questions = Array.isArray(pending.schema?.questions) ? pending.schema.questions : [];
+        if (questions.length === 1 && !questions[0].options?.length) {
+          const result = this.#resolveInteraction(
+            pending,
+            { [questions[0].id]: text },
+            operator,
+            `feishu-message-${messageId}`,
+          );
+          return {
+            ok: result.ok,
+            interaction_resolved: result.ok,
+            task_id: watched.task_id,
+            ...(result.ok ? {} : { error: result.error }),
+          };
+        }
+        return { ok: false, error: 'interaction_option_required', task_id: watched.task_id };
+      }
+      const delivered = await this.#inject(watched.task_id, text, operator);
       if (delivered) return { ok: true, injected: true, task_id: watched.task_id };
     }
 
@@ -88,6 +110,7 @@ export class FeishuService {
       type: 'feishu.message',
       title: excerptOf(text, 60),
       brief,
+      project_id: requestedProjectId,
       created_by: 'machine:feishu',
     });
     await this.#watch(task, chatId);
@@ -103,32 +126,30 @@ export class FeishuService {
     return { ok: true, task_id: task.task_id };
   }
 
-  // Optional AI triage refines the raw message into a structured brief;
-  // any failure falls back to the plain message as the goal.
   async #triage(text) {
-    if (!this.driver) return { goal: text, context: '来自飞书消息' };
-    try {
-      const reply = await this.driver.ask('feishu-triage', [
-        '把下面的飞书消息整理成任务 brief。只回复 JSON：{"goal":"一句话目标","acceptance":["验收标准"],"context":"补充上下文"}',
-        `消息：${text}`,
-      ].join('\n'));
-      const parsed = parseDecisionJson(reply);
-      if (parsed?.goal) {
-        return {
-          goal: String(parsed.goal),
-          acceptance: Array.isArray(parsed.acceptance) ? parsed.acceptance.map(String).slice(0, 5) : [],
-          context: `${parsed.context ?? ''}\n原始消息：${text}`.trim(),
-        };
-      }
-    } catch (error) {
-      this.log(`[feishu] triage fallback: ${error.message}`);
-    }
     return { goal: text, context: '来自飞书消息' };
   }
 
   // --- watch cards -------------------------------------------------------
   #activeWatchForChat(chatId) {
     return this.db.prepare('SELECT * FROM watch_subscriptions WHERE chat_id = ? AND active = 1 ORDER BY created_at DESC').get(chatId) ?? null;
+  }
+
+  #pendingRemoteInteraction(taskId) {
+    return this.interactions?.list({ taskId, status: 'pending' })
+      .find((interaction) => ['question', 'approval'].includes(interaction.kind)) ?? null;
+  }
+
+  #resolveInteraction(interaction, answers, operator, responseId = crypto.randomUUID()) {
+    if (!interaction || !this.channel?.resolveInteraction) {
+      return { ok: false, error: 'interaction_channel_unavailable' };
+    }
+    return this.channel.resolveInteraction(interaction.interaction_id, {
+      interaction_id: interaction.interaction_id,
+      response_id: responseId,
+      answers,
+      answered_by: operator,
+    });
   }
 
   async #watch(task, chatId) {
@@ -164,12 +185,9 @@ export class FeishuService {
     const task = this.tasks.get(taskId);
     if (!task) return;
     const events = this.tasks.events(taskId, { type: 'session_event', limit: 50 });
-    const approval = this.approvals.pendingForTask(taskId);
-    const card = buildTaskCard({
-      task,
-      events,
-      approval: approval ? { approval_id: approval.approval_id, tool: approval.tool, risk: approval.risk, reason: approval.reason } : null,
-    });
+    const interactions = this.interactions?.list({ taskId, status: 'pending' })
+      .filter((interaction) => ['question', 'approval'].includes(interaction.kind)) ?? [];
+    const card = buildTaskCard({ task, events, interactions });
     for (const sub of subs) {
       if (!sub.message_id) continue;
       try {
@@ -179,16 +197,16 @@ export class FeishuService {
         this.log(`[feishu] card update failed for ${sub.id}: ${error.message}`);
       }
     }
-    if (['done', 'failed', 'cancelled'].includes(task.status)) {
-      this.db.prepare('UPDATE watch_subscriptions SET active = 0 WHERE task_id = ?').run(taskId);
-    }
+    // Keep the subscription after completion so a later message in the same
+    // chat creates a follow-up task for the same project. Active execution is
+    // determined by the task status, not by this conversation pointer.
   }
 
   // --- outbound actions --------------------------------------------------
   async #inject(taskId, content, by) {
     const task = this.tasks.get(taskId);
     if (!task || !['dispatched', 'running'].includes(task.status)) return false;
-    const delivered = this.channel?.sendToWorker(task.claim_worker_id, {
+    const delivered = this.channel?.sendToWorker?.(task.claim_worker_id, {
       type: 'inject', id: crypto.randomUUID(), ts: new Date().toISOString(),
       payload: { task_id: taskId, content, by },
     });
@@ -203,11 +221,14 @@ export class FeishuService {
       const task = this.tasks.get(value.task_id);
       if (!task) return { ok: false, error: 'task_not_found' };
       try {
+        const ownerWorkerId = task.claim_worker_id;
         const cancelled = this.tasks.cancel(value.task_id, operator);
-        this.channel?.sendToWorker(cancelled.claim_worker_id ?? value.task_id, {
-          type: 'cancel', id: crypto.randomUUID(), ts: new Date().toISOString(),
-          payload: { task_id: value.task_id, reason: `cancelled by ${operator}` },
-        });
+        if (ownerWorkerId) {
+          this.channel?.sendToWorker?.(ownerWorkerId, {
+            type: 'cancel', id: crypto.randomUUID(), ts: new Date().toISOString(),
+            payload: { task_id: value.task_id, reason: `cancelled by ${operator}` },
+          });
+        }
         return { ok: true, status: cancelled.status };
       } catch (error) {
         return { ok: false, error: error.message };
@@ -217,59 +238,46 @@ export class FeishuService {
       const delivered = await this.#inject(value.task_id, '暂停：请停止当前步骤，总结已完成的进度和当前状态，等待进一步指示。', operator);
       return { ok: delivered };
     }
-    if (kind === 'approve' || kind === 'deny') {
-      if (this.channel?.resolveApproval) {
-        return this.channel.resolveApproval(value.approval_id, kind === 'approve', operator);
+    if (kind === 'interaction_response') {
+      const interaction = this.interactions?.get(value.interaction_id);
+      if (!interaction || interaction.task_id !== value.task_id) {
+        return { ok: false, error: 'interaction_not_found' };
       }
-      return this.#resolveApproval(value.approval_id, kind === 'approve', operator);
+      if (!['question', 'approval'].includes(interaction.kind)) {
+        return { ok: false, error: 'local_interaction_required' };
+      }
+      const result = this.#resolveInteraction(
+        interaction,
+        { [value.question_id]: value.option_id },
+        operator,
+        value.response_id || `feishu-card-${interaction.interaction_id}-${value.option_id}`,
+      );
+      if (result.ok) await this.#refreshCard(interaction.task_id);
+      return result;
     }
     return { ok: false, error: `unknown action: ${kind}` };
   }
 
-  #resolveApproval(approvalId, approved, operator) {
-    const row = this.approvals.resolve(approvalId, approved, operator);
-    if (!row) return { ok: false, error: 'approval_not_found' };
-    this.tasks.appendSessionEvent(row.task_id, {
-      kind: 'approval_resolved', approval_id: approvalId, approved, by: operator,
-    }, operator);
-    const task = this.tasks.get(row.task_id);
-    if (task?.claim_worker_id && this.channel) {
-      this.channel.sendToWorker(task.claim_worker_id, {
-        type: 'approval_result', id: crypto.randomUUID(), ts: new Date().toISOString(),
-        payload: {
-          task_id: row.task_id, approval_id: approvalId, approved, by: operator,
-          dsh_approval_id: row.dsh_approval_id, dsh_rpc_id: row.dsh_rpc_id, dsh_session_id: row.dsh_session_id,
-        },
-      });
-    }
-    return { ok: true, approved };
-  }
-
-  // Card refresh entry point for other surfaces (e.g. the WS channel after an
-  // approval was decided outside Feishu).
   async refreshCardForTask(taskId) {
     return this.#refreshCard(taskId);
   }
 
-  // Called by the WS channel when a worker raises an approval request; the
-  // card refresh path renders the pending approval into the watch card.
-  async handleApprovalRequest(payload) {
-    const record = this.approvals.create({
-      taskId: payload.task_id,
-      tool: payload.tool ?? null,
-      risk: payload.risk ?? null,
-      reason: payload.reason ?? null,
-      dshApprovalId: payload.dsh_approval_id ?? null,
-      dshRpcId: payload.dsh_rpc_id ?? null,
-      dshSessionId: payload.dsh_session_id ?? null,
-    });
-    this.tasks.appendSessionEvent(payload.task_id, {
-      kind: 'approval_request', approval_id: record.approval_id,
-      tool: record.tool, risk: record.risk, reason: record.reason,
-    }, 'worker');
-    await this.#refreshCard(payload.task_id);
-    return { approval_id: record.approval_id };
+  async handleInteractionRequired(interaction) {
+    if (!['question', 'approval'].includes(interaction.kind)) return { routed: false };
+    await this.#refreshCard(interaction.task_id);
+    return { routed: true, interaction_id: interaction.interaction_id };
   }
+}
+
+function approvalAnswers(interaction, approved) {
+  const questions = Array.isArray(interaction?.schema?.questions) ? interaction.schema.questions : [];
+  const question = questions.find((entry) => Array.isArray(entry.options) && entry.options.length >= 2);
+  if (!question) throw new Error('approval interaction has no decision question');
+  const preferredIds = approved ? ['approve', 'approved', 'allow', 'yes'] : ['deny', 'denied', 'reject', 'no'];
+  const option = preferredIds.map((id) => question.options.find((entry) => entry.id === id)).find(Boolean)
+    ?? question.options[approved ? 0 : 1];
+  if (!option?.id) throw new Error('approval interaction has no decision option');
+  return { [question.id]: option.id };
 }
 
 function excerptOf(text, length) {

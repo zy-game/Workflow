@@ -1,7 +1,4 @@
 // channel.js - authenticated WebSocket control channel for workers.
-// Mounts on the public HTTPS server at /worker. Machines authenticate with a
-// Bearer worker-scope token at upgrade time; every task mutation frame must
-// carry the claim token issued at dispatch.
 import { WebSocketServer } from 'ws';
 import { PROTOCOL_VERSION, frame, isWorkerFrame, parseFrame } from '@workflow-core/shared';
 import { actionsAllow } from '../http/server.js';
@@ -9,66 +6,119 @@ import { selectorMatches } from '../tasks/repository.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const WORKER_PATH = '/worker';
+const OPEN = 1;
+
+function workerIdForPrincipal(principal) {
+  const subject = String(principal?.subject_id || '');
+  return subject.startsWith('machine:') ? subject.slice('machine:'.length) : subject;
+}
+
+function scopedProjects(principal, requested) {
+  const tokenProjects = Array.isArray(principal.project_ids) ? principal.project_ids.map(String) : [];
+  const projects = Array.isArray(requested) ? requested : [];
+  const ids = [...new Set(projects.map((project) => typeof project === 'string' ? project : project?.project_id).filter(Boolean))];
+  if (tokenProjects.includes('*')) return ids;
+  for (const projectId of ids) {
+    if (!tokenProjects.includes(projectId)) throw new Error(`project not permitted by worker token: ${projectId}`);
+  }
+  return ids;
+}
 
 export function createWorkerChannel({
-  authRepository, taskRepository, workersRegistry, modelRegistry, dshSync = null, managementAi = null,
-  feishuService = null, approvalsRegistry = null, log = () => {},
+  authRepository, taskRepository, interactionRepository, workersRegistry,
+  feishuService = null, credentialCipher = null, log = () => {},
 } = {}) {
   const wss = new WebSocketServer({ noServer: true });
-  const sessions = new Map(); // worker_id -> { ws, worker, principal }
+  const sessions = new Map();
 
   function sendTo(workerId, frameValue) {
     const session = sessions.get(workerId);
-    if (!session || session.ws.readyState !== session.ws.OPEN) return false;
-    session.ws.send(JSON.stringify(frameValue));
-    return true;
-  }
-
-  function modelsFrame() {
-    return frame('models', { models: modelRegistry.pushList(), revision: modelRegistry.revision });
-  }
-
-  function broadcastModels() {
-    if (!modelRegistry) return;
-    for (const [workerId] of sessions) sendTo(workerId, modelsFrame());
-    log(`[ws] models revision ${modelRegistry.revision} pushed to ${sessions.size} worker(s)`);
-  }
-
-  async function syncDshModel() {
-    if (!dshSync || !modelRegistry) return;
+    if (!session || session.ws.readyState !== OPEN) return false;
     try {
-      await dshSync.syncTopModel(modelRegistry);
-    } catch (error) {
-      log(`[ws] central DSH model sync failed: ${error.message}`);
+      session.ws.send(JSON.stringify(frameValue));
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  // --- dispatcher -------------------------------------------------------
+  function buildConfigFrame(workerId) {
+    const serverConfig = workersRegistry.serverConfig(workerId);
+    const revoked = workersRegistry.isRevoked(workerId);
+    let credentials = [];
+    try {
+      credentials = workersRegistry.listCredentials(workerId).map((entry) => ({
+        credentialId: entry.credentialId,
+        name: entry.name,
+        kind: entry.kind,
+        reference: entry.reference,
+        metadata: entry.metadata,
+        value: entry.secretEncrypted && credentialCipher ? credentialCipher.decrypt(entry.secretEncrypted) : null,
+      }));
+    } catch (error) {
+      log(`[ws] credential delivery failed for ${workerId}: ${error.message}`);
+    }
+    const skills = workersRegistry.listSkills().map((skill) => ({ name: skill.name, version: skill.version, content: skill.content }));
+    return frame('config', {
+      protocol_version: PROTOCOL_VERSION,
+      heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
+      worker: workersRegistry.get(workerId),
+      server_config: serverConfig ?? null,
+      credentials,
+      skills,
+      revoked,
+    });
+  }
+
+  function pushConfig(workerId) {
+    return sendTo(workerId, buildConfigFrame(workerId));
+  }
+
   function activeTaskCount(workerId) {
     return taskRepository.activeForWorker(workerId).length;
   }
 
-  function resumeActiveTasks(session) {
+  function deliverInteraction(interaction) {
+    if (!interaction?.worker_id || !interaction.response) return false;
+    const task = taskRepository.get(interaction.task_id);
+    if (!task || task.claim_worker_id !== interaction.worker_id || !task.claim_token) return false;
+    const delivered = sendTo(interaction.worker_id, frame('interaction_response', {
+      task_id: task.task_id,
+      claim_token: task.claim_token,
+      interaction_id: interaction.interaction_id,
+      response: interaction.response,
+    }));
+    if (!delivered) return false;
+    interactionRepository.markDelivered(interaction.interaction_id);
+    return true;
+  }
+
+  function resumeSession(workerId) {
     let resumed = 0;
-    for (const task of taskRepository.activeForWorker(session.worker.worker_id)) {
-      if (!sendTo(session.worker.worker_id, frame('dispatch', { task, resumed: true }))) break;
+    for (const task of taskRepository.activeForWorker(workerId)) {
+      if (!sendTo(workerId, frame('dispatch', { task, resumed: true }))) break;
       resumed += 1;
     }
+    for (const interaction of interactionRepository.pendingDelivery(workerId)) deliverInteraction(interaction);
     return resumed;
   }
 
-  function dispatchToWorker(session) {
-    const { worker } = session;
+  function dispatchToWorker(workerId) {
+    const session = sessions.get(workerId);
+    const worker = workersRegistry.get(workerId);
+    if (!session || session.ws.readyState !== OPEN || !worker?.connected || !worker.fresh || worker.state !== 'running') return 0;
     let dispatched = 0;
-    while (activeTaskCount(worker.worker_id) < worker.max_concurrency) {
-      const task = taskRepository.claim({ worker_id: worker.worker_id, selector: worker.selector });
+    while (activeTaskCount(workerId) < worker.max_concurrency) {
+      const task = taskRepository.claim({
+        worker_id: workerId,
+        selector: worker.selector,
+        project_ids: worker.projects,
+        capabilities: worker.capabilities,
+        backends: worker.backends,
+      });
       if (!task) break;
-      const delivered = sendTo(worker.worker_id, frame('dispatch', { task }));
-      if (!delivered) {
-        // Socket died mid-dispatch: release the claim back to the queue.
-        taskRepository.db.prepare(
-          "UPDATE tasks SET status = 'queued', claim_token = NULL, claim_worker_id = NULL, lease_deadline = NULL, updated_at = ? WHERE task_id = ?",
-        ).run(new Date().toISOString(), task.task_id);
+      if (!sendTo(workerId, frame('dispatch', { task }))) {
+        taskRepository.releaseUndeliveredClaim(task.task_id, task.claim_token);
         break;
       }
       dispatched += 1;
@@ -78,20 +128,19 @@ export function createWorkerChannel({
 
   function tryDispatch() {
     let total = 0;
-    for (const session of sessions.values()) {
-      if (!session.worker?.fresh) continue;
-      total += dispatchToWorker(session);
-    }
+    for (const workerId of sessions.keys()) total += dispatchToWorker(workerId);
     return total;
   }
 
-  // --- connection handling ----------------------------------------------
   function handleUpgrade(server) {
     server.on('upgrade', (request, socket, head) => {
       let pathname = '/';
       try { pathname = new URL(request.url, 'http://local').pathname; } catch { /* keep default */ }
-      if (pathname !== WORKER_PATH) return; // other upgrade paths handled elsewhere
-      let principal = null;
+      if (pathname !== WORKER_PATH) {
+        socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+        return;
+      }
+      let principal;
       try {
         const header = request.headers.authorization;
         const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';
@@ -99,201 +148,228 @@ export function createWorkerChannel({
         if (!machine) throw new Error('invalid token');
         if (!actionsAllow(machine.principal.actions, 'worker:register')) throw new Error('worker scope required');
         principal = machine.principal;
-      } catch (error) {
+      } catch {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
       }
       wss.handleUpgrade(request, socket, head, (ws) => {
-        // One session object per connection carries registration state
-        // across frames; task frames validate ownership against it.
-        const session = { ws, principal, worker: null };
+        const session = { ws, principal, workerId: null, queue: Promise.resolve() };
         ws.on('message', (data) => {
           let parsed;
-          try { parsed = parseFrame(JSON.parse(data.toString())); } catch { return; }
+          try { parsed = parseFrame(JSON.parse(data.toString())); } catch { parsed = null; }
           if (!parsed || !isWorkerFrame(parsed)) {
             ws.send(JSON.stringify(frame('error', { error: 'invalid frame' })));
             return;
           }
-          handleMessage(session, parsed).catch((error) => {
-            log(`[ws] frame ${parsed.type} failed: ${error.message}`);
-            ws.send(JSON.stringify(frame('error', { error: error.message, in_reply_to: parsed.id })));
-          });
+          session.queue = session.queue
+            .catch(() => {})
+            .then(() => handleMessage(session, parsed))
+            .then((result) => {
+              if (parsed.type !== 'register') {
+                workersRegistry.recordInboundFrame(session.workerId, parsed.id);
+                if (ws.readyState === OPEN) ws.send(JSON.stringify(frame('ack', { frame_id: parsed.id, accepted: true })));
+              }
+              return result;
+            })
+            .catch((error) => {
+              log(`[ws] frame ${parsed.type} failed: ${error.message}`);
+              if (ws.readyState === OPEN) {
+                ws.send(JSON.stringify(frame('error', { error: error.message, code: error.code ?? null, in_reply_to: parsed.id })));
+                if (parsed.type !== 'register') {
+                  try {
+                    workersRegistry.recordInboundFrame(session.workerId, parsed.id);
+                    ws.send(JSON.stringify(frame('ack', {
+                      frame_id: parsed.id,
+                      accepted: false,
+                      error: error.code ?? error.message,
+                    })));
+                  } catch { /* connection or database may be closing */ }
+                }
+              }
+            });
         });
         ws.on('close', () => {
-          for (const [workerId, registered] of sessions) {
-            if (registered.ws === ws) {
-              sessions.delete(workerId);
-              try { workersRegistry?.markDisconnected(workerId); } catch { /* database may already be closing */ }
-              log(`[ws] worker ${workerId} disconnected`);
-            }
+          if (session.workerId && sessions.get(session.workerId)?.ws === ws) {
+            sessions.delete(session.workerId);
+            try { workersRegistry.markDisconnected(session.workerId); } catch { /* database may be closing */ }
+            log(`[ws] worker ${session.workerId} disconnected`);
           }
         });
-        ws.on('error', () => { /* close handler performs cleanup */ });
+        ws.on('error', () => { /* close performs cleanup */ });
       });
     });
   }
 
-  // Server-side liveness pings; dead sockets drop and free the worker.
   const pingTimer = setInterval(() => {
     for (const session of sessions.values()) {
-      if (session.ws.readyState === session.ws.OPEN) session.ws.ping();
+      if (session.ws.readyState === OPEN) session.ws.ping();
     }
   }, HEARTBEAT_INTERVAL_MS);
   pingTimer.unref();
 
-  async function handleMessage(session, { type, payload }) {
+  async function handleMessage(session, { type, id, payload }) {
+    if (type !== 'register' && !session.workerId) throw new Error('not registered');
+    if (type !== 'register') {
+      if (workersRegistry.hasInboundFrame(session.workerId, id)) {
+        if (session.ws.readyState === OPEN) session.ws.send(JSON.stringify(frame('ack', { frame_id: id, duplicate: true, accepted: true })));
+        return { duplicate: true };
+      }
+    }
+    let result;
     switch (type) {
       case 'register': {
+        const authenticatedId = workerIdForPrincipal(session.principal);
+        const requestedId = String(payload.worker_id || authenticatedId);
+        if (!authenticatedId || requestedId !== authenticatedId) throw new Error('worker_id does not match token subject');
         const worker = workersRegistry.register({
-          worker_id: String(payload.worker_id || ''),
+          worker_id: authenticatedId,
           subject_id: session.principal.subject_id,
           machine: payload.machine ?? null,
           capabilities: Array.isArray(payload.capabilities) ? payload.capabilities : [],
           selector: payload.selector && typeof payload.selector === 'object' ? payload.selector : {},
+          projects: scopedProjects(session.principal, payload.projects),
+          backends: Array.isArray(payload.backends) ? payload.backends : [],
+          state: payload.state ?? 'running',
+          config_revision: payload.config_revision ?? 0,
           max_concurrency: payload.max_concurrency ?? 1,
           version: payload.version ?? null,
         });
-        session.worker = worker;
-        const previous = sessions.get(worker.worker_id);
+        session.workerId = authenticatedId;
+        const previous = sessions.get(authenticatedId);
         if (previous && previous.ws !== session.ws) previous.ws.close();
-        sessions.set(worker.worker_id, session);
-        session.ws.send(JSON.stringify(frame('config', {
-          protocol_version: PROTOCOL_VERSION,
-          heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
-          worker,
-        })));
-        if (modelRegistry) session.ws.send(JSON.stringify(modelsFrame()));
-        const resumed = resumeActiveTasks(session);
-        log(`[ws] worker ${worker.worker_id} registered (capabilities: ${worker.capabilities.join(',') || 'none'}, resumed: ${resumed})`);
-        tryDispatch();
-        break;
-      }
-      case 'heartbeat': {
-        if (!session.worker || !workersRegistry.heartbeat(session.worker.worker_id)) {
-          throw new Error('not registered');
-        }
-        session.ws.send(JSON.stringify(frame('ping', { server_time: new Date().toISOString() })));
-        break;
-      }
-      case 'progress': {
-        requireOwnership(taskRepository, session, payload);
-        const task = taskRepository.progress(payload.task_id, String(payload.claim_token || ''), {
-          note: payload.note ?? null, percent: payload.percent ?? null,
-          events: Array.isArray(payload.events) ? payload.events : [],
-        });
-        return task;
-      }
-      case 'session_event': {
-        requireOwnership(taskRepository, session, payload, { requireClaim: false });
-        return taskRepository.appendSessionEvent(payload.task_id, payload.event ?? {}, session.worker?.worker_id ?? null);
-      }
-      case 'task_done': {
-        requireOwnership(taskRepository, session, payload);
-        const task = taskRepository.done(payload.task_id, String(payload.claim_token || ''), {
-          kind: payload.kind ?? 'done', result: payload.result ?? null,
-        });
-        setImmediate(() => tryDispatch()); // freed capacity
-        // Knowledge review runs off the wire; failures never affect the task.
-        if (managementAi && ['done', 'blocked'].includes(task.status)) {
-          setImmediate(() => {
-            managementAi.reviewCompletedTask(task).catch((error) => log(`[ai] review failed for ${task.task_id}: ${error.message}`));
-          });
-        }
-        return task;
-      }
-      case 'models_ack': {
-        workersRegistry.recordModelsAck(session.worker.worker_id, payload.revision ?? 0);
-        return { acknowledged: true };
-      }
-      case 'capabilities_update': {
-        const worker = workersRegistry.register({
-          ...session.worker,
-          worker_id: session.worker.worker_id,
-          capabilities: Array.isArray(payload.capabilities) ? payload.capabilities : session.worker.capabilities,
-          selector: payload.selector ?? session.worker.selector,
-          max_concurrency: payload.max_concurrency ?? session.worker.max_concurrency,
-        });
-        session.worker = worker;
+        sessions.set(authenticatedId, session);
+        session.ws.send(JSON.stringify(buildConfigFrame(authenticatedId)));
+        const resumed = resumeSession(authenticatedId);
+        log(`[ws] worker ${authenticatedId} registered (resumed: ${resumed})`);
         tryDispatch();
         return worker;
       }
-      case 'approval_request': {
-        requireOwnership(taskRepository, session, payload, { requireClaim: false });
-        // Feishu renders the ask into approve/deny card buttons; either way
-        // the registry row is what every resolution surface acts on.
-        if (feishuService) {
-          return feishuService.handleApprovalRequest(payload);
+      case 'heartbeat': {
+        if (!workersRegistry.heartbeat(session.workerId, { state: payload.state ?? null })) throw new Error('not registered');
+        for (const task of taskRepository.activeForWorker(session.workerId)) {
+          try { taskRepository.renew(task.task_id, task.claim_token); } catch { /* claim may have expired */ }
         }
-        const record = approvalsRegistry.create({
-          taskId: payload.task_id,
-          tool: payload.tool ?? null,
-          risk: payload.risk ?? null,
-          reason: payload.reason ?? null,
-          dshApprovalId: payload.dsh_approval_id ?? null,
-          dshRpcId: payload.dsh_rpc_id ?? null,
-          dshSessionId: payload.dsh_session_id ?? null,
+        session.ws.send(JSON.stringify(frame('ping', { server_time: new Date().toISOString() })));
+        if (payload.state === 'running') tryDispatch();
+        return { acknowledged: true };
+      }
+      case 'status': {
+        if (!workersRegistry.heartbeat(session.workerId, { state: payload.state ?? 'running' })) throw new Error('not registered');
+        if ((payload.state ?? 'running') === 'running') tryDispatch();
+        return workersRegistry.get(session.workerId);
+      }
+      case 'progress': {
+        requireOwnership(session, payload);
+        return taskRepository.progress(payload.task_id, payload.claim_token, {
+          note: payload.note ?? null,
+          percent: payload.percent ?? null,
+          events: Array.isArray(payload.events) ? payload.events : [],
         });
-        taskRepository.appendSessionEvent(payload.task_id, {
-          kind: 'approval_request', approval_id: record.approval_id,
-          tool: record.tool, risk: record.risk, reason: record.reason,
-        }, session.worker?.worker_id ?? null);
-        return { approval_id: record.approval_id };
       }
-      case 'error': {
-        log(`[ws] worker ${session.worker?.worker_id ?? 'unknown'} error: ${payload.error ?? 'unknown'}`);
+      case 'session_event': {
+        requireOwnership(session, payload);
+        return taskRepository.appendSessionEvent(payload.task_id, payload.event ?? {}, session.workerId);
+      }
+      case 'interaction_required': {
+        const task = requireOwnership(session, payload);
+        const interaction = interactionRepository.create({
+          ...payload,
+          worker_id: session.workerId,
+          backend_kind: task.backend_kind,
+          session_ref: payload.session_ref ?? task.session_ref,
+        });
+        if (task.status !== 'awaiting_input') {
+          taskRepository.enterAwaitingInput(task.task_id, task.claim_token, interaction.interaction_id);
+        }
+        if (['question', 'approval'].includes(interaction.kind)) {
+          Promise.resolve(feishuService?.handleInteractionRequired?.(interaction)).catch((error) => {
+            log(`[feishu] interaction ${interaction.interaction_id} failed: ${error.message}`);
+          });
+        }
+        return interaction;
+      }
+      case 'interaction_resolved': {
+        const task = requireOwnership(session, payload);
+        const interaction = interactionRepository.markConsumed(payload.interaction_id, session.workerId);
+        if (task.status === 'awaiting_input') {
+          taskRepository.resumeAfterInput(task.task_id, task.claim_token, interaction.interaction_id, session.workerId);
+        }
+        taskRepository.appendEvent(payload.task_id, 'interaction_consumed', {
+          interaction_id: payload.interaction_id,
+        }, session.workerId);
+        return interaction;
+      }
+      case 'task_done': {
+        requireOwnership(session, payload);
+        const task = taskRepository.done(payload.task_id, payload.claim_token, {
+          kind: payload.kind ?? 'done', result: payload.result ?? null,
+          session_ref: payload.session_ref ?? null,
+        });
+        setImmediate(tryDispatch);
+        return task;
+      }
+      case 'task_failed': {
+        requireOwnership(session, payload);
+        const task = taskRepository.done(payload.task_id, payload.claim_token, {
+          kind: 'failed', result: payload.result ?? { error: payload.error ?? 'worker failed' },
+          session_ref: payload.session_ref ?? null,
+        });
+        setImmediate(tryDispatch);
+        return task;
+      }
+      case 'error':
+        log(`[ws] worker ${session.workerId} error: ${payload.error ?? 'unknown'}`);
         return { logged: true };
-      }
       default:
         throw new Error(`unhandled frame: ${type}`);
     }
-    return null;
   }
 
-  function requireOwnership(tasks, session, payload, { requireClaim = true } = {}) {
-    if (!session.worker) throw new Error('not registered');
-    const task = tasks.get(payload.task_id);
+  function requireOwnership(session, payload) {
+    const task = taskRepository.get(payload.task_id);
     if (!task) {
       const error = new Error('task does not exist');
       error.code = 'TASK_NOT_FOUND';
       throw error;
     }
-    if (task.claim_worker_id !== session.worker.worker_id) throw new Error('task not claimed by this worker');
-    if (requireClaim && !payload.claim_token) throw new Error('claim_token required');
+    if (task.claim_worker_id !== session.workerId) throw new Error('task not claimed by this worker');
+    if (!payload.claim_token || payload.claim_token !== task.claim_token) throw new Error('claim token mismatch');
+    return task;
   }
 
-  // Single resolution path shared by the Feishu card, Feishu replies, and the
-  // admin console: persist the decision, audit it on the task, and hand the
-  // DSH identifiers back to the owning worker.
-  function resolveApproval(approvalId, approved, operator = 'admin') {
-    const record = approvalsRegistry.resolve(approvalId, approved, operator);
-    if (!record) return { ok: false, error: 'approval_not_found' };
-    taskRepository.appendSessionEvent(record.task_id, {
-      kind: 'approval_resolved', approval_id: approvalId, approved, by: operator,
-    }, operator);
-    const task = taskRepository.get(record.task_id);
-    if (task?.claim_worker_id) {
-      sendTo(task.claim_worker_id, frame('approval_result', {
-        task_id: record.task_id, approval_id: approvalId, approved, by: operator,
-        dsh_approval_id: record.dsh_approval_id, dsh_rpc_id: record.dsh_rpc_id,
-        dsh_session_id: record.dsh_session_id,
-      }));
-    }
-    if (feishuService) {
-      Promise.resolve(feishuService.refreshCardForTask(record.task_id)).catch(() => {});
-    }
-    return { ok: true, approved };
+  function resolveInteraction(interactionId, response) {
+    const interaction = interactionRepository.answer(interactionId, response);
+    if (!interaction) return { ok: false, error: 'interaction_not_found' };
+    const delivered = deliverInteraction(interaction);
+    return { ok: true, interaction: interactionRepository.get(interactionId), delivered };
+  }
+
+  function cancelInteraction(interactionId, actor = 'admin') {
+    const interaction = interactionRepository.cancel(interactionId);
+    if (!interaction) return { ok: false, error: 'interaction_not_found' };
+    const task = taskRepository.get(interaction.task_id);
+    const delivered = task?.claim_worker_id
+      ? sendTo(task.claim_worker_id, frame('interaction_cancel', {
+        task_id: task.task_id,
+        interaction_id: interaction.interaction_id,
+        by: actor,
+      }))
+      : false;
+    taskRepository.appendEvent(interaction.task_id, 'interaction_cancelled', {
+      interaction_id: interaction.interaction_id,
+    }, actor);
+    return { ok: true, interaction, delivered };
   }
 
   return {
     wss,
     handleUpgrade,
     tryDispatch,
-    broadcastModels,
-    syncDshModel,
     sendToWorker: sendTo,
-    resolveApproval,
-    pendingApprovals: (options = {}) => approvalsRegistry.pending(options),
+    pushConfig,
+    resolveInteraction,
+    cancelInteraction,
     connectedWorkers: () => [...sessions.keys()],
     connectedCount: () => sessions.size,
     stop: () => {

@@ -5,6 +5,9 @@ import http from 'node:http';
 import https from 'node:https';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { parseCookies, serializeSessionCookie, serializeSessionCookieClear, SESSION_COOKIE_NAME, verifyPassword } from '../auth/crypto.js';
 import { frame } from '@workflow-core/shared';
 import { ADMIN_HTML } from '../admin/console.js';
@@ -81,16 +84,20 @@ function readBody(req) {
   });
 }
 
-export function createCoreServer({ config = {}, authRepository, taskRepository, workersRegistry = null, modelRegistry = null, probeRunner = null, workerChannel = null, dshGateway = null, knowledgeRepository = null, managementAi = null, feishuService = null } = {}) {
-  const router = createRouter();
-
-  // Admin surfaces are loopback-only unless WFC_ADMIN_ALLOWED_IPS widens them.
-  const allowedIps = new Set(Array.isArray(config.adminAllowedIps) ? config.adminAllowedIps : []);
-  function adminIpAllowed(req) {
-    const ip = req.socket.remoteAddress || '';
-    if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return true;
-    return allowedIps.has(ip);
+function publicEnrollment(e) {
+  if (!e) return null;
+  return { code: e.code, workerId: e.workerId, machine: e.machine, fingerprint: e.fingerprint ? String(e.fingerprint).slice(0, 8) + '…' : null, hasTokenPending: e.hasTokenPending, approvedAt: e.approvedAt, status: e.status, createdAt: e.createdAt, consumedAt: e.consumedAt };
+}
+function findFileByName(dir, name) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) { const found = findFileByName(full, name); if (found) return found; }
+    else if (entry.name === name) return full;
   }
+  return null;
+}
+export function createCoreServer({ config = {}, authRepository, taskRepository, interactionRepository = null, workersRegistry = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null } = {}) {
+  const router = createRouter();
 
   function resolvePrincipal(req) {
     const header = req.headers.authorization;
@@ -108,7 +115,7 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
     const cookies = parseCookies(req.headers.cookie);
     const sessionId = cookies[SESSION_COOKIE_NAME];
     if (sessionId) {
-      const session = authRepository.getBrowserSession(sessionId, req.socket.remoteAddress || '');
+      const session = authRepository.getBrowserSession(sessionId);
       if (session) return session.principal;
     }
     return null;
@@ -124,7 +131,6 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
   }
 
   function requireAdmin(req) {
-    if (!adminIpAllowed(req)) throw new HttpError(403, 'forbidden', 'admin access is not allowed from this address');
     const principal = resolvePrincipal(req);
     if (!principal) throw new HttpError(401, 'auth_required', 'authentication required');
     if (!actionsAllow(principal.actions, '*')) throw new HttpError(403, 'forbidden', 'admin scope required');
@@ -152,6 +158,45 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
     return record;
   }
 
+  function requireTaskVisible(principal, task) {
+    if (!task) throw new HttpError(404, 'task_not_found', 'task does not exist');
+    requireProject(principal, task.project_id);
+    return task;
+  }
+
+  // The migration imported historical local skill/cache directories into the
+  // repository. They remain queryable for audit, but are not business
+  // projects and should not appear in the default project catalog.
+  function isManagedProject(project, includeLegacy = false) {
+    if (includeLegacy || !project) return true;
+    if (project.metadata?.orphanedLegacyDirectory) return false;
+    const systemRoots = [
+      'c:/users/administrator/.agents/',
+      'c:/users/administrator/.codex/',
+      '/home/ubuntu/workspaces/default',
+    ];
+    const locations = Array.isArray(project.locations) ? project.locations : [];
+    return !locations.length || !locations.every((location) => {
+      const normalized = String(location.normalizedPath || '').toLowerCase();
+      return systemRoots.some((root) => normalized === root || normalized.startsWith(root));
+    });
+  }
+
+  function projectCatalogKey(project) {
+    const systemRoots = [
+      'c:/users/administrator/.agents/',
+      'c:/users/administrator/.codex/',
+      '/home/ubuntu/workspaces/default',
+    ];
+    const location = (project.locations || []).find((item) => {
+      const normalized = String(item.normalizedPath || '').toLowerCase();
+      return !systemRoots.some((root) => normalized === root || normalized.startsWith(root));
+    });
+    return location
+      ? `${location.pathFlavor || 'path'}:${String(location.normalizedPath || '').toLowerCase()}`
+      : `project:${project.id}`;
+  }
+
   function queryOptions(req) {
     const url = new URL(req.url, 'http://local');
     const value = (name) => url.searchParams.get(name);
@@ -171,12 +216,13 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
     };
   }
 
-  router.add('GET', '/admin', (req, res) => {
-    if (!adminIpAllowed(req)) throw new HttpError(403, 'forbidden', 'admin access is not allowed from this address');
+  const serveAdmin = (req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(ADMIN_HTML);
     return null;
-  });
+  };
+  router.add('GET', '/admin', serveAdmin);
+  router.add('GET', '/admin/', serveAdmin);
 
   // --- health ---
   router.add('GET', '/api/v1/health', () => {
@@ -193,7 +239,6 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
         tasks: taskRepository.countsByStatus(),
         feishu,
         ...(workersRegistry ? { workers_online: workersRegistry.list({ onlineOnly: true }).length } : {}),
-        ...(modelRegistry ? { models_enabled: modelRegistry.list().filter((entry) => entry.enabled).length } : {}),
         ...(workerChannel ? { workers_connected: workerChannel.connectedCount() } : {}),
       },
     };
@@ -267,38 +312,63 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
   // --- tasks ---
   router.add('POST', '/api/v1/tasks', (req, res, body) => {
     const principal = requireAction(req, 'task:create');
+    // Wildcard principals are global operators, not a concrete project. Do
+    // not silently turn their tasks into project-scoped client work.
+    const inferredProject = principal.project_ids?.length === 1 && principal.project_ids[0] !== '*'
+      ? principal.project_ids[0] : null;
+    const projectId = body.project_id ?? inferredProject;
+    if (projectId) requireProject(principal, projectId);
+    if (projectId && knowledgeRepository && !knowledgeRepository.getProject(projectId)) {
+      throw new HttpError(400, 'project_not_found', `project does not exist: ${projectId}`);
+    }
+    const projectAgent = projectId && projectAgentsRegistry ? projectAgentsRegistry.ensure(projectId) : null;
     const { task, idempotent_replay } = taskRepository.create({
       ...body,
       created_by: principal.subject_id,
-      project_id: body.project_id ?? (principal.project_ids?.length === 1 ? principal.project_ids[0] : null) ?? null,
+      project_id: projectId,
+      agent_id: body.agent_id ?? projectAgent?.agent_id ?? null,
     });
-    if (!idempotent_replay && workerChannel) setImmediate(() => workerChannel.tryDispatch());
+    if (!idempotent_replay) setImmediate(() => workerChannel?.tryDispatch());
     return { ok: true, task, idempotent_replay };
   });
 
+  if (workflowAgent) {
+    router.add('POST', '/api/v1/workflow/tasks/decompose', (req, res, body) => {
+      const principal = requireAction(req, 'task:create');
+      requireProject(principal, body.project_id);
+      const tasks = workflowAgent.createTasks({ ...body, created_by: principal.subject_id });
+      setImmediate(() => workerChannel?.tryDispatch());
+      return { ok: true, tasks };
+    });
+  }
+
   router.add('GET', '/api/v1/tasks', (req) => {
-    requireAction(req, 'task:read');
+    const principal = requireAction(req, 'task:read');
     const url = new URL(req.url, 'http://local');
+    const requestedProject = url.searchParams.get('project_id');
+    if (requestedProject) requireProject(principal, requestedProject);
+    const allowedProjects = principal.project_ids?.includes('*') ? null : new Set(principal.project_ids || []);
+    const listed = taskRepository.list({
+      status: url.searchParams.get('status'),
+      priority: url.searchParams.has('priority') ? Number(url.searchParams.get('priority')) : null,
+      project_id: requestedProject,
+      limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : 100,
+    });
     return {
       ok: true,
-      tasks: taskRepository.list({
-        status: url.searchParams.get('status'),
-        priority: url.searchParams.has('priority') ? Number(url.searchParams.get('priority')) : null,
-        project_id: url.searchParams.get('project_id'),
-        limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : 100,
-      }),
+      tasks: allowedProjects ? listed.filter((task) => !task.project_id || allowedProjects.has(task.project_id)) : listed,
     };
   });
 
   router.add('GET', '/api/v1/tasks/:id', (req, res, body, params) => {
-    requireAction(req, 'task:read');
-    const task = taskRepository.get(params.id);
-    if (!task) throw new HttpError(404, 'task_not_found', 'task does not exist');
+    const principal = requireAction(req, 'task:read');
+    const task = requireTaskVisible(principal, taskRepository.get(params.id));
     return { ok: true, task };
   });
 
   router.add('GET', '/api/v1/tasks/:id/events', (req, res, body, params) => {
-    requireAction(req, 'task:read');
+    const principal = requireAction(req, 'task:read');
+    requireTaskVisible(principal, taskRepository.get(params.id));
     const url = new URL(req.url, 'http://local');
     const events = taskRepository.events(params.id, {
       afterSeq: url.searchParams.has('after_seq') ? Number(url.searchParams.get('after_seq')) : -1,
@@ -308,49 +378,74 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
     return { ok: true, events };
   });
 
-  router.add('POST', '/api/v1/tasks/claim', (req, res, body) => {
-    const principal = requireAction(req, 'task:claim');
-    const workerId = String(body.worker_id || principal.subject_id);
-    const selector = body.selector && typeof body.selector === 'object' ? body.selector : null;
-    const task = taskRepository.claim({ worker_id: workerId, selector });
-    return { ok: true, task };
-  });
-
-  router.add('POST', '/api/v1/tasks/:id/renew', (req, res, body, params) => {
-    requireAction(req, 'task:renew');
-    const task = taskRepository.renew(params.id, String(body.claim_token || ''));
-    return { ok: true, task };
-  });
-
-  router.add('POST', '/api/v1/tasks/:id/progress', (req, res, body, params) => {
-    requireAction(req, 'task:progress');
-    const task = taskRepository.progress(params.id, String(body.claim_token || ''), {
-      note: body.note ?? null,
-      percent: body.percent ?? null,
-      events: Array.isArray(body.events) ? body.events : [],
-    });
-    return { ok: true, task };
-  });
-
-  router.add('POST', '/api/v1/tasks/:id/done', (req, res, body, params) => {
-    requireAction(req, 'task:complete');
-    const task = taskRepository.done(params.id, String(body.claim_token || ''), {
-      kind: body.kind ?? 'done',
-      result: body.result ?? null,
-    });
-    return { ok: true, task };
-  });
-
   router.add('POST', '/api/v1/tasks/:id/cancel', (req, res, body, params) => {
     const principal = requireAction(req, 'task:cancel');
-    const task = taskRepository.cancel(params.id, principal.subject_id);
-    if (workerChannel && task.claim_worker_id) {
-      workerChannel.sendToWorker(task.claim_worker_id, frame('cancel', {
+    const existing = requireTaskVisible(principal, taskRepository.get(params.id));
+    const ownerWorkerId = existing.claim_worker_id;
+    const task = taskRepository.cancel(existing.task_id, principal.subject_id);
+    if (ownerWorkerId) {
+      workerChannel?.sendToWorker?.(ownerWorkerId, frame('cancel', {
         task_id: task.task_id, reason: `cancelled by ${principal.subject_id}`,
       }));
     }
     return { ok: true, task };
   });
+
+  if (interactionRepository) {
+    router.add('GET', '/api/v1/interactions', (req) => {
+      const principal = requireAction(req, 'task:read');
+      const url = new URL(req.url, 'http://local');
+      const taskId = url.searchParams.get('task_id');
+      if (taskId) requireTaskVisible(principal, taskRepository.get(taskId));
+      const interactions = interactionRepository.list({
+        taskId,
+        status: url.searchParams.get('status'),
+      });
+      return {
+        ok: true,
+        interactions: interactions.filter((interaction) => {
+          const task = taskRepository.get(interaction.task_id);
+          return task && projectAllowed(principal, task.project_id);
+        }),
+      };
+    });
+
+    router.add('GET', '/api/v1/interactions/:id', (req, res, body, params) => {
+      const principal = requireAction(req, 'task:read');
+      const interaction = interactionRepository.get(params.id);
+      if (!interaction) throw new HttpError(404, 'interaction_not_found', 'interaction does not exist');
+      requireTaskVisible(principal, taskRepository.get(interaction.task_id));
+      return { ok: true, interaction };
+    });
+
+    router.add('POST', '/api/v1/interactions/:id/respond', (req, res, body, params) => {
+      const principal = requireAction(req, 'interaction:respond');
+      const interaction = interactionRepository.get(params.id);
+      if (!interaction) throw new HttpError(404, 'interaction_not_found', 'interaction does not exist');
+      requireTaskVisible(principal, taskRepository.get(interaction.task_id));
+      if (['credential', 'file_select'].includes(interaction.kind)) {
+        throw new HttpError(403, 'local_interaction_required', `${interaction.kind} must be resolved on the worker host`);
+      }
+      const result = workerChannel?.resolveInteraction(params.id, {
+        interaction_id: params.id,
+        response_id: body.response_id,
+        answers: body.answers ?? {},
+        answered_by: principal.subject_id,
+      }) ?? { ok: false, error: 'worker_channel_unavailable' };
+      if (!result.ok) throw new HttpError(404, result.error, result.error);
+      return result;
+    });
+
+    router.add('POST', '/api/v1/interactions/:id/cancel', (req, res, body, params) => {
+      const principal = requireAction(req, 'task:cancel');
+      const interaction = interactionRepository.get(params.id);
+      if (!interaction) throw new HttpError(404, 'interaction_not_found', 'interaction does not exist');
+      requireTaskVisible(principal, taskRepository.get(interaction.task_id));
+      const result = workerChannel?.cancelInteraction(params.id, principal.subject_id)
+        ?? { ok: true, interaction: interactionRepository.cancel(params.id), delivered: false };
+      return result;
+    });
+  }
 
   // --- admin: machine tokens + audit ---
   router.add('GET', '/api/v1/admin/tokens', (req) => {
@@ -396,76 +491,256 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
       requireAction(req, 'worker:read');
       return { ok: true, workers: workersRegistry.list() };
     });
-  }
-
-  // --- model registry admin ---
-  if (modelRegistry) {
-    router.add('GET', '/api/v1/admin/models', (req) => {
+    router.add('GET', '/api/v1/workers/:id/config', (req, res, body, params) => {
       requireAdmin(req);
-      // api_key included by design: single-operator admin surface.
-      return { ok: true, models: modelRegistry.list({ includeKey: true }), revision: modelRegistry.revision };
+      const config = workersRegistry.serverConfig(params.id);
+      if (!config) throw new HttpError(404, 'worker_not_found', 'worker does not exist');
+      return { ok: true, config };
     });
-
-    router.add('POST', '/api/v1/admin/models', async (req, res, body) => {
+    router.add('PUT', '/api/v1/workers/:id/config', (req, res, body, params) => {
       requireAdmin(req);
-      const model = modelRegistry.upsert({
-        model_id: body.model_id ?? null,
-        provider: body.provider,
-        model: body.model,
-        key: body.key ?? (body.model_id ? modelRegistry.get(body.model_id, { includeKey: true })?.api_key : undefined),
-        baseUrl: body.baseUrl,
-        priority: body.priority ?? 5,
-        enabled: body.enabled ?? true,
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'invalid_config', 'config must be an object');
+      const config = workersRegistry.saveServerConfig(params.id, {
+        projects: Array.isArray(body.projects) ? body.projects : undefined,
+        capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) : undefined,
+        backends: Array.isArray(body.backends) ? body.backends : undefined,
+        environment: body.environment === null ? null : (typeof body.environment === 'object' && !Array.isArray(body.environment) ? body.environment : undefined),
       });
-      if (workerChannel) {
-        workerChannel.broadcastModels();
-        await workerChannel.syncDshModel();
+      return { ok: true, config };
+    });
+    router.add('POST', '/api/v1/workers/:id/revoke', (req, res, body, params) => {
+      requireAdmin(req);
+      const revoked = workersRegistry.revoke(params.id, body?.reason ?? null);
+      return { ok: true, revoked };
+    });
+    router.add('POST', '/api/v1/workers/:id/unrevoke', (req, res, body, params) => {
+      requireAdmin(req);
+      return { ok: true, revoked: workersRegistry.unrevoke(params.id) };
+    });
+    router.add('GET', '/api/v1/credentials', (req) => {
+      requireAdmin(req);
+      const url = new URL(req.url, 'http://local');
+      const workerId = url.searchParams.get('worker_id') || null;
+      return {
+        ok: true,
+        credentials: workersRegistry.listCredentials(workerId).map((entry) => ({
+          credentialId: entry.credentialId, workerId: entry.workerId, name: entry.name, kind: entry.kind,
+          reference: entry.reference, metadata: entry.metadata, updatedAt: entry.updatedAt,
+        })),
+      };
+    });
+    router.add('POST', '/api/v1/credentials', (req, res, body) => {
+      requireAdmin(req);
+      if (!body || typeof body.credentialId !== 'string' || !body.credentialId) throw new HttpError(400, 'credential_id_required', 'credentialId is required');
+      let secretEncrypted = null;
+      if (body.value != null && body.value !== '') {
+        if (!credentialCipher) throw new HttpError(503, 'credential_cipher_unavailable', 'credential encryption is not configured');
+        secretEncrypted = credentialCipher.encrypt(String(body.value));
       }
-      authRepository.appendAudit({ type: 'model_registry.updated', actor: 'admin', reason: body.model ?? '' });
-      return { ok: true, model };
+      const credential = workersRegistry.setCredential({
+        credentialId: body.credentialId,
+        workerId: body.worker_id ?? null,
+        name: body.name ?? body.credentialId,
+        kind: body.kind ?? 'static',
+        secretEncrypted,
+        reference: body.reference ?? null,
+        metadata: body.metadata ?? {},
+      });
+      return { ok: true, credential: { credentialId: credential.credentialId, workerId: credential.workerId, name: credential.name, kind: credential.kind, reference: credential.reference, metadata: credential.metadata } };
     });
-
-    router.add('DELETE', '/api/v1/admin/models/:id', (req, res, body, params) => {
+    router.add('DELETE', '/api/v1/credentials/:id', (req, res, body, params) => {
       requireAdmin(req);
-      modelRegistry.remove(params.id);
-      workerChannel?.broadcastModels();
-      authRepository.appendAudit({ type: 'model_registry.removed', actor: 'admin', reason: params.id });
-      return { ok: true };
+      return { ok: true, deleted: workersRegistry.deleteCredential(params.id) };
     });
-
-    router.add('POST', '/api/v1/admin/models/:id/probe', async (req, res, body, params) => {
+    // One-time device enrollment: the admin issues a code; devices consume it
+    // with a machine identity and receive a worker machine token.
+    router.add('GET', '/api/v1/enrollments', (req) => {
       requireAdmin(req);
-      const entry = modelRegistry.get(params.id, { includeKey: true });
-      if (!entry) throw new HttpError(404, 'model_not_found', 'model entry does not exist');
-      const { probeModel } = await import('../models/probe.js');
-      const outcome = await probeModel(entry);
-      const updated = modelRegistry.recordProbe(params.id, outcome);
-      if (workerChannel && updated.probe_status === 'ok') workerChannel.broadcastModels();
-      return { ok: true, outcome, model: updated };
+      return { ok: true, enrollments: workersRegistry.listEnrollments() };
     });
-
-    router.add('POST', '/api/v1/admin/models/probe-all', async (req) => {
+    router.add('POST', '/api/v1/enrollments', (req, res, body) => {
       requireAdmin(req);
-      if (!probeRunner) throw new HttpError(501, 'no_probe_runner', 'probe runner is not configured');
-      const results = await probeRunner.probeAll();
-      workerChannel?.broadcastModels();
-      return { ok: true, results };
+      const code = crypto.randomBytes(6).toString('base64url').toUpperCase();
+      const enrollment = workersRegistry.createEnrollment({ code, workerId: body.worker_id ?? null, machine: body.machine ?? null });
+      return { ok: true, code: enrollment.code, enrollment };
+    });
+    router.add('POST', '/api/v1/enrollments/consume', (req, res, body) => {
+      if (typeof body.code !== 'string' || !body.code || typeof body.worker_id !== 'string' || !body.worker_id) {
+        throw new HttpError(400, 'enrollment_code_required', 'code and worker_id are required');
+      }
+      const enrollment = workersRegistry.consumeEnrollment(body.code.toUpperCase(), { workerId: body.worker_id, machine: body.machine ?? null });
+      if (!enrollment) throw new HttpError(403, 'invalid_enrollment', 'enrollment code is invalid or already consumed');
+      // store the bare worker id; getMachineToken prefixes machine: when it
+      // builds the principal, so a pre-prefixed id would double-prefix.
+      const created = authRepository.createMachineToken({ subject_id: body.worker_id, role: 'worker', project_ids: ['*'] });
+      return { ok: true, token: created.token, enrollment };
+    });
+    router.add('POST', '/api/v1/devices/register', (req, res, body) => {
+      if (!body || typeof body.worker_id !== 'string' || !body.worker_id) throw new HttpError(400, 'worker_id_required', 'worker_id is required');
+      const fingerprint = String(body.fingerprint ?? '');
+      if (!fingerprint || !/^[A-Fa-f0-9]{16,64}$/.test(fingerprint)) throw new HttpError(400, 'fingerprint_invalid', 'fingerprint must be hex 16-64');
+      const enrollment = workersRegistry.deviceRegister({ workerId: body.worker_id, machine: body.machine ?? null, fingerprint });
+      return { ok: true, enrollment: publicEnrollment(enrollment) };
+    });
+    router.add('POST', '/api/v1/devices/poll', (req, res, body) => {
+      if (!body || typeof body.worker_id !== 'string' || !body.worker_id) throw new HttpError(400, 'worker_id_required', 'worker_id is required');
+      const result = workersRegistry.devicePoll(body.worker_id, String(body.fingerprint ?? ''));
+      return { ok: true, ...result };
+    });
+    router.add('POST', '/api/v1/devices/:workerId/approve', (req, res, body, params) => {
+      requireAdmin(req);
+      const enrollment = workersRegistry.getEnrollment(params.workerId);
+      if (!enrollment || enrollment.status !== 'pending') throw new HttpError(409, 'not_pending', 'device is not awaiting approval');
+      const created = authRepository.createMachineToken({ subject_id: params.workerId, role: 'worker', project_ids: ['*'] });
+      const updated = workersRegistry.deviceApprove(params.workerId, created.token);
+      for (const workerId of workerChannel?.connectedWorkers?.() ?? []) workerChannel.pushConfig(workerId);
+      return { ok: true, enrollment: publicEnrollment(updated) };
+    });
+    router.add('POST', '/api/v1/enrollments/revoke', (req, res, body) => {
+      requireAdmin(req);
+      return { ok: true, revoked: workersRegistry.revokeEnrollment(String(body.code ?? '').toUpperCase()) };
+    });
+    // Worker-broadcast workflow skills (the /workflow skill is a thin guide;
+    // concrete skill content is distributed to every worker via config frames).
+    router.add('GET', '/api/v1/skills', (req) => {
+      requireAdmin(req);
+      return { ok: true, skills: workersRegistry.listSkills().map((s) => ({ name: s.name, version: s.version, updatedAt: s.updatedAt })) };
+    });
+    router.add('GET', '/api/v1/skills/:name', (req, res, body, params) => {
+      requireAdmin(req);
+      const skill = workersRegistry.listSkills().find((s) => s.name === params.name);
+      if (!skill) throw new HttpError(404, 'skill_not_found', 'skill does not exist');
+      return { ok: true, skill };
+    });
+    router.add('PUT', '/api/v1/skills/:name', (req, res, body, params) => {
+      requireAdmin(req);
+      if (typeof body?.content !== 'string' || !body.content.trim()) throw new HttpError(400, 'content_required', 'content is required');
+      const skill = workersRegistry.upsertSkill(params.name, body.content);
+      for (const workerId of workerChannel?.connectedWorkers?.() ?? []) workerChannel.pushConfig(workerId);
+      return { ok: true, skill };
+    });
+    router.add('DELETE', '/api/v1/skills/:name', (req, res, body, params) => {
+      requireAdmin(req);
+      const deleted = workersRegistry.deleteSkill(params.name);
+      for (const workerId of workerChannel?.connectedWorkers?.() ?? []) workerChannel.pushConfig(workerId);
+      return { ok: true, deleted };
+    });
+    router.add('POST', '/api/v1/skills/upload-folder', (req, res, body) => {
+      requireAdmin(req);
+      if (!body || !Array.isArray(body.files) || !body.files.length) throw new HttpError(400, 'files_required', 'files are required');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-skill-up-'));
+      const BS = String.fromCharCode(92);
+      try {
+        let total = 0;
+        for (const entry of body.files) {
+          const rel = String(entry?.path ?? '').split(BS).join('/').split('/').filter(function(seg){ return seg && seg !== '.' && seg !== '..'; }).join('/');
+          if (!rel || rel.length > 512) continue;
+          const target = path.join(tmp, rel);
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          const content = String(entry.content ?? '');
+          total += Buffer.byteLength(content, 'utf8');
+          if (total > 8 * 1024 * 1024) throw new HttpError(400, 'too_large', 'folder content exceeds 8 MiB');
+          fs.writeFileSync(target, content);
+        }
+        // collect every SKILL.md in the tree: each directory with one becomes its own skill
+        const skills = [];
+        const walk = (dir) => {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) walk(full);
+            else if (entry.name === 'SKILL.md' && fs.statSync(full).size <= 512 * 1024) skills.push({ dir, file: full });
+          }
+        };
+        walk(tmp);
+        if (!skills.length) throw new HttpError(400, 'skill_doc_required', 'folder has no SKILL.md anywhere');
+        let rootName = String(body.name ?? '').trim();
+        if (!rootName) rootName = (body.files[0]?.path ?? '').split(BS).find(Boolean) || 'skill';
+        const imported = [];
+        for (const skill of skills) {
+          const relDir = path.relative(tmp, skill.dir).split(BS).join('/');
+          let name = relDir && !relDir.includes('/') ? relDir : (!relDir ? '' : path.basename(skill.dir));
+          if (!name) name = relDir ? path.basename(skill.dir) : rootName;
+          name = name.replace(/[^A-Za-z0-9._-]/g, '_');
+          if (!name || imported.some((x) => x.name === name)) continue;
+          const created = workersRegistry.upsertSkill(name, fs.readFileSync(skill.file, 'utf8'));
+          imported.push({ name: created.name, version: created.version });
+        }
+        if (!imported.length) throw new HttpError(400, 'skill_doc_required', 'no unique skill entries found');
+        for (const workerId of workerChannel?.connectedWorkers?.() ?? []) workerChannel.pushConfig(workerId);
+        return { ok: true, imported };
+      } finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { } }
+    });
+        router.add('POST', '/api/v1/skills/install-git', async (req, res, body) => {
+      requireAdmin(req);
+      const url = String(body?.url ?? '');
+      if (!/^https:\/\/.+/i.test(url)) throw new HttpError(400, 'invalid_git_url', 'git url must be https://');
+      const name = String(body?.name ?? '').trim() || url.replace(/\/+$/,'').split('/').pop().replace(/\.git$/i, '') || 'skill';
+      const safeName = name.replace(/[^A-Za-z0-9._-]/g, '_');
+      const tmp = path.join(os.tmpdir(), `wf-skill-${crypto.randomUUID()}`);
+      try {
+        await new Promise((resolve, reject) => {
+          execFile('git', ['clone', '--depth', '1', url, tmp], { timeout: 300_000, maxBuffer: 4 * 1024 * 1024 }, (error) => error ? reject(error) : resolve());
+        });
+        let content = '';
+        for (const candidate of ['README.md', 'readme.md', 'SKILL.md']) {
+          const file = path.join(tmp, candidate);
+          if (fs.existsSync(file)) {
+            const stat = fs.statSync(file);
+            if (stat.isFile() && stat.size <= 64 * 1024) { content = fs.readFileSync(file, 'utf8'); break; }
+          }
+        }
+        if (!content) throw new HttpError(400, 'readme_required', 'repository has no README.md/SKILL.md');
+        const skill = workersRegistry.upsertSkill(safeName, content);
+        for (const workerId of workerChannel?.connectedWorkers?.() ?? []) workerChannel.pushConfig(workerId);
+        return { ok: true, skill: { name: skill.name, version: skill.version, updatedAt: skill.updatedAt } };
+      } catch (error) {
+        if (error.status) throw error;
+        throw new HttpError(502, 'git_install_failed', `git install failed: ${error.message}`);
+      } finally {
+        try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ }
+      }
     });
   }
 
-  // --- live task control (inject/cancel reach the connected worker) ---
+  // Project-agent views are read-only here; Worker registration is owned by
+  // the authenticated WebSocket channel.
+  if (projectAgentsRegistry) {
+    router.add('GET', '/api/v1/project-agents', (req) => {
+      const principal = requireAction(req, 'worker:read');
+      const url = new URL(req.url, 'http://local');
+      const projectId = url.searchParams.get('project_id') || null;
+      if (projectId) requireProject(principal, projectId);
+      const agents = projectAgentsRegistry.list({ projectId });
+      return { ok: true, agents: principal.project_ids?.includes('*') ? agents : agents.filter((agent) => principal.project_ids?.includes(agent.project_id)) };
+    });
+    router.add('GET', '/api/v1/project-agents/:id', (req, res, body, params) => {
+      const principal = requireAction(req, 'worker:read');
+      const agent = projectAgentsRegistry.get(params.id);
+      if (!agent) throw new HttpError(404, 'project_agent_not_found', 'project agent does not exist');
+      requireProject(principal, agent.project_id);
+      const tasks = taskRepository.list({ project_id: agent.project_id, limit: 500 });
+      return { ok: true, agent, task_counts: tasks.reduce((counts, task) => ({ ...counts, [task.status]: (counts[task.status] || 0) + 1 }), {}) };
+    });
+    router.add('PATCH', '/api/v1/project-agents/:id', (req, res, body, params) => {
+      const principal = requireAdmin(req);
+      const agent = projectAgentsRegistry.get(params.id);
+      if (!agent) throw new HttpError(404, 'project_agent_not_found', 'project agent does not exist');
+      return { ok: true, agent: projectAgentsRegistry.update(params.id, body) };
+    });
+  }
+
+  // --- live task control (inject reaches the connected owner worker) ---
   if (workerChannel) {
     router.add('POST', '/api/v1/tasks/:id/inject', (req, res, body, params) => {
       const principal = requireAdmin(req);
-      const task = taskRepository.get(params.id);
-      if (!task) throw new HttpError(404, 'task_not_found', 'task does not exist');
-      if (!['dispatched', 'running'].includes(task.status)) {
+      const task = requireTaskVisible(principal, taskRepository.get(params.id));
+      if (!['dispatched', 'running', 'awaiting_input'].includes(task.status)) {
         throw new HttpError(409, 'task_not_active', `task is ${task.status}`);
       }
       if (typeof body.content !== 'string' || !body.content.trim()) {
         throw new HttpError(400, 'content_required', 'inject content is required');
       }
-      const delivered = workerChannel.sendToWorker(task.claim_worker_id, {
+      const delivered = workerChannel.sendToWorker?.(task.claim_worker_id, {
         type: 'inject', id: crypto.randomUUID(), ts: new Date().toISOString(),
         payload: { task_id: task.task_id, content: body.content, by: principal.subject_id },
       });
@@ -477,10 +752,6 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
 
   async function handle(req, res) {
     try {
-      if (req.wfcSurface === 'public' && dshGateway?.matchesHttp(req)) {
-        await dshGateway.handleHttp(req, res);
-        return;
-      }
       const url = new URL(req.url, 'http://local');
       const matched = router.match(req.method, url.pathname);
       if (!matched) throw new HttpError(404, 'not_found', `no route: ${req.method} ${url.pathname}`);
@@ -583,7 +854,21 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
 
     router.add('GET', '/api/v1/workflow/projects', (req) => {
       const principal = requireAction(req, 'knowledge:read');
-      return { ok: true, projects: knowledgeRepository.listProjects(queryOptions(req)).filter((item) => projectAllowed(principal, item.id)) };
+      const url = new URL(req.url, 'http://local');
+      const includeLegacy = url.searchParams.get('include_legacy') === '1' && actionsAllow(principal.actions, '*');
+      const candidates = knowledgeRepository.listProjects(queryOptions(req))
+        .filter((item) => projectAllowed(principal, item.id))
+        .filter((item) => isManagedProject(item, includeLegacy));
+      const seen = new Set();
+      const projects = candidates.filter((project) => {
+        if (includeLegacy) return true;
+        const key = projectCatalogKey(project);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      projects.forEach((project) => projectAgentsRegistry?.ensure(project.id));
+      return { ok: true, projects };
     });
 
     router.add('POST', '/api/v1/workflow/projects/resolve', (req, res, body) => {
@@ -592,13 +877,16 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
       const existing = knowledgeRepository.resolveProject({ ...body, create: false });
       if (existing) {
         requireProject(principal, existing.id);
+        projectAgentsRegistry?.ensure(existing.id);
         return { ok: true, project: existing };
       }
       if (!create) return { ok: true, project: null };
       if (!principal.project_ids?.includes('*') && !principal.project_ids?.includes(body.projectId)) {
         throw new HttpError(403, 'project_forbidden', 'creating a project requires wildcard scope or an allowed explicit projectId');
       }
-      return { ok: true, project: knowledgeRepository.resolveProject(body) };
+      const project = knowledgeRepository.resolveProject(body);
+      projectAgentsRegistry?.ensure(project.id);
+      return { ok: true, project };
     });
 
     router.add('GET', '/api/v1/workflow/projects/:id', (req, res, body, params) => {
@@ -727,9 +1015,6 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
       return { ok: true, ...knowledgeRepository.resolveConflict(params.id, body.use) };
     });
 
-    // Internal loopback-only context injection for DSH plugins (central or
-    // worker context-proxy); mirrors the previous wf-api contract. Gated to
-    // the internal listener, never the public HTTPS surface.
     router.add('POST', '/api/internal/v1/workflow/context', (req, res, body) => {
       if (req.wfcSurface !== 'internal') {
         throw new HttpError(404, 'not_found', 'no route: POST /api/internal/v1/workflow/context');
@@ -740,60 +1025,6 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
         machine: body.machine,
         maxChars: body.max_chars ?? body.maxChars,
       }) };
-    });
-  }
-
-  // --- management AI audit ---
-  if (managementAi) {
-    router.add('GET', '/api/v1/admin/decisions', (req) => {
-      requireAdmin(req);
-      const url = new URL(req.url, 'http://local');
-      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 50)));
-      const rows = taskRepository.db.prepare('SELECT * FROM management_decisions ORDER BY ts DESC LIMIT ?').all(limit);
-      return {
-        ok: true,
-        decisions: rows.map((row) => ({
-          id: row.id, ts: row.ts, topic: row.topic,
-          decision: JSON.parse(row.decision_json), applied: JSON.parse(row.applied_json), error: row.error,
-        })),
-      };
-    });
-
-    router.add('POST', '/api/v1/admin/ai/decide', async (req, res, body) => {
-      requireAdmin(req);
-      if (typeof body.situation !== 'string' || !body.situation.trim()) {
-        throw new HttpError(400, 'situation_required', 'situation text is required');
-      }
-      const result = await managementAi.decide(body.topic || 'manual', body.situation);
-      return { ok: true, ...result };
-    });
-  }
-
-  // --- pending approvals (decide blocked DSH turns) ---
-  if (workerChannel?.pendingApprovals) {
-    router.add('GET', '/api/v1/admin/approvals', (req) => {
-      requireAdmin(req);
-      const url = new URL(req.url, 'http://local');
-      const taskId = url.searchParams.get('task_id');
-      const approvals = workerChannel.pendingApprovals(taskId ? { taskId } : {});
-      return {
-        ok: true,
-        approvals: approvals.map((approval) => ({
-          ...approval,
-          task_status: taskRepository.get(approval.task_id)?.status ?? null,
-        })),
-      };
-    });
-
-    router.add('POST', '/api/v1/admin/approvals/:id/resolve', (req, res, body, params) => {
-      const principal = requireAdmin(req);
-      const decision = body.decision === 'approve' ? true : body.decision === 'deny' ? false : null;
-      if (decision === null) {
-        throw new HttpError(400, 'invalid_decision', "decision must be 'approve' or 'deny'");
-      }
-      const result = workerChannel.resolveApproval(params.id, decision, principal.subject_id);
-      if (result.ok === false) throw new HttpError(404, 'approval_not_found', result.error);
-      return result;
     });
   }
 

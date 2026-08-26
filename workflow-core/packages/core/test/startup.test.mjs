@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,9 +39,25 @@ function runtimeEnv(dir, publicPort, internalPort, extra = {}) {
     WFC_ALLOW_PLAIN_HTTP: '1',
     WFC_HTTPS_PORT: String(publicPort),
     WFC_INTERNAL_PORT: String(internalPort),
-    WFC_MANAGEMENT_AI: '0',
     ...extra,
   };
+}
+
+function rejectedWebSocket(url, token) {
+  const socket = new WebSocket(url, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  return new Promise((resolve, reject) => {
+    socket.once('open', () => {
+      socket.terminate();
+      reject(new Error('WebSocket unexpectedly opened'));
+    });
+    socket.once('unexpected-response', (_request, response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    socket.once('error', () => {});
+  });
 }
 
 test('Core starts without Feishu, reports it disabled, and shuts down cleanly', async () => {
@@ -66,43 +81,30 @@ test('Core starts without Feishu, reports it disabled, and shuts down cleanly', 
   }
 });
 
-test('Core wires the authenticated DSH gateway alongside the Worker WebSocket', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-start-gateway-'));
+test('Core exposes /worker as its only execution WebSocket', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-start-worker-only-'));
   const publicPort = await freePort();
   const internalPort = await freePort();
   let runtime;
-  const observedPaths = [];
-  const dsh = http.createServer((req, res) => {
-    observedPaths.push(req.url);
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
-  });
-  await new Promise((resolve, reject) => {
-    dsh.once('error', reject);
-    dsh.listen(0, '127.0.0.1', resolve);
-  });
+  let workerSocket;
   try {
-    runtime = await startCore(runtimeEnv(dir, publicPort, internalPort, {
-      WFC_DSH_UPSTREAM: `http://127.0.0.1:${dsh.address().port}`,
-    }), { log: () => {} });
-    const account = await runtime.authRepository.createAccount({
-      email: 'gateway-startup@example.com', password: 'correct-horse-battery',
+    runtime = await startCore(runtimeEnv(dir, publicPort, internalPort), { log: () => {} });
+    const { token } = runtime.authRepository.createMachineToken({
+      subject_id: 'surface-test', role: 'worker', project_ids: ['*'],
     });
-    const { token } = runtime.authRepository.createClientAccessToken(account, 60_000);
 
-    const denied = await fetch(`http://127.0.0.1:${publicPort}/dsh/api/host.describe`);
-    assert.equal(denied.status, 401);
-    assert.deepEqual(observedPaths, []);
+    const clientHttp = await fetch(`http://127.0.0.1:${publicPort}/client`);
 
-    const allowed = await fetch(`http://127.0.0.1:${publicPort}/dsh/api/host.describe?startup=1`, {
+    workerSocket = new WebSocket(`ws://127.0.0.1:${publicPort}/worker`, {
       headers: { authorization: `Bearer ${token}` },
     });
-    assert.equal(allowed.status, 200);
-    assert.deepEqual(observedPaths, ['/api/host.describe?startup=1']);
+    await new Promise((resolve, reject) => {
+      workerSocket.once('open', resolve);
+      workerSocket.once('error', reject);
+    });
   } finally {
+    workerSocket?.terminate();
     await runtime?.shutdown();
-    dsh.closeAllConnections?.();
-    await new Promise((resolve) => dsh.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

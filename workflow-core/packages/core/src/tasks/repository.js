@@ -9,7 +9,7 @@ import { CoreDatabase } from '../db/core-db.js';
 export const DEFAULT_CLAIM_TIMEOUT_MS = 15 * 60 * 1000;
 export const DEFAULT_MAX_ATTEMPTS = 3;
 
-const ACTIVE_STATUSES = Object.freeze(['dispatched', 'running']);
+const ACTIVE_STATUSES = Object.freeze(['dispatched', 'running', 'awaiting_input']);
 
 function taskFromRow(row) {
   if (!row) return null;
@@ -22,6 +22,12 @@ function taskFromRow(row) {
     status: row.status,
     created_by: row.created_by,
     project_id: row.project_id,
+    agent_id: row.agent_id,
+    backend_kind: row.backend_kind,
+    requested_backend_kind: row.requested_backend_kind,
+    required_capabilities: JSON.parse(row.required_capabilities_json || '[]'),
+    execution_policy: JSON.parse(row.execution_policy_json || '{}'),
+    session_ref: row.session_ref,
     worker_selector: JSON.parse(row.worker_selector_json || '{}'),
     dependencies: JSON.parse(row.dependencies_json || '[]'),
     idempotency_key: row.idempotency_key,
@@ -96,7 +102,13 @@ export class TaskRepository {
       type, title = null, brief, priority = DEFAULT_PRIORITY, created_by,
       project_id = null, worker_selector = {}, dependencies = [], idempotency_key = null,
       max_attempts = DEFAULT_MAX_ATTEMPTS,
+      agent_id = null, session_ref = null,
+      backend_kind = null, required_capabilities = [], execution_policy = {},
     } = input;
+    const selector = worker_selector || {};
+    if (Object.hasOwn(input, 'workspace') || Object.hasOwn(brief ?? {}, 'workspace')) {
+      throw new TypeError('workspace paths are Worker-local and cannot be stored in Core tasks');
+    }
     if (!type || typeof type !== 'string') throw new TypeError('type is required');
     if (!brief || typeof brief !== 'object' || Array.isArray(brief)) throw new TypeError('brief must be an object');
     if (!created_by || typeof created_by !== 'string') throw new TypeError('created_by is required');
@@ -134,12 +146,15 @@ export class TaskRepository {
         INSERT INTO tasks (
           task_id, type, title, brief_json, priority, status, created_by, project_id,
           worker_selector_json, dependencies_json, idempotency_key, attempts, max_attempts,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, 0, ?, ?, ?)
+          agent_id, session_ref, backend_kind, requested_backend_kind,
+          required_capabilities_json, execution_policy_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         taskId, type, title, JSON.stringify(brief), priorityValue, created_by, project_id,
-        JSON.stringify(worker_selector), JSON.stringify([...new Set(dependencies)]),
-        idempotency_key, attemptsLimit, now, now,
+        JSON.stringify(selector), JSON.stringify([...new Set(dependencies)]),
+        idempotency_key, attemptsLimit, agent_id, session_ref,
+        backend_kind, backend_kind, JSON.stringify([...new Set(required_capabilities)]),
+        JSON.stringify(execution_policy), now, now,
       );
       this.#appendEvent(taskId, 'created', { type, priority, dependencies }, created_by);
       return { task: this.get(taskId), idempotent_replay: false };
@@ -166,7 +181,7 @@ export class TaskRepository {
   activeForWorker(workerId, now = new Date().toISOString()) {
     return this.db.prepare(`
       SELECT * FROM tasks
-      WHERE claim_worker_id = ? AND status IN ('dispatched','running')
+      WHERE claim_worker_id = ? AND status IN ('dispatched','running','awaiting_input')
         AND lease_deadline IS NOT NULL AND lease_deadline > ?
       ORDER BY started_at ASC, created_at ASC
     `).all(workerId, now).map(taskFromRow);
@@ -185,13 +200,19 @@ export class TaskRepository {
   // Reclaims expired leases (dead-lettering tasks past max_attempts), then
   // hands the oldest priority-ordered queued task whose dependencies are done
   // to the claiming worker under a fresh lease.
-  claim({ worker_id, selector = null } = {}) {
+  claim({
+    worker_id, selector = null, project_ids = null, project_id = undefined,
+    capabilities = [], backends = [],
+  } = {}) {
     if (!worker_id || typeof worker_id !== 'string') throw new TypeError('worker_id is required');
+    const availableCapabilities = new Set(Array.isArray(capabilities) ? capabilities.map(String) : []);
+    const backendDescriptors = Array.isArray(backends) ? backends : [];
+    const backendByKind = new Map(backendDescriptors.map((backend) => [backend.kind, backend]));
     const now = new Date().toISOString();
     return transaction(this.db, () => {
       const expired = this.db.prepare(
         `SELECT task_id, attempts, max_attempts FROM tasks
-         WHERE status IN ('dispatched','running') AND lease_deadline IS NOT NULL AND lease_deadline <= ?`,
+         WHERE status IN ('dispatched','running','awaiting_input') AND lease_deadline IS NOT NULL AND lease_deadline <= ?`,
       ).all(now);
       for (const row of expired) {
         if (row.attempts >= row.max_attempts) {
@@ -206,6 +227,7 @@ export class TaskRepository {
           // the increment, keeping one attempt per actual dispatch.
           this.db.prepare(
             `UPDATE tasks SET status = 'queued', claim_token = NULL, claim_worker_id = NULL,
+             backend_kind = requested_backend_kind,
              lease_deadline = NULL, updated_at = ? WHERE task_id = ?`,
           ).run(now, row.task_id);
           this.#appendEvent(row.task_id, 'lease_expired_requeued', { attempts: row.attempts }, 'scheduler');
@@ -219,18 +241,56 @@ export class TaskRepository {
         const task = this.get(candidate.task_id);
         if (!this.#dependenciesMet(task.task_id)) continue;
         if (selector && !selectorMatches(task.worker_selector, selector)) continue;
+        if (Array.isArray(project_ids)) {
+          const allowed = project_ids.map(String);
+          if (task.project_id && !allowed.includes('*') && !allowed.includes(task.project_id)) continue;
+        }
+        if (project_id !== undefined && task.project_id !== project_id) continue;
+        const required = new Set(task.required_capabilities);
+        const eligibleBackends = task.requested_backend_kind
+          ? [backendByKind.get(task.requested_backend_kind)].filter(Boolean)
+          : backendDescriptors;
+        const selectedBackend = eligibleBackends.find((backend) => {
+          if (backend.healthy === false || backend.enabled === false) return false;
+          const combined = new Set([...availableCapabilities, ...(backend.capabilities || []).map(String)]);
+          return [...required].every((capability) => combined.has(capability));
+        });
+        if (!selectedBackend) continue;
         const claimToken = crypto.randomBytes(24).toString('base64url');
         const deadline = new Date(Date.now() + this.claimTimeoutMs).toISOString();
         const changes = this.db.prepare(`
           UPDATE tasks SET status = 'dispatched', claim_token = ?, claim_worker_id = ?,
-          lease_deadline = ?, attempts = attempts + 1, updated_at = ?,
+          backend_kind = ?, lease_deadline = ?, attempts = attempts + 1, updated_at = ?,
           started_at = COALESCE(started_at, ?) WHERE task_id = ? AND status = 'queued'
-        `).run(claimToken, worker_id, deadline, now, now, task.task_id).changes;
+        `).run(claimToken, worker_id, selectedBackend.kind, deadline, now, now, task.task_id).changes;
         if (!changes) continue; // raced with another claim; try the next candidate
-        this.#appendEvent(task.task_id, 'claimed', { worker_id, attempt: task.attempts + 1 }, worker_id);
+        this.#appendEvent(task.task_id, 'claimed', {
+          worker_id, backend_kind: selectedBackend.kind, attempt: task.attempts + 1,
+        }, worker_id);
         return this.get(task.task_id);
       }
       return null;
+    });
+  }
+
+  releaseUndeliveredClaim(taskId, claimToken, actor = 'scheduler') {
+    const now = new Date().toISOString();
+    return transaction(this.db, () => {
+      const row = this.#requireLiveClaim(taskId, claimToken);
+      if (row.status !== 'dispatched') {
+        const error = new Error(`task dispatch already started (status ${row.status})`);
+        error.code = 'TASK_ALREADY_STARTED';
+        throw error;
+      }
+      this.db.prepare(`
+        UPDATE tasks SET status = 'queued', claim_token = NULL, claim_worker_id = NULL,
+        backend_kind = requested_backend_kind,
+        lease_deadline = NULL, attempts = MAX(attempts - 1, 0),
+        updated_at = ?, started_at = CASE WHEN attempts <= 1 THEN NULL ELSE started_at END
+        WHERE task_id = ? AND claim_token = ?
+      `).run(now, taskId, claimToken);
+      this.#appendEvent(taskId, 'dispatch_undelivered', { worker_id: row.claim_worker_id }, actor);
+      return this.get(taskId);
     });
   }
 
@@ -295,6 +355,10 @@ export class TaskRepository {
         error.code = 'TASK_NOT_FOUND';
         throw error;
       }
+      if (event && typeof event.session_ref === 'string' && event.session_ref) {
+        this.db.prepare('UPDATE tasks SET session_ref = ?, updated_at = ? WHERE task_id = ?')
+          .run(event.session_ref, new Date().toISOString(), taskId);
+      }
       const seq = this.#appendEvent(taskId, 'session_event', event, actor);
       return { seq };
     });
@@ -314,18 +378,54 @@ export class TaskRepository {
     });
   }
 
-  done(taskId, claimToken, { kind = 'done', result = null } = {}) {
+  enterAwaitingInput(taskId, claimToken, interactionId) {
+    if (!interactionId || typeof interactionId !== 'string') throw new TypeError('interaction_id is required');
+    const now = new Date().toISOString();
+    return transaction(this.db, () => {
+      this.#requireLiveClaim(taskId, claimToken);
+      const deadline = new Date(Date.now() + this.claimTimeoutMs).toISOString();
+      this.db.prepare(`
+        UPDATE tasks SET status = 'awaiting_input', lease_deadline = ?, updated_at = ?
+        WHERE task_id = ?
+      `).run(deadline, now, taskId);
+      this.#appendEvent(taskId, 'awaiting_input', { interaction_id: interactionId }, 'worker');
+      return this.get(taskId);
+    });
+  }
+
+  resumeAfterInput(taskId, claimToken, interactionId, actor = 'core') {
+    const now = new Date().toISOString();
+    return transaction(this.db, () => {
+      const row = this.#requireLiveClaim(taskId, claimToken);
+      if (row.status !== 'awaiting_input') {
+        const error = new Error(`task is not awaiting input (status ${row.status})`);
+        error.code = 'TASK_NOT_AWAITING_INPUT';
+        throw error;
+      }
+      const deadline = new Date(Date.now() + this.claimTimeoutMs).toISOString();
+      this.db.prepare(`
+        UPDATE tasks SET status = 'running', lease_deadline = ?, updated_at = ?
+        WHERE task_id = ?
+      `).run(deadline, now, taskId);
+      this.#appendEvent(taskId, 'input_delivered', { interaction_id: interactionId }, actor);
+      return this.get(taskId);
+    });
+  }
+
+  done(taskId, claimToken, { kind = 'done', result = null, session_ref = null } = {}) {
     if (!TASK_RESULT_KINDS.includes(kind)) throw new TypeError(`unknown result kind: ${kind}`);
-    const status = kind === 'done' ? 'done'
-      : kind === 'failed' ? 'failed'
-        : kind === 'blocked' ? 'blocked' : 'awaiting_input';
+    if (kind === 'question') throw new TypeError('question results must use enterAwaitingInput()');
+    const status = kind === 'failed' ? 'failed'
+      : kind === 'blocked' ? 'blocked' : 'done';
     const now = new Date().toISOString();
     return transaction(this.db, () => {
       this.#requireLiveClaim(taskId, claimToken);
       this.db.prepare(`
-        UPDATE tasks SET status = ?, result_kind = ?, result_json = ?, claim_token = NULL,
-        lease_deadline = NULL, updated_at = ?, finished_at = ? WHERE task_id = ?
-      `).run(status, kind, JSON.stringify(result ?? {}), now, now, taskId);
+        UPDATE tasks SET status = ?, result_kind = ?, result_json = ?,
+        session_ref = COALESCE(?, session_ref),
+        claim_token = NULL, claim_worker_id = NULL, lease_deadline = NULL,
+        updated_at = ?, finished_at = ? WHERE task_id = ?
+      `).run(status, kind, JSON.stringify(result ?? {}), session_ref, now, now, taskId);
       this.#appendEvent(taskId, 'done', { kind }, 'worker');
       return this.get(taskId);
     });
@@ -346,8 +446,8 @@ export class TaskRepository {
         throw error;
       }
       this.db.prepare(`
-        UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_deadline = NULL,
-        updated_at = ?, finished_at = ? WHERE task_id = ?
+        UPDATE tasks SET status = 'cancelled', claim_token = NULL, claim_worker_id = NULL,
+        lease_deadline = NULL, updated_at = ?, finished_at = ? WHERE task_id = ?
       `).run(now, now, taskId);
       this.#appendEvent(taskId, 'cancelled', {}, actor);
       return this.get(taskId);

@@ -1,201 +1,303 @@
-// index.js - worker daemon entrypoint. WFC_WORKER_TOKEN stays in the process
-// environment only; it is never written to disk or logs.
+// index.js - generic Workflow Worker daemon.
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
+import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { CoreConnection } from './core-client.js';
-import { DshLocal } from './dsh-local.js';
+import { RunStore } from './run-store.js';
+import { ConfigStore } from './config-store.js';
+import { ProjectRegistry } from './project-registry.js';
+import { BackendRegistry } from './backend-registry.js';
+import { EnvironmentStore } from './environment-store.js';
+import { ProcessSupervisor } from './process-supervisor.js';
+import { InteractionBridge } from './interaction-bridge.js';
 import { TaskRunner } from './runner.js';
-import { WorkerStateStore } from './state-store.js';
+import { JsonlCliAdapter } from './adapters/jsonl.js';
+import { OmpRpcBackend } from './backends/omp-rpc.js';
+import { CredentialStore } from './credential-store.js';
+import { KnowledgeBridgeServer } from './knowledge-bridge.js';
 
-export function loadWorkerConfig(env = process.env) {
-  const coreUrl = env.WFC_CORE_URL;
-  const token = env.WFC_WORKER_TOKEN;
-  if (!coreUrl) throw new Error('WFC_CORE_URL is required');
-  if (!token) throw new Error('WFC_WORKER_TOKEN is required (process environment only)');
+export function loadWorkerConfig(env = process.env) {  if (!env.WFC_CORE_URL) throw new Error('WFC_CORE_URL is required');
+  if (!env.WFC_WORKER_TOKEN) throw new Error('WFC_WORKER_TOKEN is required (process environment only)');
   return {
-    coreUrl,
-    token,
+    coreUrl: env.WFC_CORE_URL, token: env.WFC_WORKER_TOKEN,
     workerId: env.WFC_WORKER_ID || `worker-${os.hostname()}`,
-    capabilities: (env.WFC_WORKER_CAPABILITIES || 'dsh').split(',').map((item) => item.trim()).filter(Boolean),
-    maxConcurrency: Number(env.WFC_WORKER_MAX_CONCURRENCY || 2),
-    dshBin: env.WFC_DSH_BIN || 'dsh',
-    dshNode: env.WFC_DSH_NODE || null,
-    dshHome: env.WFC_DSH_HOME || null,
-    dshEndpoint: env.WFC_DSH_ENDPOINT || null, // pre-existing local DSH (tests / manual)
-    stateDir: env.WFC_WORKER_STATE_DIR || path.join(os.homedir(), '.workflow-worker'),
-    defaultWorkspace: env.WFC_WORKER_WORKSPACE || os.homedir(),
-    version: '0.1.0',
+    capabilities: (env.WFC_WORKER_CAPABILITIES || 'workflow-jsonl').split(',').map((x) => x.trim()).filter(Boolean),
+    projects: [], backends: [], maxConcurrency: Number.isInteger(Number(env.WFC_WORKER_MAX_CONCURRENCY)) && Number(env.WFC_WORKER_MAX_CONCURRENCY) > 0 ? Number(env.WFC_WORKER_MAX_CONCURRENCY) : 2,
+    stateDir: env.WFC_WORKER_STATE_DIR || path.join(os.homedir(), '.workflow-worker'), version: '0.2.0',
+    jsonlCommand: env.WFC_JSONL_COMMAND || null,
+    jsonlArgs: (env.WFC_JSONL_ARGS || '').split('|').filter(Boolean),
+    knowledgePort: env.WFC_KNOWLEDGE_PORT || 0,
   };
 }
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
+// Reconcile local run state at startup. Terminal runs whose stable frame is
+// still in the outbox will be replayed after reconnect; runs whose frame was
+// already acknowledged are dropped because Core already has the terminal state.
+export function recoverPendingRuns({ runStore, log = () => {} } = {}) {
+  if (!runStore) throw new TypeError('runStore is required');
+  let dropped = 0;
+  let kept = 0;
+  for (const run of runStore.list()) {
+    if (run.phase !== 'completion_pending') continue;
+    if (!run.terminalFrameId || !runStore.hasFrame(run.terminalFrameId)) {
+      runStore.delete(run.taskId);
+      log(`[worker] dropped ${run.taskId}: terminal frame ${run.terminalFrameId ?? '(none)'} not pending`);
+      dropped += 1;
+      continue;
+    }
+    kept += 1;
+  }
+  return { dropped, kept };
 }
 
-// The DSH CLI resolves its profile root from $DSH_HOME but its session and
-// state databases from their own DSH_*_DB variables (falling back to the
-// account's passwd home, NOT $HOME). Every path must be pinned inside
-// dshHome or the worker silently shares the central DSH's databases.
-export function buildDshChildEnv(config, env = process.env) {
-  const childEnv = { ...env };
-  delete childEnv.WFC_WORKER_TOKEN;
-  if (config.dshHome) {
-    const dshRoot = `${config.dshHome}/.dsh`;
-    childEnv.HOME = config.dshHome;
-    childEnv.DSH_HOME = dshRoot;
-    childEnv.DSH_SESSION_DB = `${dshRoot}/sessions.db`;
-    childEnv.DSH_STATE_DB = `${dshRoot}/dsh-state.db`;
-    childEnv.DSH_SESSION_QUERY_DB = `${dshRoot}/session-query.db`;
-    childEnv.XDG_CONFIG_HOME = `${config.dshHome}/.config`;
-    childEnv.XDG_DATA_HOME = `${config.dshHome}/.local/share`;
-    childEnv.XDG_STATE_HOME = `${config.dshHome}/.local/state`;
-  }
-  return childEnv;
+function jsonlBackend(descriptor, log) {
+  return new JsonlCliAdapter({ command: descriptor.command, args: descriptor.args ?? [], log });
 }
 
-export async function startWorker(config, { dsh = null, stateStore = null, log = () => {}, pollMs } = {}) {
-  const localDsh = dsh ?? new DshLocal({
-    baseUrl: config.dshEndpoint,
-    spawnImpl: config.dshEndpoint ? null : async () => {
-      const port = await freePort();
-      const command = config.dshNode || config.dshBin;
-      const args = [
-        ...(config.dshNode ? [config.dshBin] : []),
-        '--profile', 'web', '--host', '127.0.0.1', '--port', String(port),
-      ];
-      const child = spawn(command, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: buildDshChildEnv(config),
-      });
-      child.stdout?.on('data', (chunk) => {
-        const message = String(chunk).trim();
-        if (message) log(`[dsh] ${message}`);
-      });
-      child.stderr?.on('data', (chunk) => {
-        const message = String(chunk).trim();
-        if (message) log(`[dsh] ${message}`);
-      });
-      return { port, child };
-    },
-    log,
+function backendFor(descriptor, log) {
+  if (descriptor.kind === 'omp-rpc') return new OmpRpcBackend({
+    command: descriptor.command, args: descriptor.args ?? [], log,
+    userProfile: process.env.WFC_OMP_USER_PROFILE || null,
+    model: process.env.WFC_OMP_MODEL || null,
+    provider: process.env.WFC_OMP_PROVIDER || null,
   });
-  await localDsh.start();
-  const workerState = stateStore ?? new WorkerStateStore({ dataDir: config.stateDir });
+  return jsonlBackend(descriptor, log);
+}
 
-  const core = new CoreConnection({
-    url: config.coreUrl,
-    token: config.token,
-    workerId: config.workerId,
-    register: {
-      machine: os.hostname(),
-      capabilities: config.capabilities,
-      selector: { capabilities: config.capabilities },
-      max_concurrency: config.maxConcurrency,
-      version: config.version,
-    },
-    log,
-  });
+// Device-first bootstrap: when no token is configured the Worker registers
+// itself with a device fingerprint and waits for admin approval on the Core
+// console. Once approved it picks up a long-lived token via /api/v1/devices/poll
+// and persists it DPAPI-encrypted (via the start script) for future runs.
+export async function bootstrapDevice({ coreUrl, workerId, stateDir, log = () => {} }) {
+  const secretFile = path.join(stateDir, 'device-secret');
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  let secret = '';
+  try { secret = fs.readFileSync(secretFile, 'utf8').trim(); } catch { /* first run */ }
+  if (!secret) {
+    secret = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(secretFile, secret, { mode: 0o600 });
+    log('[worker] created device identity');
+  }
+  const fingerprint = crypto.createHash('sha256').update(secret).digest('hex').slice(0, 32);
+  const base = coreUrl.endsWith('/') ? coreUrl.slice(0, -1) : coreUrl;
+  const register = await fetch(base + '/api/v1/devices/register', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ worker_id: workerId, machine: os.hostname(), fingerprint }),
+  }).catch(() => null);
+  if (!register || !register.ok) { log('[worker] device registration failed (Core unreachable?)'); throw new Error('device registration failed: Core unreachable'); }
+  log(`[worker] device ${workerId} registered; awaiting admin approval on the Core console (设备授权)`);
+  let pending = 0;
+  const started = Date.now();
+  while (Date.now() - started < 24 * 60 * 60 * 1000) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const poll = await fetch(base + '/api/v1/devices/poll', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ worker_id: workerId, fingerprint }),
+    }).catch(() => null);
+    if (!poll || !poll.ok) continue;
+    const result = await poll.json();
+    if (result.state === 'authorized' && result.token) {
+      const tokenFile = path.join(stateDir, 'bootstrap-token.json');
+      fs.writeFileSync(tokenFile, JSON.stringify({ token: result.token, worker_id: workerId }, null, 2), { mode: 0o600 });
+      log(`[worker] approved! token stored at ${tokenFile}; restarting worker once`);
+      return { token: result.token, tokenFile };
+    }
+    if (result.state === 'revoked') throw new Error('device registration was revoked by admin');
+    pending += 1;
+    if (pending % 12 === 0) log(`[worker] still awaiting approval (${Math.floor((Date.now() - started) / 60000)} min)`);
+  }
+  throw new Error('device approval timed out after 24h');
+}
 
-  const runner = new TaskRunner({
-    core, dsh: localDsh, stateStore: workerState, defaultWorkspace: config.defaultWorkspace,
-    workspaceResolver: (task) => task.brief?.workspace ?? null,
-    log,
-    maxSlots: config.maxConcurrency,
-    ...(pollMs ? { pollMs } : {}),
-  });
-
-  // Pending approvals arrive on the local DSH's events.mux websocket; the
-  // runner forwards them to the core, and core decisions come back as frames.
-  if (typeof localDsh.connectApprovals === 'function') {
-    localDsh.connectApprovals({
-      onWaiting: (payload, rpcId) => runner.handleApprovalWaiting(payload, rpcId),
-      onResolved: (payload) => log(`[runner] approval ${payload.approvalId ?? '?'} resolved by DSH (${payload.outcome ?? '?'})`),
+export async function startWorker(config, { log = () => {}, WebSocketImpl, stateStore = null, backends = null, projects = null } = {}) {
+  if (!config.token) {
+    const booted = await bootstrapDevice({ coreUrl: config.coreUrl, workerId: config.workerId, stateDir: config.stateDir, log });
+    config.token = booted.token;
+  }
+  const runStore = stateStore ?? new RunStore({ dataDir: config.stateDir });  const { dropped, kept } = recoverPendingRuns({ runStore, log });
+  if (dropped || kept) log(`[worker] recovered runs: ${kept} pending, ${dropped} dropped`);
+  const configStore = new ConfigStore({ dataDir: config.stateDir });
+  let saved = configStore.get();
+  if (saved.backends.length === 0 && config.jsonlCommand) {
+    configStore.upsertBackend({
+      kind: 'workflow-jsonl',
+      command: config.jsonlCommand,
+      args: config.jsonlArgs,
+      enabled: true,
+      capabilities: ['run', 'resume', 'inject', 'cancel', 'interaction'],
+    });
+    saved = configStore.get();
+  }
+  const projectRegistry = projects ?? (() => {
+    const registry = new ProjectRegistry({});
+    const entries = saved.projects.length ? saved.projects : config.projects;
+    for (const project of entries) {
+      try { registry.add(project); } catch (error) {
+        log(`[worker] skipping project ${project.projectId}: ${error.message}`);
+      }
+    }
+    return registry;
+  })();
+  const backendRegistry = backends ?? new BackendRegistry({ log });
+  for (const descriptor of saved.backends) {
+    if (descriptor.enabled === false || !descriptor.command) continue;
+    if (backendRegistry.get(descriptor.kind)) continue;
+    backendRegistry.register(descriptor.kind, backendFor(descriptor, log), {
+      kind: descriptor.kind,
+      capabilities: descriptor.capabilities ?? [],
+      version: '1',
     });
   }
-
-  core.on('config', (payload) => core.applyConfig(payload));
-  core.on('models', async (payload) => {
+  await backendRegistry.startAll({ stateDir: config.stateDir, projectRegistry });
+  const environmentStore = new EnvironmentStore({ dataDir: config.stateDir });
+  const supervisor = new ProcessSupervisor({ log });
+  const registeredBackends = backendRegistry.list();
+  const capabilities = [...new Set(registeredBackends.flatMap((backend) => backend.capabilities ?? []))];
+  const core = new CoreConnection({ url: config.coreUrl, token: config.token, workerId: config.workerId, runStore, WebSocketImpl,
+    register: { machine: os.hostname(), capabilities, projects: projectRegistry.list().map((p) => p.projectId), backends: registeredBackends, max_concurrency: config.maxConcurrency, version: config.version }, log });
+  const interactions = new InteractionBridge({ core, backendRegistry, log });
+  const runner = new TaskRunner({ core, backendRegistry, runStore, projectRegistry, interactionBridge: interactions, log, maxSlots: config.maxConcurrency });
+  const credentialStore = new CredentialStore({ dataDir: config.stateDir });
+  const knowledgeBridge = new KnowledgeBridgeServer({ coreUrl: config.coreUrl, coreToken: config.token, stateDir: config.stateDir, port: Number(config.knowledgePort || 0), log });
+  await knowledgeBridge.start();
+  let draining = false;
+  const drain = {
+    active: () => draining,
+    enter: async () => { draining = true; core.send('status', { state: 'draining' }, { durable: false }); return true; },
+    exit: async () => { draining = false; core.send('status', { state: 'running' }, { durable: false }); return true; },
+  };
+  core.on('config', (payload) => {
+    core.applyConfig(payload);
     try {
-      await localDsh.applyModels(Array.isArray(payload.models) ? payload.models : []);
-      core.send('models_ack', { revision: payload.revision ?? 0 });
+      if (applyServerConfig({ configStore, projectRegistry, backendRegistry, environmentStore, credentialStore, drain, log, core }, payload)) {
+        const backends = backendRegistry.list();
+        core.send('register', {
+          ...core.register,
+          worker_id: core.workerId,
+          projects: projectRegistry.list().map((p) => p.projectId),
+          backends,
+          capabilities: [...new Set(backends.flatMap((b) => b.capabilities ?? []))],
+        }, { durable: false });
+      }
     } catch (error) {
-      const code = error.code ?? 'MODEL_APPLY_FAILED';
-      const method = error.method ?? null;
-      log(`[worker] model apply failed: ${method ? `${method} ` : ''}${code}`);
-      core.send('error', {
-        error: 'model apply failed', code, method,
-        revision: payload.revision ?? 0,
-      });
+      log(`[worker] server config apply failed: ${error.message}`);
     }
   });
   core.on('dispatch', (payload) => {
-    const task = payload.task ?? payload;
-    runner.handleDispatch(task, { resumed: payload.resumed === true }).catch((error) => {
-      log(`[worker] dispatch failed: ${error.message}`);
-      core.send('task_done', {
-        task_id: task.task_id, claim_token: task.claim_token, kind: 'failed',
-        result: { error: error.message },
-      });
-    });
+    if (draining) return;
+    runner.handleDispatch(payload.task ?? payload, { resumed: payload.resumed === true }).catch((error) => log(`[worker] dispatch failed: ${error.message}`));
   });
-  core.on('inject', (payload) => {
-    runner.handleInject(payload.task_id, payload.content).catch((error) => log(`[worker] inject failed: ${error.message}`));
-  });
-  core.on('cancel', (payload) => {
-    runner.handleCancel(payload.task_id).catch((error) => log(`[worker] cancel failed: ${error.message}`));
-  });
-  core.on('approval_result', (payload) => {
-    runner.handleApprovalResult(payload).catch((error) => log(`[worker] approval result failed: ${error.message}`));
-  });
-
+  core.on('inject', (payload) => runner.handleInject(payload.task_id, payload.content));
+  core.on('cancel', (payload) => runner.handleCancel(payload.task_id));
+  core.on('interaction_response', (payload) => runner.handleInteractionResponse(payload));
+  core.on('interaction_cancel', (payload) => runner.handleInteractionCancel(payload));
   core.connect();
   let stopped = false;
-  return {
-    core,
-    runner,
-    dsh: localDsh,
-    stateStore: workerState,
-    stop: async () => {
-      if (stopped) return;
-      stopped = true;
-      core.close();
-      await runner.detachAll();
-      await localDsh.stop();
-      workerState.close();
-    },
-  };
+  return { core, runner, runStore, projectRegistry, backendRegistry, environmentStore, supervisor, credentialStore, configStore, knowledgeBridge, drain, stop: async () => { if (stopped) return; stopped = true; await knowledgeBridge.stop(); core.close(); await runner.detachAll(); await backendRegistry.dispose(); await supervisor.stopAll(); runStore.close(); } };
 }
 
-export async function main() {
-  const config = loadWorkerConfig();
-  const log = (line) => process.stdout.write(`${line}\n`);
-  const worker = await startWorker(config, { log });
-  const stop = async () => {
-    try {
-      await worker.stop();
-      process.exitCode = 0;
-    } catch (error) {
-      console.error('[worker] shutdown failed:', error.message);
-      process.exitCode = 1;
+export { CredentialStore } from './credential-store.js';
+
+export async function main() { const worker = await startWorker(loadWorkerConfig(), { log: (line) => process.stdout.write(`${line}\n`) }); const stop = () => worker.stop().catch((error) => { console.error(error); process.exitCode = 1; }); process.once('SIGINT', stop); process.once('SIGTERM', stop); }
+
+// Applies management decisions delivered in the Core `config` frame: server
+// project/backend/environment config, delegated credentials, and revocation.
+function applyServerConfig({ configStore, projectRegistry, backendRegistry, environmentStore, credentialStore, drain, log }, payload) {
+  const serverConfig = payload.server_config;
+  let changed = false;
+  if (serverConfig && typeof serverConfig === 'object') {
+    if (serverConfig.projects && Array.isArray(serverConfig.projects)) {
+      const before = projectRegistry.list().map((p) => p.projectId).sort().join(',');
+      for (const project of serverConfig.projects) {
+        const entry = typeof project === 'string' ? { projectId: project } : project;
+        if (!entry?.projectId) continue;
+        const registered = projectRegistry.list().find((existing) => existing.projectId === entry.projectId);
+        if (!entry.root && !registered) {
+          log(`[worker] server project ${entry.projectId} has no root and is not registered locally; skipping`);
+          continue;
+        }
+        if (!entry.root && registered) {
+          try { projectRegistry.add(registered); } catch { /* already there */ }
+          continue;
+        }
+        try {
+          projectRegistry.add(entry);
+          if (!configStore.get().projects.some((existing) => existing.projectId === entry.projectId)) configStore.addProject(entry);
+          log(`[worker] registered server project ${entry.projectId} -> ${entry.root}`);
+        } catch (error) {
+          log(`[worker] skip project ${entry.projectId}: ${error.message}`);
+        }
+      }
+      const after = projectRegistry.list().map((p) => p.projectId).sort().join(',');
+      if (before !== after) changed = true;
+      log(`[worker] applied server projects: ${after || '(none)'}`);
     }
-  };
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+    if (serverConfig.backends && Array.isArray(serverConfig.backends)) {
+      const before = backendRegistry.kinds().sort().join(',');
+      const wanted = serverConfig.backends.filter((b) => b?.kind && b.enabled !== false);
+      for (const kind of backendRegistry.kinds()) {
+        if (!wanted.some((b) => b.kind === kind)) backendRegistry.unregister(kind);
+      }
+      for (const backend of wanted) {
+        if (backendRegistry.get(backend.kind)) continue;
+        try {
+          backendRegistry.register(backend.kind, backendFor(backend, log), { kind: backend.kind, capabilities: backend.capabilities ?? [], version: '1' });
+        } catch (error) { log(`[worker] skip backend ${backend.kind}: ${error.message}`); }
+      }
+      const after = backendRegistry.kinds().sort().join(',');
+      if (before !== after) changed = true;
+      log(`[worker] applied server backends: ${after || '(none)'}`);
+    }
+    if (serverConfig.environment && typeof serverConfig.environment === 'object') {
+      for (const [name, vars] of Object.entries(serverConfig.environment)) {
+        if (vars === null) environmentStore.delete(name);
+        else if (vars && typeof vars === 'object') environmentStore.set(name, { vars });
+      }
+    }
+  }
+  if (Array.isArray(payload.credentials)) {
+    for (const credential of payload.credentials) {
+      if (!credential?.credentialId) continue;
+      try {
+        if (credential.value && typeof credential.value === 'string') {
+          credentialStore.set(credential.credentialId, { name: credential.name ?? credential.credentialId, provider: 'core', value: credential.value, metadata: credential.metadata ?? {} });
+        } else if (credential.reference) {
+          credentialStore.set(credential.credentialId, { name: credential.name ?? credential.credentialId, provider: 'core', reference: credential.reference, metadata: credential.metadata ?? {} });
+        }
+      } catch (error) { log(`[worker] credential ${credential.credentialId} apply failed: ${error.message}`); }
+    }
+    log(`[worker] applied ${payload.credentials.length} delegated credentials`);
+  }
+  if (Array.isArray(payload.skills)) {
+    const base = path.join(os.homedir(), '.agents', 'workflow', 'skills');
+    fs.mkdirSync(base, { recursive: true, mode: 0o755 });
+    for (const skill of payload.skills) {
+      const safe = String(skill.name ?? '').replace(/[^A-Za-z0-9._-]/g, '_');
+      if (!safe) continue;
+      fs.writeFileSync(path.join(base, `${safe}.md`), String(skill.content ?? ''), { mode: 0o644 });
+    }
+    log(`[worker] applied ${payload.skills.length} workflow skills -> ${base}`);
+  }
+  if (payload.revoked) {
+    log('[worker] revoked by server; uninstalling local scheduled task and exiting');
+    drain.enter();
+    selfUninstall(log);
+  }
+  return changed;
 }
 
-if (process.argv[1] && process.argv[1].endsWith('index.js')) {
-  main().catch((error) => {
-    console.error('[worker] startup failed:', error.message);
-    process.exit(1);
-  });
+function selfUninstall(log) {
+  const taskName = process.env.WFC_WORKER_TASK_NAME || 'Workflow Core Worker';
+  try {
+    const child = spawn('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      `Stop-ScheduledTask -TaskName '${taskName}' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName '${taskName}' -Confirm:$false -ErrorAction SilentlyContinue`,
+    ], { windowsHide: true, stdio: 'ignore' });
+    child.once?.('exit', () => process.exit(0));
+  } catch { /* best effort */ }
+  setTimeout(() => process.exit(0), 5000);
+  log(`[worker] self-uninstall requested for task ${taskName}`);
 }
+if (process.argv[1]?.endsWith('index.js')) main().catch((error) => { console.error(`[worker] startup failed: ${error.message}`); process.exit(1); });

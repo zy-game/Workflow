@@ -27,24 +27,6 @@ function loopbackHost(host) {
   return host === '127.0.0.1' || host === '::1' || host === 'localhost';
 }
 
-function dshUpstream(env) {
-  const raw = text(env, 'WFC_DSH_UPSTREAM') || 'http://127.0.0.1:3081';
-  let url;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error('WFC_DSH_UPSTREAM must be a valid HTTP URL');
-  }
-  const hostname = url.hostname === '[::1]' ? '::1' : url.hostname;
-  if (url.protocol !== 'http:' || !loopbackHost(hostname)) {
-    throw new Error('WFC_DSH_UPSTREAM must use HTTP on a loopback address');
-  }
-  if (url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) {
-    throw new Error('WFC_DSH_UPSTREAM must be an origin without credentials, path, query, or fragment');
-  }
-  return url.origin;
-}
-
 export function loadConfig(env = process.env) {
   const dataDirValue = text(env, 'WFC_DATA_DIR');
   if (!dataDirValue) throw new Error('WFC_DATA_DIR is required');
@@ -90,16 +72,10 @@ export function loadConfig(env = process.env) {
     internalHost: '127.0.0.1',
     internalPort: integer(env, 'WFC_INTERNAL_PORT', 8711, { max: 65535 }),
     tls,
-    dshUpstream: dshUpstream(env),
     claimTimeoutMs: integer(env, 'WFC_CLAIM_TIMEOUT_MS', 15 * 60 * 1000),
     knowledgeDb: text(env, 'WFC_KNOWLEDGE_DB')
       ? path.resolve(text(env, 'WFC_KNOWLEDGE_DB'))
       : path.join(dataDir, 'workflow.db'),
-    managementAi: flag(env, 'WFC_MANAGEMENT_AI', true),
-    adminAllowedIps: (text(env, 'WFC_ADMIN_ALLOWED_IPS') || '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean),
     feishu: {
       enabled: feishuEnabled,
       appId,

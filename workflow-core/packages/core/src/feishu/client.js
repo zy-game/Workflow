@@ -87,7 +87,12 @@ export function latestView(events) {
   for (const entry of events) {
     const event = entry?.payload?.event ?? entry?.payload ?? entry?.event ?? {};
     const type = String(event.type ?? '');
-    if (type === 'assistant/message' && event.data?.text) view.lastAssistant = event.data.text;
+    if (type === 'assistant/message') {
+      const parts = event.data?.message?.content ?? [];
+      const text = parts.filter((p) => p?.type === 'text' && typeof p.text === 'string').map((p) => p.text).join('\n');
+      if (text) view.lastAssistant = text;
+      else if (event.data?.text) view.lastAssistant = event.data.text;
+    }
     if (type === 'tool/call') {
       const tool = event.data?.tool ?? event.tool ?? 'tool';
       const args = event.data?.args ?? event.args ?? {};
@@ -101,8 +106,8 @@ export function latestView(events) {
 }
 
 // Feishu interactive card: live task status, current tool, latest assistant
-// excerpt, and control buttons whose values carry the routing payload.
-export function buildTaskCard({ task, events = [], approval = null }) {
+// excerpt, and stable interaction IDs in every response button.
+export function buildTaskCard({ task, events = [], interactions = [] }) {
   const view = latestView(events);
   const elements = [
     { tag: 'div', text: { tag: 'lark_md', content: `**目标**：${excerpt(task.brief?.goal ?? task.type, 160)}\n**状态**：${STATUS_LABELS[task.status] ?? task.status}　**优先级**：P${task.priority}　**尝试**：${task.attempts}/${task.max_attempts}` } },
@@ -111,22 +116,46 @@ export function buildTaskCard({ task, events = [], approval = null }) {
     elements.push({ tag: 'div', text: { tag: 'lark_md', content: `**当前工具**：\`${view.currentTool}\`（累计 ${view.toolCount} 次）` } });
   }
   if (view.lastAssistant) {
-    elements.push({ tag: 'div', text: { tag: 'lark_md', content: `**最新输出**：${excerpt(view.lastAssistant)}` } });
+    elements.push({ tag: 'div', text: { tag: 'lark_md', content: `**最新输出**：${excerpt(view.lastAssistant, 1200)}` } });
   }
-  if (task.result?.summary) {
-    elements.push({ tag: 'div', text: { tag: 'lark_md', content: `**结论**：${excerpt(task.result.summary)}` } });
+  const finalText = task.result?.summary ?? task.result?.text ?? null;
+  if (finalText) {
+    elements.push({ tag: 'div', text: { tag: 'lark_md', content: `**结论**：${excerpt(finalText, 1200)}` } });
+  } else if (['done', 'failed'].includes(task.status)) {
+    elements.push({ tag: 'div', text: { tag: 'lark_md', content: `**结果**：${excerpt(task.result ? (task.result.error ?? JSON.stringify(task.result)) : view.lastAssistant ?? '任务已结束，无输出文本')}` } });
   }
-  if (approval) {
+  for (const interaction of interactions) {
+    const questions = Array.isArray(interaction.schema?.questions) ? interaction.schema.questions : [];
     elements.push({ tag: 'hr' });
-    elements.push({ tag: 'div', text: { tag: 'lark_md', content: `**⚠ 待审批**：\`${approval.tool}\` ${approval.risk ?? ''}\n${excerpt(approval.reason ?? '', 160)}` } });
     elements.push({
-      tag: 'action',
-      actions: [
-        { tag: 'button', text: { tag: 'plain_text', content: '批准' }, type: 'primary', value: { kind: 'approve', approval_id: approval.approval_id, task_id: task.task_id } },
-        { tag: 'button', text: { tag: 'plain_text', content: '拒绝' }, type: 'danger', value: { kind: 'deny', approval_id: approval.approval_id, task_id: task.task_id } },
-      ],
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: interactionText(interaction, questions),
+      },
     });
-  } else if (['dispatched', 'running'].includes(task.status)) {
+    for (const question of questions) {
+      if (!Array.isArray(question.options) || !question.options.length) continue;
+      elements.push({
+        tag: 'action',
+        actions: question.options.slice(0, 5).map((option, index) => ({
+          tag: 'button',
+          text: { tag: 'plain_text', content: String(option.label ?? option.id) },
+          type: interaction.kind === 'approval' && index === 0 ? 'primary'
+            : interaction.kind === 'approval' && index === 1 ? 'danger' : 'default',
+          value: {
+            kind: 'interaction_response',
+            interaction_id: interaction.interaction_id,
+            task_id: task.task_id,
+            question_id: question.id,
+            option_id: option.id,
+            response_id: `feishu-card-${interaction.interaction_id}-${question.id}-${option.id}`,
+          },
+        })),
+      });
+    }
+  }
+  if (!interactions.length && ['dispatched', 'running'].includes(task.status)) {
     elements.push({
       tag: 'action',
       actions: [
@@ -135,10 +164,22 @@ export function buildTaskCard({ task, events = [], approval = null }) {
       ],
     });
   }
-  elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: `任务 ${task.task_id.slice(0, 8)} · 直接回复本消息即可纠正执行方向` }] });
+  const note = interactions.length
+    ? `任务 ${task.task_id.slice(0, 8)} · 请使用上方选项回答；凭据和本地文件不会通过飞书收集`
+    : `任务 ${task.task_id.slice(0, 8)} · 直接回复本消息即可纠正执行方向`;
+  elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: note }] });
   return {
     config: { wide_screen_mode: true },
     header: { template: task.status === 'done' ? 'green' : task.status === 'failed' ? 'red' : 'blue', title: { tag: 'plain_text', content: `Workflow 任务 · ${STATUS_LABELS[task.status] ?? task.status}` } },
     elements,
   };
+}
+
+function interactionText(interaction, questions) {
+  const schema = interaction.schema ?? {};
+  const heading = interaction.kind === 'approval' ? '**待审批**' : '**待回答**';
+  const details = [schema.title, schema.tool && `工具：\`${schema.tool}\``, schema.risk && `风险：${schema.risk}`, schema.reason]
+    .filter(Boolean).map((value) => excerpt(value, 160));
+  const prompts = questions.map((question) => excerpt(question.prompt ?? question.label ?? question.title ?? question.id, 160));
+  return [heading, ...details, ...prompts].join('\n');
 }

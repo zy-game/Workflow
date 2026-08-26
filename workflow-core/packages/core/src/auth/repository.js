@@ -14,16 +14,18 @@ export const AUTH_DB_SCHEMA_VERSION = 1;
 
 const MACHINE_ROLE_ACTIONS = Object.freeze({
   worker: Object.freeze([
-    'worker:register', 'worker:heartbeat', 'task:claim', 'task:read', 'task:renew',
-    'task:complete', 'task:progress', 'session_event:write', 'models:read', 'approval:request',
+    'worker:register', 'worker:heartbeat', 'task:read',
+    'knowledge:read', 'knowledge:write',
   ]),
   'ai-manager': Object.freeze([
     'task:create', 'task:read', 'task:cancel', 'model:read', 'model:write',
     'knowledge:read', 'knowledge:write', 'worker:read', 'decision:write',
   ]),
-  feishu: Object.freeze(['task:create', 'task:read', 'outbound:*']),
+  feishu: Object.freeze(['task:create', 'task:read', 'task:cancel', 'interaction:respond', 'outbound:*']),
   admin: Object.freeze(['*']),
 });
+
+const MACHINE_ROLES = new Set([...Object.keys(MACHINE_ROLE_ACTIONS), 'service']);
 
 function createSchema(db) {
   transaction(db, () => {
@@ -241,7 +243,7 @@ export class AuthRepository {
     return { id, csrfToken, expiresAt, principal: createAccountPrincipal(account) };
   }
 
-  getBrowserSession(id, ip) {
+  getBrowserSession(id) {
     if (!id) return null;
     const row = this.db.prepare(`
       SELECT s.*, a.email, a.password_hash, a.role, a.status, a.display_name,
@@ -251,7 +253,7 @@ export class AuthRepository {
       WHERE s.session_digest = ?
     `).get(digestToken(id));
     if (!row) return null;
-    if (row.expires_at <= new Date().toISOString() || row.ip !== ip || row.status !== 'active'
+    if (row.expires_at <= new Date().toISOString() || row.status !== 'active'
       || Number(row.credential_version) !== Number(row.account_credential_version)) {
       this.deleteBrowserSession(id);
       return null;
@@ -336,6 +338,7 @@ export class AuthRepository {
 
   createMachineToken({ subject_id, role, project_ids = [], actions = [], expires_at = null }) {
     if (!subject_id || typeof subject_id !== 'string') throw new TypeError('subject_id is required');
+    if (typeof role !== 'string' || !MACHINE_ROLES.has(role)) throw new TypeError(`unsupported machine role: ${role}`);
     const { token, digest } = createRandomToken(32);
     const tokenId = `mt-${digest.slice(0, 16)}`;
     const resolvedActions = [...new Set([...actions, ...machineActionsForRole(role)])];
@@ -345,7 +348,7 @@ export class AuthRepository {
         created_at, expires_at, revoked_at, last_used_at, rotated_from
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
     `).run(
-      tokenId, digest, subject_id, role || 'service', JSON.stringify(project_ids),
+      tokenId, digest, subject_id, role, JSON.stringify(project_ids),
       JSON.stringify(resolvedActions), new Date().toISOString(), expires_at,
     );
     insertAudit(this.db, { type: 'machine_token.created', actor: 'admin', reason: subject_id, details: { role, token_id: tokenId } });

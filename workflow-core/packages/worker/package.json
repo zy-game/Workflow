@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": { "workflow-worker": "./src/index.js" },
+  "exports": {
+    ".": "./src/index.js",
+    "./adapters/jsonl": "./src/adapters/jsonl.js",
+    "./backends/contract": "./src/backends/contract.js",
+    "./backends/omp-rpc": "./src/backends/omp-rpc.js"
+  },
   "engines": { "node": ">=24" },
   "dependencies": {
     "@workflow-core/shared": "0.1.0",

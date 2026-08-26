@@ -84,7 +84,7 @@ function extractKeywords(text) {
 // Renders worker session events into the (input, result, evidence) triple the
 // extraction core expects: input = task brief + user injections, result =
 // final assistant conclusions, evidence = tool calls/results and assistant
-// working notes. Real DSH wraps message content in typed part arrays
+// working notes. Backends may wrap message content in typed part arrays
 // ({type:'text'|'reasoning', text}); only text parts carry extractable prose.
 function textFromContent(value) {
   if (typeof value === 'string') return value;

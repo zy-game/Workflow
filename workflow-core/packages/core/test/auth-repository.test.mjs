@@ -53,8 +53,9 @@ test('client tokens are opaque, verifiable, and revocable', () => {
 
 test('machine tokens carry role actions and become principals', () => {
   const { token, record } = repo.createMachineToken({ subject_id: 'win-main', role: 'worker' });
-  assert.ok(record.actions.includes('task:claim'));
-  assert.ok(record.actions.includes('session_event:write'));
+  assert.ok(record.actions.includes('worker:register'));
+  assert.ok(record.actions.includes('worker:heartbeat'));
+  assert.ok(!record.actions.includes('task:claim'));
   const resolved = repo.getMachineToken(token);
   assert.equal(resolved.principal.subject_id, 'machine:win-main');
   assert.equal(resolved.principal.auth_type, 'machine');
@@ -63,14 +64,19 @@ test('machine tokens carry role actions and become principals', () => {
   assert.equal(repo.getMachineToken(token), null);
 });
 
-test('browser sessions are ip-bound and a foreign-ip probe invalidates them', () => {
+test('removed client machine role is rejected', () => {
+  assert.throws(
+    () => repo.createMachineToken({ subject_id: 'legacy-client', role: 'client' }),
+    /unsupported machine role/,
+  );
+});
+
+test('browser sessions are authenticated by the session token, not the source IP', () => {
   const account = repo.getAccountByEmail('owner@example.com');
   const session = repo.createBrowserSession(account, '127.0.0.1', 60_000);
-  const resolved = repo.getBrowserSession(session.id, '127.0.0.1');
+  const resolved = repo.getBrowserSession(session.id);
   assert.equal(resolved.principal.email, 'owner@example.com');
-  // A probe from a different address both fails and invalidates the session.
-  assert.equal(repo.getBrowserSession(session.id, '10.0.0.9'), null);
-  assert.equal(repo.getBrowserSession(session.id, '127.0.0.1'), null);
+  assert.equal(repo.getBrowserSession(session.id, '10.0.0.9').principal.email, 'owner@example.com');
 });
 
 test('fresh databases initialize cleanly and reopen as existing authority', () => {

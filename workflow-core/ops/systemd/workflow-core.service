@@ -1,6 +1,6 @@
 [Unit]
 Description=Workflow Core
-After=network-online.target dsh-web.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
