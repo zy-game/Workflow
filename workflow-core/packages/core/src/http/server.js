@@ -13,6 +13,9 @@ import { frame } from '@workflow-core/shared';
 import { ADMIN_HTML } from '../admin/console.js';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_BRIDGE_BODY_BYTES = 1024 * 1024;
+const MAX_BRIDGE_EVENTS_BODY_BYTES = 512 * 1024;
+const MAX_BRIDGE_IDENTIFIER_LENGTH = 128;
 const SESSION_MAX_AGE_MS = 60 * 60 * 1000;
 const CLIENT_TOKEN_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
@@ -59,13 +62,13 @@ function send(res, status, body, headers = {}) {
   res.end(payload);
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;
     req.on('data', (chunk) => {
       total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
+      if (total > maxBytes) {
         reject(new HttpError(413, 'body_too_large', 'request body exceeds the size limit'));
         req.destroy();
         return;
@@ -96,7 +99,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, authRepository, taskRepository, interactionRepository = null, workersRegistry = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null } = {}) {
+export function createCoreServer({ config = {}, authRepository, taskRepository, interactionRepository = null, workersRegistry = null, bridgeService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -135,6 +138,38 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
     if (!principal) throw new HttpError(401, 'auth_required', 'authentication required');
     if (!actionsAllow(principal.actions, '*')) throw new HttpError(403, 'forbidden', 'admin scope required');
     return principal;
+  }
+
+  function requireBridge(req, action) {
+    const principal = requireAction(req, action);
+    if (principal.auth_type !== 'machine' || principal.role !== 'bridge') {
+      throw new HttpError(403, 'bridge_identity_required', 'a dedicated Bridge machine token is required');
+    }
+    const subject = String(principal.subject_id || '');
+    const bridgeId = subject.startsWith('machine:') ? subject.slice('machine:'.length) : subject;
+    if (!bridgeId) throw new HttpError(403, 'bridge_identity_required', 'Bridge token has no subject identity');
+    return { principal, bridgeId };
+  }
+
+  function bridgeInput(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new HttpError(400, 'invalid_bridge_request', 'Bridge request must be a JSON object');
+    }
+    if (typeof body.request_id !== 'string' || !body.request_id) {
+      throw new HttpError(400, 'request_id_required', 'request_id is required');
+    }
+    if (body.request_id.length > MAX_BRIDGE_IDENTIFIER_LENGTH) {
+      throw new HttpError(400, 'request_id_too_long', `request_id exceeds the ${MAX_BRIDGE_IDENTIFIER_LENGTH} character limit`);
+    }
+    return { requestId: body.request_id, protocolVersion: body.protocol_version };
+  }
+
+  function sendBridge(res, outcome) {
+    if (!outcome || !Number.isInteger(outcome.status)) {
+      throw new Error('Bridge service returned an invalid HTTP outcome');
+    }
+    send(res, outcome.status, outcome.response);
+    return null;
   }
 
   function projectAllowed(principal, projectId) {
@@ -447,6 +482,95 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
     });
   }
 
+  if (bridgeService) {
+    const bridgeContext = (req, action, body) => {
+      const { principal, bridgeId } = requireBridge(req, action);
+      return {
+        bridgeId,
+        subjectId: principal.subject_id,
+        tokenProjects: principal.project_ids || [],
+        ...bridgeInput(body),
+      };
+    };
+
+    router.add('POST', '/api/v1/bridge/register', (req, res, body) => {
+      const context = bridgeContext(req, 'bridge:register', body);
+      return sendBridge(res, bridgeService.register({
+        ...context,
+        metadata: body.metadata ?? {},
+      }));
+    });
+
+    router.add('POST', '/api/v1/bridge/tasks/pull', (req, res, body) => {
+      const context = bridgeContext(req, 'bridge:pull', body);
+      return sendBridge(res, bridgeService.pull({
+        ...context,
+        payload: { state: body.state ?? null },
+      }));
+    });
+
+    router.add('POST', '/api/v1/bridge/tasks/:id/heartbeat', (req, res, body, params) => {
+      const context = bridgeContext(req, 'bridge:heartbeat', body);
+      return sendBridge(res, bridgeService.heartbeat({
+        ...context,
+        taskId: params.id,
+        claimToken: body.claim_token,
+        payload: { state: body.state ?? null },
+      }));
+    });
+
+    router.add('POST', '/api/v1/bridge/tasks/:id/events', (req, res, body, params) => {
+      const context = bridgeContext(req, 'bridge:events', body);
+      return sendBridge(res, bridgeService.progress({
+        ...context,
+        taskId: params.id,
+        claimToken: body.claim_token,
+        note: body.note ?? null,
+        percent: body.percent ?? null,
+        events: body.events ?? [],
+      }));
+    });
+
+    router.add('POST', '/api/v1/bridge/tasks/:id/interactions', (req, res, body, params) => {
+      const context = bridgeContext(req, 'bridge:events', body);
+      return sendBridge(res, bridgeService.createInteraction({
+        ...context,
+        taskId: params.id,
+        claimToken: body.claim_token,
+        interaction: body.interaction,
+      }));
+    });
+
+    router.add('POST', '/api/v1/bridge/tasks/:id/interactions/:interactionId/consumed', (req, res, body, params) => {
+      const context = bridgeContext(req, 'bridge:events', body);
+      return sendBridge(res, bridgeService.consumeInteraction({
+        ...context,
+        taskId: params.id,
+        claimToken: body.claim_token,
+        interactionId: params.interactionId,
+      }));
+    });
+
+    router.add('POST', '/api/v1/bridge/tasks/:id/result', (req, res, body, params) => {
+      const context = bridgeContext(req, 'bridge:result', body);
+      return sendBridge(res, bridgeService.result({
+        ...context,
+        taskId: params.id,
+        claimToken: body.claim_token,
+        kind: body.kind,
+        result: body.result ?? null,
+        sessionRef: body.session_ref ?? null,
+      }));
+    });
+
+    router.add('POST', '/api/v1/bridge/tasks/:id/release', (req, res, body, params) => {
+      const context = bridgeContext(req, 'bridge:release', body);
+      return sendBridge(res, bridgeService.release({
+        ...context, taskId: params.id, claimToken: body.claim_token,
+      }));
+    });
+  }
+
   // --- admin: machine tokens + audit ---
   router.add('GET', '/api/v1/admin/tokens', (req) => {
     requireAdmin(req);
@@ -670,7 +794,7 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
         return { ok: true, imported };
       } finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { } }
     });
-        router.add('POST', '/api/v1/skills/install-git', async (req, res, body) => {
+    router.add('POST', '/api/v1/skills/install-git', async (req, res, body) => {
       requireAdmin(req);
       const url = String(body?.url ?? '');
       if (!/^https:\/\/.+/i.test(url)) throw new HttpError(400, 'invalid_git_url', 'git url must be https://');
@@ -755,7 +879,11 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
       const url = new URL(req.url, 'http://local');
       const matched = router.match(req.method, url.pathname);
       if (!matched) throw new HttpError(404, 'not_found', `no route: ${req.method} ${url.pathname}`);
-      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
+      const bridgePath = url.pathname.startsWith('/api/v1/bridge/');
+      const bodyLimit = url.pathname.endsWith('/events')
+        ? MAX_BRIDGE_EVENTS_BODY_BYTES
+        : bridgePath ? MAX_BRIDGE_BODY_BYTES : MAX_BODY_BYTES;
+      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, bodyLimit) : {};
       const result = await matched.handler(req, res, body, matched.params);
       if (result !== null && result !== undefined) send(res, 200, result);
     } catch (error) {
@@ -763,7 +891,26 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
       // Repository validation/state errors carry a code and map to 400;
       // anything else is a genuine server fault.
       const isRepositoryError = !(error instanceof HttpError) && typeof error.code === 'string' && error.code;
-      const status = error instanceof HttpError ? error.status : error.code === 'REVISION_CONFLICT' ? 409 : isRepositoryError ? 400 : 500;
+      const bridgeStatuses = {
+        BRIDGE_REQUEST_CONFLICT: 409,
+        CLAIM_MISMATCH: 409,
+        TASK_ALREADY_STARTED: 409,
+        TASK_NOT_ACTIVE: 409,
+        TASK_NOT_AWAITING_INPUT: 409,
+        INTERACTION_CONFLICT: 409,
+        INTERACTION_RESPONSE_CONFLICT: 409,
+        INTERACTION_OWNER_MISMATCH: 409,
+        INTERACTION_NOT_ANSWERED: 409,
+        INTERACTION_NOT_DELIVERED: 409,
+        TASK_NOT_FOUND: 404,
+        LEASE_EXPIRED: 410,
+      };
+      const numericStatus = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599
+        ? error.status
+        : null;
+      const status = error instanceof HttpError
+        ? error.status
+        : numericStatus ?? bridgeStatuses[error.code] ?? (error.code === 'REVISION_CONFLICT' ? 409 : isRepositoryError ? 400 : 500);
       const code = error instanceof HttpError ? error.code : isRepositoryError ? error.code : 'internal_error';
       if (status === 500) console.error('[core] request failed:', error);
       send(res, status, { ok: false, code, error: error.message });

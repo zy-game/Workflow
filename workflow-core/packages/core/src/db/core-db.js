@@ -1,10 +1,11 @@
 // core-db.js - owns the clean-break Workflow Core schema.
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_PRIORITY, PRIORITY_MAX, PRIORITY_MIN } from '@workflow-core/shared';
 import { initializeDatabase, transaction } from './base.js';
 
 export const CORE_DB_FILE = 'core.db';
-export const CORE_DB_SCHEMA_VERSION = 13;
+export const CORE_DB_SCHEMA_VERSION = 14;
 
 function createCurrentSchema(db) {
   db.exec(`
@@ -71,7 +72,10 @@ function createCurrentSchema(db) {
       online INTEGER NOT NULL DEFAULT 1,
       config_json TEXT NOT NULL DEFAULT '{}',
       authorized INTEGER NOT NULL DEFAULT 1,
-      revoked INTEGER NOT NULL DEFAULT 0
+      revoked INTEGER NOT NULL DEFAULT 0,
+      transport TEXT,
+      last_pull_at TEXT,
+      bridge_protocol_version INTEGER
     );
     CREATE TABLE worker_inbound_frames (
       worker_id TEXT NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
@@ -80,6 +84,21 @@ function createCurrentSchema(db) {
       PRIMARY KEY (worker_id, frame_id)
     );
     CREATE INDEX workers_state_seen_idx ON workers(state, online, last_seen);
+
+    CREATE TABLE bridge_requests (
+      bridge_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      task_id TEXT,
+      payload_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      status INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      PRIMARY KEY (bridge_id, request_id)
+    );
+    CREATE INDEX bridge_requests_task_idx ON bridge_requests(task_id, created_at);
+    CREATE INDEX bridge_requests_expiry_idx ON bridge_requests(expires_at);
 
     CREATE TABLE worker_credentials (
       credential_id TEXT PRIMARY KEY,
@@ -169,16 +188,32 @@ export function createSchema(db) {
   transaction(db, () => {
     const current = Number(db.prepare('PRAGMA user_version').get().user_version);
     if (current === CORE_DB_SCHEMA_VERSION) {
-      // In-place lightweight upgrade for databases already at 13: add the
-      // worker-management columns and tables if absent. The clean-break rule
-      // for older schemas is unchanged.
+      // Keep schema creation idempotent for databases stamped at the current
+      // version by pre-release builds.
       try { db.exec("ALTER TABLE workers ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* exists */ }
       try { db.exec('ALTER TABLE workers ADD COLUMN authorized INTEGER NOT NULL DEFAULT 1'); } catch { /* exists */ }
       try { db.exec('ALTER TABLE workers ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0'); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE workers ADD COLUMN transport TEXT'); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE workers ADD COLUMN last_pull_at TEXT'); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE workers ADD COLUMN bridge_protocol_version INTEGER'); } catch { /* exists */ }
       try { db.exec("ALTER TABLE enrollments ADD COLUMN fingerprint TEXT"); } catch { /* exists */ }
       try { db.exec("ALTER TABLE enrollments ADD COLUMN token_pending TEXT"); } catch { /* exists */ }
       try { db.exec("ALTER TABLE enrollments ADD COLUMN approved_at TEXT"); } catch { /* exists */ }
       db.exec(`
+        CREATE TABLE IF NOT EXISTS bridge_requests (
+          bridge_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          task_id TEXT,
+          payload_hash TEXT NOT NULL,
+          response_json TEXT NOT NULL,
+          status INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (bridge_id, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS bridge_requests_task_idx ON bridge_requests(task_id, created_at);
+        CREATE INDEX IF NOT EXISTS bridge_requests_expiry_idx ON bridge_requests(expires_at);
         CREATE TABLE IF NOT EXISTS worker_credentials (
           credential_id TEXT PRIMARY KEY,
           worker_id TEXT,
@@ -204,6 +239,57 @@ CREATE TABLE IF NOT EXISTS enrollments (
           version INTEGER NOT NULL DEFAULT 1,
           updated_at TEXT NOT NULL
         );
+      `);
+      return;
+    }
+    if (current === 13) {
+      const activeClaims = db.prepare(`
+        SELECT task_id, claim_token
+        FROM tasks
+        WHERE claim_token IS NOT NULL
+          AND status IN ('dispatched','running','awaiting_input')
+      `).all();
+      const latestClaimEvent = db.prepare(`
+        SELECT event_id, payload_json
+        FROM task_events
+        WHERE task_id = ? AND type = 'claimed'
+        ORDER BY seq DESC
+        LIMIT 1
+      `);
+      const updateClaimEvent = db.prepare(
+        'UPDATE task_events SET payload_json = ? WHERE event_id = ?',
+      );
+      for (const claim of activeClaims) {
+        const event = latestClaimEvent.get(claim.task_id);
+        if (!event) continue;
+        const payload = JSON.parse(event.payload_json);
+        if (!payload.claim_token_hash) {
+          payload.claim_token_hash = crypto
+            .createHash('sha256')
+            .update(claim.claim_token)
+            .digest('hex');
+          updateClaimEvent.run(JSON.stringify(payload), event.event_id);
+        }
+      }
+      db.exec(`
+        ALTER TABLE workers ADD COLUMN transport TEXT;
+        ALTER TABLE workers ADD COLUMN last_pull_at TEXT;
+        ALTER TABLE workers ADD COLUMN bridge_protocol_version INTEGER;
+        CREATE TABLE bridge_requests (
+          bridge_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          task_id TEXT,
+          payload_hash TEXT NOT NULL,
+          response_json TEXT NOT NULL,
+          status INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (bridge_id, request_id)
+        );
+        CREATE INDEX bridge_requests_task_idx ON bridge_requests(task_id, created_at);
+        CREATE INDEX bridge_requests_expiry_idx ON bridge_requests(expires_at);
+        PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION};
       `);
       return;
     }

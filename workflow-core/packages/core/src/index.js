@@ -8,6 +8,8 @@ import { TaskRepository } from './tasks/repository.js';
 import { InteractionRepository } from './interactions/repository.js';
 import { WorkersRegistry } from './workers/registry.js';
 import { CredentialCipher } from './workers/credential-key.js';
+import { BridgeRequestsRepository } from './bridge/requests-repository.js';
+import { createBridgeService } from './bridge/service.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -80,6 +82,15 @@ export async function startCore(env = process.env, dependencies = {}) {
     const taskRepository = new TaskRepository({ coreDb: coreDatabase, claimTimeoutMs: config.claimTimeoutMs });
     const interactionRepository = new InteractionRepository({ coreDb: coreDatabase });
     const workersRegistry = new WorkersRegistry({ coreDb: coreDatabase });
+    const bridgeRequestsRepository = new BridgeRequestsRepository({ coreDb: coreDatabase });
+    bridgeRequestsRepository.pruneExpired();
+    const bridgeService = createBridgeService({
+      bridgeRequestsRepository,
+      workersRegistry,
+      taskRepository,
+      interactionRepository,
+      log,
+    });
     const projectAgentsRegistry = new ProjectAgentRegistry({ coreDb: coreDatabase });
     const credentialCipher = new CredentialCipher({ dataDir: config.dataDir });
     knowledgeRepository = new WorkflowRepository({ filename: config.knowledgeDb, readOnly: false });
@@ -108,6 +119,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       taskRepository,
       interactionRepository,
       workersRegistry,
+      bridgeService,
       workerChannel,
       knowledgeRepository,
       feishuService,
@@ -138,6 +150,8 @@ export async function startCore(env = process.env, dependencies = {}) {
       taskRepository,
       interactionRepository,
       workersRegistry,
+      bridgeRequestsRepository,
+      bridgeService,
       projectAgentsRegistry,
       workflowAgent,
       feishuService,

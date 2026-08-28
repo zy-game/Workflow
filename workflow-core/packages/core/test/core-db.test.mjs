@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,13 +11,13 @@ test('fresh Core schema contains only Worker execution state', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-schema-'));
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.equal(CORE_DB_SCHEMA_VERSION, 13);
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 13 });
+    assert.equal(CORE_DB_SCHEMA_VERSION, 14);
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 14 });
 
     const tables = new Set(core.db.prepare(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).all().map((row) => row.name));
-    for (const required of ['tasks', 'workers', 'interactions', 'task_events']) {
+    for (const required of ['tasks', 'workers', 'interactions', 'task_events', 'bridge_requests']) {
       assert.ok(tables.has(required), `missing ${required}`);
     }
     for (const obsolete of ['pending_approvals', 'cli_clients', 'cli_conversations']) {
@@ -29,13 +30,80 @@ test('fresh Core schema contains only Worker execution state', () => {
     }
     const workerColumns = new Set(core.db.prepare('PRAGMA table_info(workers)').all().map((row) => row.name));
     assert.equal(workerColumns.has('last_models_revision'), false);
+    for (const required of ['transport', 'last_pull_at', 'bridge_protocol_version']) {
+      assert.equal(workerColumns.has(required), true, `missing workers.${required}`);
+    }
   } finally {
     core.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('Core rejects pre-v13 databases instead of partially migrating them', () => {
+test('Core migrates v13 Worker data to the Bridge-capable schema', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-v13-schema-'));
+  const file = path.join(dir, 'core.db');
+  const old = new DatabaseSync(file);
+  old.exec(`
+    CREATE TABLE workers (
+      worker_id TEXT PRIMARY KEY,
+      subject_id TEXT NOT NULL,
+      machine TEXT,
+      capabilities_json TEXT NOT NULL DEFAULT '[]',
+      selector_json TEXT NOT NULL DEFAULT '{}',
+      projects_json TEXT NOT NULL DEFAULT '[]',
+      backends_json TEXT NOT NULL DEFAULT '[]',
+      state TEXT NOT NULL DEFAULT 'running',
+      config_revision INTEGER NOT NULL DEFAULT 0,
+      max_concurrency INTEGER NOT NULL DEFAULT 1,
+      version TEXT,
+      last_seen TEXT NOT NULL,
+      registered_at TEXT NOT NULL,
+      online INTEGER NOT NULL DEFAULT 1,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      authorized INTEGER NOT NULL DEFAULT 1,
+      revoked INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE tasks (
+      task_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      claim_token TEXT
+    );
+    CREATE TABLE task_events (
+      event_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+    INSERT INTO workers(worker_id, subject_id, last_seen, registered_at) VALUES ('worker-1', 'machine:worker-1', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    INSERT INTO tasks(task_id, status, claim_token) VALUES ('task-1', 'running', 'legacy-claim-token');
+    INSERT INTO task_events(event_id, task_id, seq, type, payload_json)
+      VALUES ('event-1', 'task-1', 0, 'claimed', '{"worker_id":"worker-1"}');
+    PRAGMA user_version = 13;
+  `);
+  old.close();
+  const core = new CoreDatabase({ dataDir: dir });
+  try {
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 14 });
+    const worker = core.db.prepare('SELECT transport, last_pull_at, bridge_protocol_version FROM workers WHERE worker_id = ?').get('worker-1');
+    assert.equal(worker.transport, null);
+    assert.equal(worker.last_pull_at, null);
+    assert.equal(worker.bridge_protocol_version, null);
+    assert.ok(core.db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'bridge_requests'").get());
+    const claimPayload = JSON.parse(core.db.prepare(
+      "SELECT payload_json FROM task_events WHERE task_id = 'task-1' AND type = 'claimed'",
+    ).get().payload_json);
+    assert.equal(
+      claimPayload.claim_token_hash,
+      crypto.createHash('sha256').update('legacy-claim-token').digest('hex'),
+    );
+  } finally {
+    core.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Core rejects unsupported legacy databases instead of partially migrating them', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-old-schema-'));
   const file = path.join(dir, 'core.db');
   const old = new DatabaseSync(file);

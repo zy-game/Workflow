@@ -265,7 +265,10 @@ export class TaskRepository {
         `).run(claimToken, worker_id, selectedBackend.kind, deadline, now, now, task.task_id).changes;
         if (!changes) continue; // raced with another claim; try the next candidate
         this.#appendEvent(task.task_id, 'claimed', {
-          worker_id, backend_kind: selectedBackend.kind, attempt: task.attempts + 1,
+          worker_id,
+          backend_kind: selectedBackend.kind,
+          attempt: task.attempts + 1,
+          claim_token_hash: crypto.createHash('sha256').update(claimToken).digest('hex'),
         }, worker_id);
         return this.get(task.task_id);
       }

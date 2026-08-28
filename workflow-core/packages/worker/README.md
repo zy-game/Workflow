@@ -1,6 +1,8 @@
 # Workflow Worker
 
-The Worker daemon is the only execution process connected to Workflow Core. It claims tasks over the authenticated `/worker` WebSocket, resolves project and backend configuration locally, and keeps backend sessions and sensitive credentials on the Worker host.
+The standard Worker daemon claims tasks over the authenticated `/worker` WebSocket, resolves project and backend configuration locally, and keeps backend sessions and sensitive credentials on the Worker host.
+
+External executors that use the approved specialized HTTP pull transport must follow the [Bridge HTTP pull contract](../core/BRIDGE_HTTP_PULL.md). It remains a Core-managed Worker transport; normal task publishers still use `POST /api/v1/tasks`.
 
 ## Start the daemon
 

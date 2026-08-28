@@ -64,6 +64,18 @@ test('machine tokens carry role actions and become principals', () => {
   assert.equal(repo.getMachineToken(token), null);
 });
 
+test('bridge machine tokens carry only the specialized Bridge actions', () => {
+  const { record } = repo.createMachineToken({
+    subject_id: 'bridge-main',
+    role: 'bridge',
+    actions: ['*', 'task:read', 'worker:register'],
+  });
+  assert.deepEqual(record.actions, [
+    'bridge:register', 'bridge:pull', 'bridge:heartbeat',
+    'bridge:events', 'bridge:result', 'bridge:release',
+  ]);
+});
+
 test('removed client machine role is rejected', () => {
   assert.throws(
     () => repo.createMachineToken({ subject_id: 'legacy-client', role: 'client' }),

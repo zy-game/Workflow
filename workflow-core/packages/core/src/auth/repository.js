@@ -17,6 +17,10 @@ const MACHINE_ROLE_ACTIONS = Object.freeze({
     'worker:register', 'worker:heartbeat', 'task:read',
     'knowledge:read', 'knowledge:write',
   ]),
+  bridge: Object.freeze([
+    'bridge:register', 'bridge:pull', 'bridge:heartbeat',
+    'bridge:events', 'bridge:result', 'bridge:release',
+  ]),
   'ai-manager': Object.freeze([
     'task:create', 'task:read', 'task:cancel', 'model:read', 'model:write',
     'knowledge:read', 'knowledge:write', 'worker:read', 'decision:write',
@@ -341,7 +345,10 @@ export class AuthRepository {
     if (typeof role !== 'string' || !MACHINE_ROLES.has(role)) throw new TypeError(`unsupported machine role: ${role}`);
     const { token, digest } = createRandomToken(32);
     const tokenId = `mt-${digest.slice(0, 16)}`;
-    const resolvedActions = [...new Set([...actions, ...machineActionsForRole(role)])];
+    const roleActions = machineActionsForRole(role);
+    const resolvedActions = role === 'bridge'
+      ? roleActions
+      : [...new Set([...actions, ...roleActions])];
     this.db.prepare(`
       INSERT INTO machine_tokens (
         token_id, token_digest, subject_id, role, project_ids_json, actions_json,
