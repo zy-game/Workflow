@@ -76,6 +76,12 @@ export function loadConfig(env = process.env) {
     knowledgeDb: text(env, 'WFC_KNOWLEDGE_DB')
       ? path.resolve(text(env, 'WFC_KNOWLEDGE_DB'))
       : path.join(dataDir, 'workflow.db'),
+    llm: {
+      enabled: flag(env, 'WFC_LLM_ENABLED'),
+      baseUrl: text(env, 'WFC_LLM_BASE_URL') || 'https://api.openai.com/v1',
+      apiKey: text(env, 'WFC_LLM_API_KEY'),
+      model: text(env, 'WFC_LLM_MODEL') || 'gpt-4o-mini',
+    },
     feishu: {
       enabled: feishuEnabled,
       appId,

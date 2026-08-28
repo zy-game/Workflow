@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 export const DEFAULT_BUSY_TIMEOUT_MS = 5000;
 
+const transactionState = new WeakMap();
+
 export function configure(db, busyTimeoutMs = DEFAULT_BUSY_TIMEOUT_MS) {
   db.exec(`PRAGMA busy_timeout = ${Math.max(1, Math.floor(busyTimeoutMs))}`);
   db.exec('PRAGMA foreign_keys = ON');
@@ -13,13 +15,33 @@ export function configure(db, busyTimeoutMs = DEFAULT_BUSY_TIMEOUT_MS) {
 }
 
 export function transaction(db, work) {
+  const state = transactionState.get(db);
+  if (state) {
+    const savepoint = `wfc_nested_${++state.sequence}`;
+    db.exec(`SAVEPOINT ${savepoint}`);
+    try {
+      const result = work();
+      db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      return result;
+    } catch (error) {
+      try {
+        db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      } catch { /* preserve the original failure */ }
+      throw error;
+    }
+  }
+
   db.exec('BEGIN IMMEDIATE');
+  transactionState.set(db, { sequence: 0 });
   try {
     const result = work();
     db.exec('COMMIT');
+    transactionState.delete(db);
     return result;
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch { /* preserve the original failure */ }
+    transactionState.delete(db);
     throw error;
   }
 }

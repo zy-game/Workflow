@@ -1,6 +1,7 @@
 // index.js - Workflow Core entrypoint.
 import readline from 'node:readline/promises';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { AuthRepository } from './auth/repository.js';
 import { CoreDatabase } from './db/core-db.js';
@@ -8,6 +9,11 @@ import { TaskRepository } from './tasks/repository.js';
 import { InteractionRepository } from './interactions/repository.js';
 import { WorkersRegistry } from './workers/registry.js';
 import { CredentialCipher } from './workers/credential-key.js';
+import { ServerLlm } from './ai/server-llm.js';
+import { SettingsRepository } from './settings/repository.js';
+import { SuggestionsRepository } from './ai/suggestions-repository.js';
+import { BridgeRequestsRepository } from './bridge/requests-repository.js';
+import { createBridgeService } from './bridge/service.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -44,6 +50,42 @@ function forceCloseConnections(server) {
   server?.closeAllConnections?.();
 }
 
+function systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository }) {
+  const counts = taskRepository.countsByStatus?.() ?? {};
+  const recent = taskRepository.list?.({ limit: 200 }) ?? [];
+  const failed = recent.filter((t) => t.status === 'failed').slice(0, 15);
+  const workers = workersRegistry.list();
+  const knowledge = { projects: knowledgeRepository?.listProjects?.().length ?? 0, memories: knowledgeRepository?.listMemories?.({ all: true }).length ?? 0 };
+  return { counts, failed: failed.map((t) => ({ id: t.task_id, type: t.type, project: t.project_id, error: t.result?.error ?? null, attempts: t.attempts })), workers: workers.map((w) => ({ id: w.worker_id, connected: w.connected, revoked: w.revoked, projects: (w.projects ?? []).length })), pendingSuggestions: suggestionsRepository?.stats?.().pending ?? 0, knowledge };
+}
+
+function applySuggestion(ctx, suggestion) {
+  const payload = suggestion.payload ?? {};
+  if (suggestion.targetType === 'skill') {
+    if (!payload.name || !payload.content) throw new Error('suggestion payload requires name and content');
+    const skill = ctx.workersRegistry.upsertSkill(payload.name, payload.content);
+    for (const workerId of ctx.workerChannel?.connectedWorkers?.() ?? []) ctx.workerChannel.pushConfig(workerId);
+    return { applied: 'skill', name: skill.name, version: skill.version };
+  }
+  if (suggestion.targetType === 'knowledge') {
+    if (!payload.projectId || !payload.title || !payload.content) throw new Error('suggestion payload requires projectId, title and content');
+    const validTypes = ['pitfall','insight','decision','pattern','constraint'];
+    const memoryType = validTypes.includes(payload.type) ? payload.type : 'insight';
+    const memory = ctx.knowledgeRepository.createMemory({ id: crypto.randomUUID(), projectId: payload.projectId, type: memoryType, title: payload.title, body: payload.content, tags: ['ai-suggestion'] });
+    return { applied: 'knowledge', memoryId: memory.id };
+  }
+  if (suggestion.targetType === 'settings') {
+    const key = payload.key; if (!key) throw new Error('suggestion payload requires key');
+    ctx.settingsRepository.set(key, payload.value);
+    return { applied: 'settings', key };
+  }
+  if (suggestion.targetType === 'rule') {
+    const key = payload.key ?? 'rules.custom'; if (typeof payload.rules !== 'object') throw new Error('suggestion payload requires rules object');
+    ctx.settingsRepository.set(key, payload.rules);
+    return { applied: 'rules', key };
+  }
+  throw new Error(`unsupported target type: ${suggestion.targetType}`);
+}
 export async function startCore(env = process.env, dependencies = {}) {
   const config = loadConfig(env);
   const log = dependencies.log ?? ((line) => process.stdout.write(`${line}\n`));
@@ -80,8 +122,59 @@ export async function startCore(env = process.env, dependencies = {}) {
     const taskRepository = new TaskRepository({ coreDb: coreDatabase, claimTimeoutMs: config.claimTimeoutMs });
     const interactionRepository = new InteractionRepository({ coreDb: coreDatabase });
     const workersRegistry = new WorkersRegistry({ coreDb: coreDatabase });
+    const bridgeRequestsRepository = new BridgeRequestsRepository({ coreDb: coreDatabase });
+    const bridgeService = createBridgeService({
+      bridgeRequestsRepository,
+      workersRegistry,
+      taskRepository,
+      interactionRepository,
+      log,
+    });
     const projectAgentsRegistry = new ProjectAgentRegistry({ coreDb: coreDatabase });
     const credentialCipher = new CredentialCipher({ dataDir: config.dataDir });
+    const settingsRepository = new SettingsRepository({ coreDb: coreDatabase });
+    const LLM_CLI_AVAILABLE = fs.existsSync("/opt/dsh8/lib/node_modules/@deepseek-ai/dsh/lib/bin.js");
+    const llmCfg = (() => {
+      const saved = settingsRepository.get('llm') ?? {};
+      let apiKey = config.llm?.apiKey ?? null;
+      try {
+        const cred = workersRegistry.listCredentials(null).find((c) => c.credentialId === 'server-llm-key');
+        if (cred?.secretEncrypted) apiKey = credentialCipher.decrypt(cred.secretEncrypted);
+      } catch { /* keep env fallback */ }
+      const backend = saved.backend ?? 'auto';
+      const useCli = backend === 'dsh-cli' || (backend === 'auto' && LLM_CLI_AVAILABLE);
+      return {
+        enabled: useCli || Boolean((saved.enabled ?? config.llm?.enabled ?? false) && apiKey),
+        baseUrl: saved.baseUrl ?? config.llm?.baseUrl ?? null,
+        model: saved.model ?? config.llm?.model ?? null,
+        apiKey,
+        cli: useCli ? { command: '/opt/node24/bin/node', args: ['/opt/dsh8/lib/node_modules/@deepseek-ai/dsh/lib/bin.js', '--profile', 'headless'], timeoutMs: 240000 } : null,
+        backend: useCli ? 'dsh-cli' : 'direct',
+      };
+    })();
+    log(`[core] server-llm: cli=${LLM_CLI_AVAILABLE} enabled=${llmCfg.enabled} backend=${llmCfg.backend}`);
+    const serverLlm = new ServerLlm({
+      enabled: llmCfg.enabled,
+      baseUrl: llmCfg.baseUrl,
+      apiKey: llmCfg.apiKey,
+      cli: llmCfg.cli,
+      model: llmCfg.model,
+      log,
+    });
+    serverLlm.reload = async () => {
+      const next = settingsRepository.get('llm') ?? {};
+      let key = config.llm?.apiKey ?? null;
+      try {
+        const cred = workersRegistry.listCredentials(null).find((c) => c.credentialId === 'server-llm-key');
+        if (cred?.secretEncrypted) key = credentialCipher.decrypt(cred.secretEncrypted);
+      } catch { /* keep */ }
+      serverLlm.update({
+        enabled: next.enabled ?? serverLlm.enabled,
+        baseUrl: next.baseUrl ?? serverLlm.baseUrl,
+        model: next.model ?? serverLlm.model,
+        apiKey: key,
+      });
+    };
     knowledgeRepository = new WorkflowRepository({ filename: config.knowledgeDb, readOnly: false });
     workflowAgent = new WorkflowAgent({ taskRepository, projectAgentsRegistry, knowledgeRepository, log });
     feishuService = config.feishu.enabled ? new FeishuService({
@@ -99,21 +192,77 @@ export async function startCore(env = process.env, dependencies = {}) {
       workersRegistry,
       feishuService,
       credentialCipher,
+      serverLlm,
+      knowledgeRepository,
       log,
     });
     if (feishuService) feishuService.channel = workerChannel;
+    const suggestionsRepository = new SuggestionsRepository({ coreDb: coreDatabase });
+    const applySuggestionBound = (suggestion) => applySuggestion({ workersRegistry, knowledgeRepository, settingsRepository, workerChannel }, suggestion);
+    const runCheckup = async () => {
+      // Role-session pool: carry the previous round summary as context
+      const role = 'checkup';
+      const sessions = settingsRepository.get('ai.sessions') ?? {};
+      const stat = sessions[role] ?? { rounds: 0, baseline: null, lastAt: null };
+      if (Number(stat.rounds) >= 20) {
+        stat.baseline = null; stat.rounds = 0;
+      }
+      const context = stat.baseline
+        ? 'Previous round summary (use as context, do not repeat it):\n' + String(stat.baseline).slice(0, 2000)
+        : 'This is the first round for this role.';
+      const metrics = systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository });
+      const recent = suggestionsRepository.list({});
+      const metrics2 = {
+        ...metrics,
+        recentDecisions: {
+          approvedTitles: recent.filter((y) => y.status === 'approved').slice(0, 10).map((y) => ({ title: y.title, type: y.targetType, appliedAs: y.reason || '' })),
+          ignoredTitles: recent.filter((y) => y.status === 'ignored').slice(0, 10).map((y) => y.title),
+        },
+      };
+      if (!serverLlm?.status?.enabled) return { ok: false, reason: 'server LLM is not enabled (configure it in Server Settings)' };
+      const text = await serverLlm.ask([
+        { role: 'system', content: 'You are the Workflow system intelligence agent. Look at the system checkup metrics, find where the workflow is not intelligent, and propose actionable improvements. Output ONLY a JSON array; each item: {target_type,title,summary,payload}; target_type is one of skill|knowledge|settings|rule. skill payload: {name,content (Markdown)}; knowledge: {projectId,title,type,content}; settings: {key,value}; rule: {key,rules}. No suggestions -> []. No explanations.' },
+        { role: 'system', content: 'recentDecisions feedback: previously approved suggestions were applied to the system and ignored ones were rejected by the admin. Consider this feedback - do not re-propose ignored suggestions; build on approved ones; use appliedAs to see what an approval actually changed.' },
+        { role: 'system', content: context },
+        { role: 'user', content: JSON.stringify(metrics2) },
+      ]);
+      let items = [];
+      let text0 = String(text ?? '').trim();
+      const fence = text0.split(String.fromCharCode(96,96,96));
+      if (fence.length > 2) text0 = fence[1].trim();
+
+      const i = text0.indexOf('['); const j = text0.lastIndexOf(']');
+      items = i >= 0 && j > i ? JSON.parse(text0.slice(i, j + 1)) : [];
+      const created = [];
+      for (const item of Array.isArray(items) ? items : []) {
+        if (!item?.target_type || !item?.title) continue;
+        if (!['skill','knowledge','settings','rule'].includes(item.target_type)) continue;
+        created.push(suggestionsRepository.create({ targetType: item.target_type, title: String(item.title).slice(0,200), summary: String(item.summary ?? '').slice(0,1000), payload: item.payload ?? {}, metrics: metrics2 }));
+      }
+      stat.rounds += 1;
+      stat.lastAt = new Date().toISOString();
+      stat.baseline = String(text0 ?? '').slice(0, 1500) || stat.baseline;
+      settingsRepository.set('ai.sessions', { ...sessions, [role]: stat });
+      return { ok: true, generated: created.length, suggestions: created.map((c) => ({ id: c.suggestionId, title: c.title })) };
+    };
     const server = createCoreServer({
       config,
       authRepository,
       taskRepository,
       interactionRepository,
       workersRegistry,
+      bridgeService,
       workerChannel,
       knowledgeRepository,
       feishuService,
       projectAgentsRegistry,
       workflowAgent,
       credentialCipher,
+      settingsRepository,
+      serverLlm,
+      suggestionsRepository,
+      runCheckup,
+      applySuggestion: applySuggestionBound,
     });
     internal = await server.listen({ host: config.internalHost, port: config.internalPort, tls: null, surface: 'internal' });
     publicServer = await server.listen({ host: config.httpsHost, port: config.httpsPort, tls: config.tls, surface: 'public' });
@@ -138,6 +287,8 @@ export async function startCore(env = process.env, dependencies = {}) {
       taskRepository,
       interactionRepository,
       workersRegistry,
+      bridgeRequestsRepository,
+      bridgeService,
       projectAgentsRegistry,
       workflowAgent,
       feishuService,

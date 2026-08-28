@@ -101,10 +101,10 @@ button.red{background:var(--red)}
 <div id="app" style="display:none">
 <header><h1>Workflow Core</h1><span class="dim" id="health"></span><span class="who" id="who"></span><button class="ghost" id="logoutBtn">退出</button></header>
 <div class="layout"><aside id="tree"></aside><main id="main"></main></div></div>
-<div class="drawer" id="drawer"></div><div id="modal" class="modal" style="display:none"><div class="modalBox"><div class="chead"><span class="name">新建技能</span><button class="ghost" id="modalClose">×</button></div><div class="row" style="display:flex;gap:6px;margin:10px 0"><button class="act" data-mtab="custom">自定义新建</button><button class="ghost" data-mtab="upload">上传文件</button><button class="ghost" data-mtab="git">从 Git 安装</button></div><div id="mPanelCustom"><form class="inline" id="mCustomForm"><input id="mName" placeholder="技能名（字母数字._-）" required><button class="act">保存</button></form><textarea id="mContent" placeholder="Markdown 内容，可留空（保存后创建骨架）" style="width:100%;min-height:220px;font-family:Consolas,monospace"></textarea></div><div id="mPanelUpload" style="display:none"><div class="meta dim" style="margin-bottom:8px">选择技能文件夹（内部须有 SKILL.md）或单个 .md 文件</div><div class="row" style="display:flex;gap:8px"><input type="file" id="mFile" accept=".md,.markdown,.txt"><button class="ghost" id="mFolderBtn">选择文件夹…</button><input type="file" id="mFolder" webkitdirectory style="display:none"></div></div><div id="mPanelGit" style="display:none"><form class="inline" id="mGitForm"><input id="mGitUrl" style="flex:2" placeholder="https://.../repo.git" required><input id="mGitName" placeholder="技能名（可选）"><button class="act">安装</button></form></div><div class="error" id="mErr"></div></div></div>
+<div class="drawer" id="drawer"></div><div id="modal" class="modal" style="display:none"><div class="modalBox"><div class="chead"><span class="name">新建技能</span><button class="ghost" id="modalClose">×</button></div><div class="row" style="display:flex;gap:6px;margin:10px 0"><button class="act" data-mtab="custom">自定义新建</button><button class="ghost" data-mtab="upload">上传文件</button><button class="ghost" data-mtab="git">从 Git 安装</button></div><div id="mPanelCustom"><form class="inline" id="mCustomForm"><input id="mName" placeholder="技能名（字母数字._-）" required><button class="act">保存</button></form><textarea id="mContent" placeholder="Markdown 内容，可留空（保存后创建骨架）" style="width:100%;min-height:220px;font-family:Consolas,monospace"></textarea></div><div id="mPanelUpload" style="display:none"><div class="meta dim" style="margin-bottom:8px">选择技能文件夹（内部须有 SKILL.md）或单个 .md 文件</div><div class="row" style="display:flex;gap:8px"><input type="file" id="mFile" accept=".md,.markdown,.txt"><button class="ghost" id="mFolderBtn">选择文件夹…</button><input type="file" id="mFolder" webkitdirectory style="display:none"></div></div><div id="mPanelGit" style="display:none"><form class="inline" id="mGitForm"><input id="mGitUrl" style="flex:2" placeholder="https://.../repo.git" required><input id="mGitName" placeholder="技能名（可选）"><button class="act">安装</button></form></div><div class="error" id="mErr"></div></div></div><div id="memModal" class="modal" style="display:none"><div class="modalBox"><div class="chead"><span class="name" id="memTitle"></span><button class="ghost" id="memClose">×</button></div><div id="memBody" style="margin-top:8px"></div></div></div>
 <div id="toast"></div>
 <script>
-var TREE=[['overview','总览'],['projects','项目'],['tasks','任务'],['workers','Workers'],['devices','设备授权'],['credentials','凭据'],['skills','技能'],['knowledge','知识库']];
+var TREE=[['overview','总览'],['projects','项目'],['tasks','任务'],['workers','Workers'],['devices','设备授权'],['credentials','凭据'],['skills','技能'],['settings','服务器设置'],['ai','智能建议'],['knowledge','知识库']];
 var tab='overview',timer=null,selectedTask=null,currentProject=null;
 function $(s){return document.querySelector(s)}
 function toast(m){var t=$('#toast');t.textContent=m;t.style.opacity=1;setTimeout(function(){t.style.opacity=0},1800)}
@@ -197,6 +197,8 @@ function bindModal(){
   $('#mGitForm').onsubmit=async function(e){e.preventDefault();
     var body={url:$('#mGitUrl').value.trim()};if($('#mGitName').value.trim())body.name=$('#mGitName').value.trim();
     try{var r=await api('POST','/api/v1/skills/install-git',body);toast('已安装 '+r.skill.name+' v'+r.skill.version);closeModal();selectedSkill=r.skill.name;render()}catch(err){mErr(err.message)}};
+  $('#memClose').onclick=function(){closeMem()};
+  $('#memModal').addEventListener('click',function(e){if(e.target===$('#memModal'))closeMem()});
 }
 function init(){
   var tree='';TREE.forEach(function(item){
@@ -220,6 +222,8 @@ async function render(){var draft=formDraft();var scrollTop=document.documentEle
   else if(tab==='devices')await rDevices();
   else if(tab==='credentials')await rCredentialsPage();
   else if(tab==='skills')await (selectedSkill==='__new__'?rSkillNew():selectedSkill?rSkillDetail(selectedSkill):rSkillsPage());
+  else if(tab==='settings')await rSettingsPage();
+  else if(tab==='ai')await rAiSuggestions();
   else if(tab==='knowledge')await rKnowledge();
 }catch(e){if(e.message!=='未登录')console.warn(e)}finally{restoreDraft(draft);document.documentElement.scrollTop=scrollTop}}
 var selectedWorker=null;
@@ -230,6 +234,10 @@ function table(headers,rows){var h='<table><tr>'+headers.map(function(x){return 
 function card(title,body){return '<div class="card"><div class="cTitle">'+esc(title)+'</div>'+body+'</div>'}
 function emptyLine(text){return '<div class="dim" style="padding:6px 0">'+esc(text)+'</div>'}
 function gridOf(items,cardFn){if(!items.length)return emptyLine('暂无数据');return '<div class="cards">'+items.map(cardFn).join('')+'</div>'}
+function workerBridgeMeta(w,activeClaims){
+  var protocol=w.bridge_protocol_version==null?'-':'v'+w.bridge_protocol_version;
+  return '<div class="meta">传输 '+esc(w.transport||'websocket')+' · Bridge 协议 '+esc(protocol)+' · 活跃领取 '+Number(activeClaims||0)+'</div>'
+    +'<div class="meta dim">最近拉取 '+esc(w.last_pull_at?new Date(w.last_pull_at).toLocaleString():'-')+'</div>'}
 function taskCard(t){
   return '<div class="card clickable" data-task="'+t.task_id+'">'
     +'<div class="chead"><span class="name">'+esc(t.type)+'</span>'+badge(t.status)+'</div>'
@@ -244,8 +252,48 @@ function workerCard(w){
     +'<div class="meta">项目 '+esc((w.projects||[]).join(', '))+' · Backends '+esc((w.backends||[]).map(function(b){return b.kind}).join(', '))+'</div>'
     +'<div class="meta dim">心跳 '+esc(w.last_seen?new Date(w.last_seen).toLocaleString():'-')+'</div></div>'}
 function memoryCard(m){
-  return '<div class="card"><div class="chead"><span class="name">'+esc(m.title||'-')+'</span><span class="chip">'+esc(m.type)+'</span></div>'
+  return '<div class="card" data-mem="'+esc(m.id)+'" style="cursor:pointer"><div class="chead"><span class="name">'+esc(m.title||'-')+'</span><span class="chip">'+esc(m.type)+'</span></div>'
     +'<div class="meta">'+esc(m.scope+(m.projectId?':'+m.projectId.slice(0,8):''))+' · '+esc(m.source)+' · '+new Date(m.updatedAt).toLocaleDateString()+'</div></div>'}
+function mdEscapeInline(t){
+  var codes=[];var src=t.replace(/\`([^\`]+)\`/g,function(m,c){codes.push(c);return '@@WFC'+(codes.length-1)+'@@'});
+  src=src.replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>');
+  src=src.replace(/__([^_]+)__/g,'<strong>$1</strong>');
+  src=src.replace(/(^|[\\s(\\[])\\*([^*\\n]+)\\*/g,'$1<em>$2</em>');
+  src=src.replace(/~~([^~]+)~~/g,'<del>$1</del>');
+  src=src.replace(/\\[([^\\]]+)\\]\\(([^)\\s]+)\\)/g,function(m,txt,url){return /^https?:\\/\\//i.test(url)?'<a href="'+url+'" target="_blank" rel="noopener nofollow">'+txt+'</a>':txt});
+  return src.replace(/@@WFC(\\d+)@@/g,function(_,i){return '<code>'+codes[Number(i)]+'</code>'});
+}
+function mdToHtml(text){
+  var lines=String(text==null?'':text).split('\\n');var out=[];var listTag=null;var inCode=false;var codeBuf=[];
+  function closeList(){if(listTag){out.push('</'+listTag+'>');listTag=null}}
+  for(var i=0;i<lines.length;i++){var line=lines[i];
+    if(line.trim().startsWith('\`\`\`')){closeList();if(inCode){out.push('<pre><code>'+esc(codeBuf.join('\\n'))+'</code></pre>');codeBuf=[];inCode=false}else{inCode=true}continue}
+    if(inCode){codeBuf.push(line);continue}
+    if(!line.trim()){closeList();continue}
+    var h=line.match(/^(#{1,6})\s+(.*)$/);if(h){closeList();var n=h[1].length;out.push('<h'+n+'>'+mdEscapeInline(esc(h[2]))+'</h'+n+'>');continue}
+    var ul=line.match(/^[-*]\s+(.*)$/);if(ul){if(listTag!=='ul'){closeList();out.push('<ul>');listTag='ul'}out.push('<li>'+mdEscapeInline(esc(ul[1]))+'</li>');continue}
+    var ol=line.match(/^\d+[.)]\s+(.*)$/);if(ol){if(listTag!=='ol'){closeList();out.push('<ol>');listTag='ol'}out.push('<li>'+mdEscapeInline(esc(ol[1]))+'</li>');continue}
+    if(line.trim().startsWith('>')){closeList();out.push('<blockquote>'+mdEscapeInline(esc(line.trim().replace(/^>\s?/,'')))+'</blockquote>');continue}
+    if(/^\s*[-*_]+\s*$/.test(line)){closeList();out.push('<hr>');continue}
+    closeList();out.push('<p>'+mdEscapeInline(esc(line))+'</p>');}
+  closeList();if(inCode)out.push('<pre><code>'+esc(codeBuf.join('\\n'))+'</code></pre>');
+  return out.join('\\n');}
+var MEM_MD_STYLE='<style>.markdown{line-height:1.6;color:var(--text);word-break:break-word}.markdown h1,.markdown h2,.markdown h3{margin:10px 0 6px;line-height:1.3}.markdown h4,.markdown h5,.markdown h6{margin:8px 0 4px}.markdown p{margin:6px 0}.markdown ul,.markdown ol{margin:6px 0;padding-left:22px}.markdown li{margin:2px 0}.markdown code{background:var(--line);padding:1px 4px;border-radius:3px;font-family:Consolas,monospace;font-size:.92em}.markdown pre{background:var(--line);padding:10px;border-radius:6px;overflow-x:auto;margin:8px 0}.markdown pre code{background:none;padding:0}.markdown blockquote{border-left:3px solid var(--line);margin:6px 0;padding-left:10px;color:var(--text)}.markdown a{color:#4a9eff}.markdown hr{border:none;border-top:1px solid var(--line);margin:12px 0}</style>';
+function memoryDetailHtml(m){
+  var tags=(m.tags||[]).map(function(t){return '<span class="chip">'+esc(t)+'</span>'}).join('');
+  var kw=(m.keywords||[]).map(function(t){return '<span class="chip">'+esc(t)+'</span>'}).join('');
+  var scope=m.scope==='project'?('<span class="chip">项目 '+esc(m.projectId||'-')+'</span>'):'<span class="chip">全局</span>';
+  return MEM_MD_STYLE+'<div style="margin:4px 0"><span class="chip">'+esc(m.type)+'</span>'+scope+'<span class="chip">'+new Date(m.updatedAt).toLocaleString()+'</span></div>'
+    +(tags?('<div class="meta" style="margin-top:6px">标签：'+tags+'</div>'):'')
+    +(kw?('<div class="meta">关键词：'+kw+'</div>'):'')
+    +'<div class="meta">来源：'+esc(m.source||'-')+'</div>'
+    +'<div class="meta">状态：'+esc(m.status||'active')+'</div>'
+    +'<div class="markdown">'+mdToHtml(m.body||'')+'</div>'}
+async function openMemory(id){
+  var j=await api('GET','/api/v1/workflow/memories/'+encodeURIComponent(id));var m=j.memory;
+  if(!m){toast('未找到该知识点');return}
+  $('#memTitle').textContent=m.title||'(无标题)';$('#memBody').innerHTML=memoryDetailHtml(m);$('#memModal').style.display='flex'}
+function closeMem(){$('#memModal').style.display='none'}
 async function rOverview(){
   var h=await api('GET','/api/v1/health');var c=h.checks||{};var t=c.tasks||{};
   var activeKeys=['dispatched','running','awaiting_input'];
@@ -359,10 +407,14 @@ async function doInject(text){try{
   var input=$('#injectText');if(input)input.value='';toast('已注入');refreshDrawer()}catch(err){toast(err.message)}}
 async function doCancel(){try{await api('POST','/api/v1/tasks/'+selectedTask+'/cancel');toast('已取消');refreshDrawer()}catch(err){toast(err.message)}}
 async function rWorkers(){var j=await api('GET','/api/v1/workers');
+  var tasks=(await api('GET','/api/v1/tasks?limit=500')).tasks||[];
+  var activeStatuses=['dispatched','running','awaiting_input'];var claims={};
+  tasks.forEach(function(t){if(t.claim_worker_id&&activeStatuses.indexOf(t.status)>=0)claims[t.claim_worker_id]=(claims[t.claim_worker_id]||0)+1});
   $('#main').innerHTML='<h3>Workers</h3>'+gridOf(j.workers||[],function(w){
     return '<div class="card clickable" data-worker="'+esc(w.worker_id)+'">'
       +'<div class="chead"><span class="dot '+(w.connected?'ok':'bad')+'"></span><span class="name mono">'+esc(w.worker_id)+'</span>'+(w.revoked?'<span class="err" style="font-size:12px">已停用</span>':(w.connected?'<span class="ok" style="font-size:12px">在线</span>':'<span class="err" style="font-size:12px">离线</span>'))+'</div>'
       +'<div class="meta">机器 '+esc(w.machine||'-')+' · 状态 '+esc(w.state||'-')+' · 并发 '+w.max_concurrency+'</div>'
+      +workerBridgeMeta(w,claims[w.worker_id])
       +'<div class="chips">'+(w.capabilities||[]).map(function(c){return '<span class="chip">'+esc(c)+'</span>'}).join('')+'</div>'
       +'<div class="meta">项目 '+esc((w.projects||[]).join(', '))+' · Backends '+esc((w.backends||[]).map(function(b){return b.kind}).join(', '))+'</div>'
       +'<div class="meta dim">心跳 '+esc(w.last_seen?new Date(w.last_seen).toLocaleString():'-')+'</div></div>'})}
@@ -373,8 +425,15 @@ async function rWorkerDetail(id){
   if(!w){selectedWorker=null;return rWorkers()}
   var cfg=(await api('GET','/api/v1/workers/'+encodeURIComponent(id)+'/config')).config||{};
   var creds=(await api('GET','/api/v1/credentials?worker_id='+encodeURIComponent(id))).credentials||[];
+  var tasks=(await api('GET','/api/v1/tasks?limit=500')).tasks||[];
+  var activeClaims=tasks.filter(function(t){return t.claim_worker_id===id&&['dispatched','running','awaiting_input'].indexOf(t.status)>=0});
   $('#main').innerHTML='<button class="ghost" id="backWorkers">返回 Workers</button><h3>Worker · '+esc(id)+'</h3>'
-    +'<div class="cards"><div class="card"><div class="cTitle">服务器侧配置（下次心跳生效）</div>'
+    +'<div class="cards"><div class="card"><div class="cTitle">运行状态</div>'
+    +'<div class="chead"><span class="dot '+(w.connected?'ok':'bad')+'"></span><span class="name">'+esc(w.state||'-')+'</span>'+(w.revoked?'<span class="err">已停用</span>':(w.connected?'<span class="ok">在线</span>':'<span class="err">离线</span>'))+'</div>'
+    +workerBridgeMeta(w,activeClaims.length)
+    +'<div class="meta dim">心跳 '+esc(w.last_seen?new Date(w.last_seen).toLocaleString():'-')+'</div>'
+    +(activeClaims.length?'<div class="chips">'+activeClaims.map(function(t){return '<span class="chip mono">'+esc(t.task_id.slice(0,10))+' · '+esc(t.status)+'</span>'}).join('')+'</div>':'')+'</div>'
+    +'<div class="card"><div class="cTitle">服务器侧配置（下次心跳生效）</div>'
     +'<form id="cfgForm"><input class="wide" id="cfgProjects" placeholder="projects（JSON：[{&quot;projectId&quot;:&quot;x&quot;,&quot;root&quot;:&quot;C:/dir&quot;}]）" style="width:100%">'
     +'<input class="wide" id="cfgBackends" placeholder="backends（JSON 数组：[{kind,command,args}]）" style="width:100%;margin-top:6px">'
     +'<input class="wide" id="cfgCapabilities" placeholder="capabilities（逗号分隔）" style="width:100%;margin-top:6px">'
@@ -492,22 +551,70 @@ async function rCredentialsPage(){
   };
   document.querySelectorAll('[data-del-cred]').forEach(function(b){b.onclick=async function(){ await api('DELETE','/api/v1/credentials/'+encodeURIComponent(b.dataset.delCred)); toast('已删除'); render(); }});
 }
+async function rSettingsPage(){
+  var st=(await api('GET','/api/v1/settings')).settings;
+  var llm=st.llm||{};
+  $('#main').innerHTML='<h3>服务器设置</h3><div class="card"><div class="cTitle">Workflow LLM（服务器层）</div>'
+    +'<div class="meta dim" style="margin-bottom:8px">管理服务器全局事务：任务完成后自动将会话提炼为项目知识点写入知识库。密钥仅在服务器凭据库中加密保存，永不回显。</div>'
+    +'<form id="llmForm"><label><input type="checkbox" id="llmEnabled"'+(llm.enabled?' checked':'')+'> 启用</label>'
+    +'<input id="llmBase" placeholder="Base URL，如 https://api.deepseek.com/v1" value="'+esc(llm.baseUrl||'')+'" style="width:100%">'
+    +'<input id="llmModel" placeholder="模型名，如 deepseek/deepseek-v4-flash-vision-exp" value="'+esc(llm.model||'')+'" style="width:100%;margin-top:6px">'
+    +'<input id="llmKey" type="password" placeholder="'+(llm.apiKeyConfigured?'API Key 已配置（留空则不修改）':'API Key（保存后加密存储，不会回显）')+'" style="width:100%;margin-top:6px">'
+    +'<button class="act" style="margin-top:8px">保存设置</button><div class="error" id="llmErr"></div></form></div>';
+  $('#llmForm').onsubmit=async function(e){e.preventDefault();
+    try{
+      var body={llm:{enabled:$('#llmEnabled').checked,baseUrl:$('#llmBase').value.trim(),model:$('#llmModel').value.trim()}};
+      if($('#llmKey').value.trim())body.llm.apiKey=$('#llmKey').value.trim();
+      await api('PUT','/api/v1/settings',body);toast('设置已保存并即时生效');render();
+    }catch(err){$('#llmErr').textContent=err.message}
+  };
+}
+
+async function rAiSuggestions(){
+  var j=await api('GET','/api/v1/ai/suggestions');
+  var items=j.suggestions||[];
+  var label={skill:'技能',knowledge:'知识',settings:'设置',rule:'规则'};
+  var cards=items.map(function(x){
+    var action='';
+    if(x.status==='pending')action='<button class="act" data-ai-ok="'+esc(x.suggestionId)+'" style="margin-right:6px">采纳</button><button class="ghost" data-ai-no="'+esc(x.suggestionId)+'">忽略</button>';
+    return '<div class="card"><div class="chead"><span class="name">'+esc(x.title)+'</span><span class="chip">'+esc(label[x.targetType]||x.targetType)+'</span><span class="chip">'+esc(x.status)+'</span></div>'
+      +'<div class="meta">'+esc(x.summary||'')+'</div>'
+      +'<div class="meta dim">'+(x.status==='approved'?'已应用：'+esc(x.reason||''):'')+(x.resolvedAt?' · '+new Date(x.resolvedAt).toLocaleString():'')+'</div>'
+      +'<div style="margin-top:8px">'+action+'</div></div>'}).join('');
+  $('#main').innerHTML='<h3>智能建议</h3>'
+    +'<div class="row" style="display:flex;gap:8px;margin-bottom:10px"><button class="act" id="aiCheckup">立即体检</button><span class="dim">AI 生成改进建议；采纳后才生效（意见→技能/知识/设置/规则），并用采纳效果回喂下一轮</span></div>'
+    +(items.length?'<div class="cards">'+cards+'</div>':emptyLine('暂无建议'));
+  $('#aiCheckup').onclick=async function(){
+    var r=await api('POST','/api/v1/ai/checkup',{});
+    if(!r.ok){toast(r.reason||'体检未运行');return}
+    toast('生成了 '+r.generated+' 条建议');render();
+  };
+  document.querySelectorAll('[data-ai-ok]').forEach(function(b){b.onclick=async function(){
+    try{await api('POST','/api/v1/ai/suggestions/'+encodeURIComponent(b.dataset.aiOk)+'/approve',{});toast('已采纳并应用');render()}catch(err){toast(err.message)}
+  }});
+  document.querySelectorAll('[data-ai-no]').forEach(function(b){b.onclick=async function(){
+    await api('POST','/api/v1/ai/suggestions/'+encodeURIComponent(b.dataset.aiNo)+'/ignore',{});toast('已忽略');render();
+  }});
+}
+
 async function rKnowledge(){
-  $('#main').innerHTML='<h3>知识库</h3><form class="inline" id="kForm"><input id="kq" style="flex:1" placeholder="检索记忆（FTS）…"><button class="act">搜索</button></form><div id="kres"></div>'}
+  $('#main').innerHTML='<h3>知识库</h3><form class="inline" id="kForm"><input id="kq" style="flex:1" placeholder="检索记忆，留空显示全部…"><button class="act">搜索</button></form><div id="kres"></div>'
+  searchMem($('#kq').value)}
 async function searchMem(q){var j=await api('GET','/api/v1/workflow/memories?q='+encodeURIComponent(q));
-  $('#kres').innerHTML=gridOf(j.memories||[],memoryCard)+'<p class="dim">'+j.memories.length+' 条结果</p>'}
+  $('#kres').innerHTML=gridOf(j.memories||[],memoryCard)+(q.trim()?'<p class="dim">'+j.memories.length+' 条结果</p>':'')}
 document.addEventListener('click',function(e){
   // Click outside the task drawer closes it (unless hitting another opener).
   var drawer=$('#drawer');
-  if(drawer.classList.contains('open')&&!e.target.closest('#drawer')&&!e.target.closest('[data-task],[data-project],[data-worker],aside button')){
+  if(drawer.classList.contains('open')&&!e.target.closest('#drawer')&&!e.target.closest('[data-task],[data-project],[data-worker],[data-mem],aside button')){
     drawer.classList.remove('open');selectedTask=null;selectedWorker=null;return}
-  var el=e.target.closest('[data-task],[data-project],[data-worker],[data-skill],[data-evtoggle],[data-interaction],aside button,#backProjects,#backSkills,#backWorkers,#cancelBtn,#logoutBtn,#loginBtn');
+  var el=e.target.closest('[data-task],[data-project],[data-worker],[data-mem],[data-skill],[data-evtoggle],[data-interaction],aside button,#backProjects,#backSkills,#backWorkers,#cancelBtn,#logoutBtn,#loginBtn');
   if(!el)return;
   if(el.dataset.evtoggle){evtView=evtView==='chat'?'json':'chat';refreshDrawer();return}
   if(el.dataset.interaction){
     api('POST','/api/v1/interactions/'+el.dataset.interaction+'/respond',{response_id:'admin-'+el.dataset.interaction+'-'+el.dataset.question+'-'+el.dataset.option,answers:Object.fromEntries([[el.dataset.question,el.dataset.option]])})
       .then(function(){toast('已回答');refreshDrawer()})
       .catch(function(err){toast(err.message)});return}
+  if(el.dataset.mem){openMemory(el.dataset.mem).catch(function(err){toast(err.message)});return}
   if(el.dataset.task){openTask(el.dataset.task);return}
   if(el.dataset.skill){selectedSkill=el.dataset.skill;render();return}
   if(el.dataset.worker){selectedWorker=el.dataset.worker;render();return}
@@ -522,7 +629,7 @@ document.addEventListener('click',function(e){
 document.addEventListener('submit',function(e){
   if(e.target.id==='injectForm'){e.preventDefault();var v=$('#injectText').value;if(v)doInject(v);return}
   if(e.target.id==='kForm'){e.preventDefault();searchMem($('#kq').value);return}});
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){$('#drawer').classList.remove('open');selectedTask=null}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){$('#drawer').classList.remove('open');$('#memModal').style.display='none';selectedTask=null}});
 api('GET','/api/v1/health').then(function(){api('GET','/api/v1/auth/session').then(function(){
   $('#login').style.display='none';$('#app').style.display='block';init()}).catch(function(){})}).catch(function(){});
 </script></body></html>`;

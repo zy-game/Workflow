@@ -75,7 +75,10 @@ export class KnowledgeBridgeServer {
     const type = String(body.type ?? 'note');
     if (!projectId || !title || !content.trim()) return json(res, 400, { error: 'projectId, title and content are required' });
     try {
-      const memory = await this.#submit({ projectId, title, content, type, tags: Array.isArray(body.tags) ? body.tags.map(String) : [] });
+      // Core's knowledge repository uses `body` as the canonical field. Keep
+      // `content` as a compatibility alias for older callers, but never rely
+      // on it when writing to Core.
+      const memory = await this.#submit({ projectId, title, body: content, content, type, tags: Array.isArray(body.tags) ? body.tags.map(String) : [] });
       this.log(`[knowledge-bridge] submitted "${title}" to ${projectId}`);
       return json(res, 200, { ok: true, memory: { id: memory.id, projectId: memory.projectId, title: memory.title, type: memory.type } });
     } catch (error) {

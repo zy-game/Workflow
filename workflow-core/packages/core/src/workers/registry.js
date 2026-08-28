@@ -3,6 +3,7 @@
 export const WORKER_OFFLINE_MS = 60 * 1000;
 
 const WORKER_STATES = new Set(['running', 'draining', 'offline']);
+const WORKER_TRANSPORTS = new Set(['websocket', 'pull']);
 
 function normalizeProjects(projects) {
   if (!Array.isArray(projects)) throw new TypeError('projects must be an array');
@@ -42,12 +43,21 @@ export class WorkersRegistry {
   register({
     worker_id, subject_id, machine = null, capabilities = [], selector = {},
     projects = [], backends = [], state = 'running', config_revision = 0,
-    max_concurrency = 1, version = null,
+    max_concurrency = 1, version = null, transport = 'websocket',
+    bridge_protocol_version = null,
   }) {
     if (!worker_id || typeof worker_id !== 'string') throw new TypeError('worker_id is required');
     if (!subject_id || typeof subject_id !== 'string') throw new TypeError('subject_id is required');
     if (!Array.isArray(capabilities)) throw new TypeError('capabilities must be an array');
     if (!WORKER_STATES.has(state)) throw new TypeError(`invalid worker state: ${state}`);
+    if (!WORKER_TRANSPORTS.has(transport)) throw new TypeError(`invalid worker transport: ${transport}`);
+    const protocolVersion = bridge_protocol_version === null ? null : Number(bridge_protocol_version);
+    if (protocolVersion !== null && (!Number.isInteger(protocolVersion) || protocolVersion < 1)) {
+      throw new TypeError('bridge_protocol_version must be a positive integer or null');
+    }
+    if (transport !== 'pull' && protocolVersion !== null) {
+      throw new TypeError('bridge_protocol_version is only valid for pull transport');
+    }
     const concurrency = Number(max_concurrency);
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
       throw new TypeError('max_concurrency must be an integer 1-32');
@@ -59,32 +69,43 @@ export class WorkersRegistry {
       INSERT INTO workers (
         worker_id, subject_id, machine, capabilities_json, selector_json,
         projects_json, backends_json, state, config_revision,
-        max_concurrency, version, last_seen, registered_at, online
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        max_concurrency, version, last_seen, registered_at, online,
+        transport, bridge_protocol_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
       ON CONFLICT(worker_id) DO UPDATE SET
         subject_id = excluded.subject_id, machine = excluded.machine,
         capabilities_json = excluded.capabilities_json, selector_json = excluded.selector_json,
         projects_json = excluded.projects_json, backends_json = excluded.backends_json,
         state = excluded.state, config_revision = excluded.config_revision,
         max_concurrency = excluded.max_concurrency, version = excluded.version,
-        last_seen = excluded.last_seen, online = 1
+        last_seen = excluded.last_seen, online = 1,
+        transport = excluded.transport,
+        bridge_protocol_version = excluded.bridge_protocol_version
     `).run(
       worker_id, subject_id, machine,
       JSON.stringify([...new Set(capabilities.map(String).filter(Boolean))]),
       JSON.stringify(selector ?? {}), JSON.stringify(normalizeProjects(projects)),
       JSON.stringify(normalizeBackends(backends)), state, revision,
-      concurrency, version, now, now,
+      concurrency, version, now, now, transport, protocolVersion,
     );
     return this.get(worker_id);
   }
 
-  heartbeat(workerId, { state = null } = {}) {
+  heartbeat(workerId, { state = null, pulled = false } = {}) {
     if (state !== null && !WORKER_STATES.has(state)) throw new TypeError(`invalid worker state: ${state}`);
+    if (typeof pulled !== 'boolean') throw new TypeError('pulled must be a boolean');
+    const now = new Date().toISOString();
     const result = state === null
-      ? this.db.prepare('UPDATE workers SET last_seen = ?, online = 1 WHERE worker_id = ?')
-        .run(new Date().toISOString(), workerId)
-      : this.db.prepare('UPDATE workers SET last_seen = ?, online = 1, state = ? WHERE worker_id = ?')
-        .run(new Date().toISOString(), state, workerId);
+      ? this.db.prepare(`
+          UPDATE workers SET last_seen = ?, online = 1,
+            last_pull_at = CASE WHEN ? = 1 THEN ? ELSE last_pull_at END
+          WHERE worker_id = ?
+        `).run(now, pulled ? 1 : 0, now, workerId)
+      : this.db.prepare(`
+          UPDATE workers SET last_seen = ?, online = 1, state = ?,
+            last_pull_at = CASE WHEN ? = 1 THEN ? ELSE last_pull_at END
+          WHERE worker_id = ?
+        `).run(now, state, pulled ? 1 : 0, now, workerId);
     return result.changes > 0;
   }
 
@@ -310,6 +331,9 @@ export class WorkersRegistry {
       config_revision: Number(row.config_revision || 0),
       max_concurrency: Number(row.max_concurrency),
       version: row.version,
+      transport: row.transport || 'websocket',
+      last_pull_at: row.last_pull_at,
+      bridge_protocol_version: row.bridge_protocol_version === null ? null : Number(row.bridge_protocol_version),
       last_seen: row.last_seen,
       registered_at: row.registered_at,
       connected: Number(row.online) === 1,

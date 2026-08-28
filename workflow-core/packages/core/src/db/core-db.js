@@ -4,7 +4,7 @@ import { DEFAULT_PRIORITY, PRIORITY_MAX, PRIORITY_MIN } from '@workflow-core/sha
 import { initializeDatabase, transaction } from './base.js';
 
 export const CORE_DB_FILE = 'core.db';
-export const CORE_DB_SCHEMA_VERSION = 13;
+export const CORE_DB_SCHEMA_VERSION = 14;
 
 function createCurrentSchema(db) {
   db.exec(`
@@ -71,7 +71,10 @@ function createCurrentSchema(db) {
       online INTEGER NOT NULL DEFAULT 1,
       config_json TEXT NOT NULL DEFAULT '{}',
       authorized INTEGER NOT NULL DEFAULT 1,
-      revoked INTEGER NOT NULL DEFAULT 0
+      revoked INTEGER NOT NULL DEFAULT 0,
+      transport TEXT,
+      last_pull_at TEXT,
+      bridge_protocol_version INTEGER
     );
     CREATE TABLE worker_inbound_frames (
       worker_id TEXT NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
@@ -80,6 +83,21 @@ function createCurrentSchema(db) {
       PRIMARY KEY (worker_id, frame_id)
     );
     CREATE INDEX workers_state_seen_idx ON workers(state, online, last_seen);
+
+    CREATE TABLE bridge_requests (
+      bridge_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      task_id TEXT,
+      payload_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      status INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      PRIMARY KEY (bridge_id, request_id)
+    );
+    CREATE INDEX bridge_requests_task_idx ON bridge_requests(task_id, created_at);
+    CREATE INDEX bridge_requests_expiry_idx ON bridge_requests(expires_at);
 
     CREATE TABLE worker_credentials (
       credential_id TEXT PRIMARY KEY,
@@ -103,6 +121,25 @@ function createCurrentSchema(db) {
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','authorized','consumed','revoked')),
       created_at TEXT NOT NULL,
       consumed_at TEXT
+    );
+
+        CREATE TABLE ai_suggestions (
+      suggestion_id TEXT PRIMARY KEY,
+      target_type TEXT NOT NULL CHECK (target_type IN ('skill','knowledge','settings','rule')),
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','ignored')),
+      reason TEXT,
+      metrics_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+
+    CREATE TABLE server_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE worker_skills (
@@ -169,16 +206,32 @@ export function createSchema(db) {
   transaction(db, () => {
     const current = Number(db.prepare('PRAGMA user_version').get().user_version);
     if (current === CORE_DB_SCHEMA_VERSION) {
-      // In-place lightweight upgrade for databases already at 13: add the
-      // worker-management columns and tables if absent. The clean-break rule
-      // for older schemas is unchanged.
+      // Keep schema creation idempotent for databases stamped at the current
+      // version by pre-release builds.
       try { db.exec("ALTER TABLE workers ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* exists */ }
       try { db.exec('ALTER TABLE workers ADD COLUMN authorized INTEGER NOT NULL DEFAULT 1'); } catch { /* exists */ }
       try { db.exec('ALTER TABLE workers ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0'); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE workers ADD COLUMN transport TEXT'); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE workers ADD COLUMN last_pull_at TEXT'); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE workers ADD COLUMN bridge_protocol_version INTEGER'); } catch { /* exists */ }
       try { db.exec("ALTER TABLE enrollments ADD COLUMN fingerprint TEXT"); } catch { /* exists */ }
       try { db.exec("ALTER TABLE enrollments ADD COLUMN token_pending TEXT"); } catch { /* exists */ }
       try { db.exec("ALTER TABLE enrollments ADD COLUMN approved_at TEXT"); } catch { /* exists */ }
       db.exec(`
+        CREATE TABLE IF NOT EXISTS bridge_requests (
+          bridge_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          task_id TEXT,
+          payload_hash TEXT NOT NULL,
+          response_json TEXT NOT NULL,
+          status INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (bridge_id, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS bridge_requests_task_idx ON bridge_requests(task_id, created_at);
+        CREATE INDEX IF NOT EXISTS bridge_requests_expiry_idx ON bridge_requests(expires_at);
         CREATE TABLE IF NOT EXISTS worker_credentials (
           credential_id TEXT PRIMARY KEY,
           worker_id TEXT,
@@ -198,12 +251,52 @@ CREATE TABLE IF NOT EXISTS enrollments (
           created_at TEXT NOT NULL,
           consumed_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS ai_suggestions (
+          suggestion_id TEXT PRIMARY KEY,
+          target_type TEXT NOT NULL CHECK (target_type IN ('skill','knowledge','settings','rule')),
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','ignored')),
+          reason TEXT,
+          metrics_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          resolved_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS server_settings (
+          key TEXT PRIMARY KEY,
+          value_json TEXT NOT NULL DEFAULT '{}',
+          updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS worker_skills (
           name TEXT PRIMARY KEY,
           content TEXT NOT NULL,
           version INTEGER NOT NULL DEFAULT 1,
           updated_at TEXT NOT NULL
         );
+      `);
+      return;
+    }
+    if (current === 13) {
+      db.exec(`
+        ALTER TABLE workers ADD COLUMN transport TEXT;
+        ALTER TABLE workers ADD COLUMN last_pull_at TEXT;
+        ALTER TABLE workers ADD COLUMN bridge_protocol_version INTEGER;
+        CREATE TABLE bridge_requests (
+          bridge_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          task_id TEXT,
+          payload_hash TEXT NOT NULL,
+          response_json TEXT NOT NULL,
+          status INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (bridge_id, request_id)
+        );
+        CREATE INDEX bridge_requests_task_idx ON bridge_requests(task_id, created_at);
+        CREATE INDEX bridge_requests_expiry_idx ON bridge_requests(expires_at);
+        PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION};
       `);
       return;
     }

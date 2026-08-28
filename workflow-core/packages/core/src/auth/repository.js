@@ -17,6 +17,11 @@ const MACHINE_ROLE_ACTIONS = Object.freeze({
     'worker:register', 'worker:heartbeat', 'task:read',
     'knowledge:read', 'knowledge:write',
   ]),
+  bridge: Object.freeze([
+    'bridge:register', 'bridge:pull', 'bridge:heartbeat',
+    'bridge:events', 'bridge:result', 'bridge:release',
+    'task:read', 'interaction:read',
+  ]),
   'ai-manager': Object.freeze([
     'task:create', 'task:read', 'task:cancel', 'model:read', 'model:write',
     'knowledge:read', 'knowledge:write', 'worker:read', 'decision:write',
