@@ -37,7 +37,7 @@ Each pulled task includes a claim token and lease deadline. Heartbeats, events, 
 
 ## Bounded exchange
 
-Pull responses and event submissions are bounded exchanges, not synchronization dumps. Respect the server-advertised or rejected batch limits, keep each progress/session event small, and split event streams across requests while preserving event IDs and order. Requests must remain below Core's global 4 MiB JSON body limit; route-specific event count, event size, batch size, pull count, and result size limits may be lower. Treat a limit rejection as a request-shaping error, not as permission to omit terminal state.
+Pull responses and event submissions are bounded exchanges, not synchronization dumps. Respect the server-advertised or rejected batch limits, keep each progress/session event small, and split event streams across requests while preserving event IDs and order. Bridge request bodies must remain below 1 MiB, and event request bodies must remain below 512 KiB. Event batches are additionally limited to 100 events, 64 KiB per event, and 256 KiB for the encoded event array. Treat a limit rejection as a request-shaping error, not as permission to omit terminal state.
 
 ## Completion and release
 

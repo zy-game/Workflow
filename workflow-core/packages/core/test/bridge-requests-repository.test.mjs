@@ -7,12 +7,12 @@ import { BridgeRequestsRepository, canonicalPayloadHash } from '../src/bridge/re
 import { CoreDatabase } from '../src/db/core-db.js';
 import { transaction } from '../src/db/base.js';
 
-function fixture() {
+function fixture(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-bridge-requests-'));
   const core = new CoreDatabase({ dataDir: dir });
   return {
     core,
-    repository: new BridgeRequestsRepository({ coreDb: core }),
+    repository: new BridgeRequestsRepository({ coreDb: core, ...options }),
     close() {
       core.close();
       fs.rmSync(dir, { recursive: true, force: true });
@@ -85,6 +85,51 @@ test('mutation and response record commit or roll back together with nested repo
     );
     assert.equal(value.core.db.prepare("SELECT COUNT(*) AS count FROM bridge_test_mutations WHERE id = 'rolled-back'").get().count, 0);
     assert.equal(value.repository.get('bridge-1', 'rolled-back'), null);
+  } finally {
+    value.close();
+  }
+});
+
+test('expired request identity executes again and replaces the replay record', () => {
+  const clock = { value: new Date('2026-01-01T00:00:00.000Z') };
+  const value = fixture({ requestTtlMs: 1000, now: () => clock.value });
+  try {
+    const request = {
+      bridgeId: 'bridge-1', requestId: 'expiring', operation: 'events', taskId: 'task-1', payload: { seq: 1 },
+    };
+    value.repository.execute(request, () => ({ status: 200, response: { generation: 1 } }));
+    clock.value = new Date('2026-01-01T00:00:02.000Z');
+    const replacement = value.repository.execute(
+      { ...request, operation: 'result', payload: { done: true } },
+      () => ({ status: 202, response: { generation: 2 } }),
+    );
+
+    assert.deepEqual(replacement, { status: 202, response: { generation: 2 }, replayed: false });
+    assert.equal(value.repository.get('bridge-1', 'expiring').operation, 'result');
+    assert.equal(value.core.db.prepare(
+      'SELECT COUNT(*) AS count FROM bridge_requests WHERE bridge_id = ? AND request_id = ?',
+    ).get('bridge-1', 'expiring').count, 1);
+  } finally {
+    value.close();
+  }
+});
+
+test('expired request replacement rolls back the deletion when its mutation fails', () => {
+  const clock = { value: new Date('2026-01-01T00:00:00.000Z') };
+  const value = fixture({ requestTtlMs: 1000, now: () => clock.value });
+  try {
+    const request = { bridgeId: 'bridge-1', requestId: 'expiring', operation: 'events', payload: { seq: 1 } };
+    value.repository.execute(request, () => ({ status: 200, response: { generation: 1 } }));
+    clock.value = new Date('2026-01-01T00:00:02.000Z');
+
+    assert.throws(
+      () => value.repository.execute(
+        { ...request, operation: 'result', payload: { done: true } },
+        () => { throw new Error('replacement failed'); },
+      ),
+      /replacement failed/,
+    );
+    assert.equal(value.repository.get('bridge-1', 'expiring').operation, 'events');
   } finally {
     value.close();
   }

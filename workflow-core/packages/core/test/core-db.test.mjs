@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +17,7 @@ test('fresh Core schema contains only Worker execution state', () => {
     const tables = new Set(core.db.prepare(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).all().map((row) => row.name));
-    for (const required of ['tasks', 'workers', 'interactions', 'task_events', 'bridge_requests']) {
+    for (const required of ['tasks', 'workers', 'interactions', 'task_events', 'bridge_requests', 'server_settings']) {
       assert.ok(tables.has(required), `missing ${required}`);
     }
     for (const obsolete of ['pending_approvals', 'cli_clients', 'cli_conversations']) {
@@ -32,6 +33,28 @@ test('fresh Core schema contains only Worker execution state', () => {
     for (const required of ['transport', 'last_pull_at', 'bridge_protocol_version']) {
       assert.equal(workerColumns.has(required), true, `missing workers.${required}`);
     }
+  } finally {
+    core.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Core repairs server settings on a current-version database from a pre-release build', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-current-schema-'));
+  const file = path.join(dir, 'core.db');
+  const old = new DatabaseSync(file);
+  old.exec(`
+    CREATE TABLE workers (worker_id TEXT PRIMARY KEY);
+    CREATE TABLE enrollments (code TEXT PRIMARY KEY);
+    PRAGMA user_version = 14;
+  `);
+  old.close();
+  const core = new CoreDatabase({ dataDir: dir });
+  try {
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 14 });
+    assert.ok(core.db.prepare(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'server_settings'",
+    ).get());
   } finally {
     core.close();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -62,7 +85,22 @@ test('Core migrates v13 Worker data to the Bridge-capable schema', () => {
       authorized INTEGER NOT NULL DEFAULT 1,
       revoked INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE tasks (
+      task_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      claim_token TEXT
+    );
+    CREATE TABLE task_events (
+      event_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
     INSERT INTO workers(worker_id, subject_id, last_seen, registered_at) VALUES ('worker-1', 'machine:worker-1', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    INSERT INTO tasks(task_id, status, claim_token) VALUES ('task-1', 'running', 'legacy-claim-token');
+    INSERT INTO task_events(event_id, task_id, seq, type, payload_json)
+      VALUES ('event-1', 'task-1', 0, 'claimed', '{"worker_id":"worker-1"}');
     PRAGMA user_version = 13;
   `);
   old.close();
@@ -74,6 +112,13 @@ test('Core migrates v13 Worker data to the Bridge-capable schema', () => {
     assert.equal(worker.last_pull_at, null);
     assert.equal(worker.bridge_protocol_version, null);
     assert.ok(core.db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'bridge_requests'").get());
+    const claimPayload = JSON.parse(core.db.prepare(
+      "SELECT payload_json FROM task_events WHERE task_id = 'task-1' AND type = 'claimed'",
+    ).get().payload_json);
+    assert.equal(
+      claimPayload.claim_token_hash,
+      crypto.createHash('sha256').update('legacy-claim-token').digest('hex'),
+    );
   } finally {
     core.close();
     fs.rmSync(dir, { recursive: true, force: true });

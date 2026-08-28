@@ -64,12 +64,15 @@ test('machine tokens carry role actions and become principals', () => {
   assert.equal(repo.getMachineToken(token), null);
 });
 
-test('bridge machine tokens carry only the bridge actions and required reads', () => {
-  const { record } = repo.createMachineToken({ subject_id: 'bridge-main', role: 'bridge' });
+test('bridge machine tokens carry only the specialized Bridge actions', () => {
+  const { record } = repo.createMachineToken({
+    subject_id: 'bridge-main',
+    role: 'bridge',
+    actions: ['*', 'task:read', 'worker:register'],
+  });
   assert.deepEqual(record.actions, [
     'bridge:register', 'bridge:pull', 'bridge:heartbeat',
     'bridge:events', 'bridge:result', 'bridge:release',
-    'task:read', 'interaction:read',
   ]);
 });
 

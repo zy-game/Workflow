@@ -123,6 +123,7 @@ export async function startCore(env = process.env, dependencies = {}) {
     const interactionRepository = new InteractionRepository({ coreDb: coreDatabase });
     const workersRegistry = new WorkersRegistry({ coreDb: coreDatabase });
     const bridgeRequestsRepository = new BridgeRequestsRepository({ coreDb: coreDatabase });
+    bridgeRequestsRepository.pruneExpired();
     const bridgeService = createBridgeService({
       bridgeRequestsRepository,
       workersRegistry,

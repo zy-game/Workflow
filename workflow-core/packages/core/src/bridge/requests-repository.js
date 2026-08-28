@@ -47,13 +47,21 @@ export class BridgeRequestConflictError extends Error {
 }
 
 export const DEFAULT_BRIDGE_REQUEST_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const DEFAULT_BRIDGE_REQUEST_PRUNE_LIMIT = 100;
 
 export class BridgeRequestsRepository {
-  constructor({ coreDb, db, requestTtlMs = DEFAULT_BRIDGE_REQUEST_TTL_MS } = {}) {
+  constructor({
+    coreDb,
+    db,
+    requestTtlMs = DEFAULT_BRIDGE_REQUEST_TTL_MS,
+    now = () => new Date(),
+  } = {}) {
     this.db = db || coreDb?.db;
     if (!this.db) throw new TypeError('coreDb or db is required');
     if (!Number.isInteger(requestTtlMs) || requestTtlMs < 1) throw new TypeError('requestTtlMs must be a positive integer');
+    if (typeof now !== 'function') throw new TypeError('now must be a function');
     this.requestTtlMs = requestTtlMs;
+    this.now = now;
   }
 
   execute({ bridgeId, requestId, operation, taskId = null, payload }, mutation) {
@@ -65,10 +73,18 @@ export class BridgeRequestsRepository {
     const payloadHash = canonicalPayloadHash(payload);
 
     return transaction(this.db, () => {
+      const now = this.now();
+      const currentTime = now instanceof Date ? now : new Date(now);
+      if (Number.isNaN(currentTime.getTime())) throw new TypeError('now must return a valid date');
+      const currentIso = currentTime.toISOString();
       const existing = this.db.prepare(
         'SELECT * FROM bridge_requests WHERE bridge_id = ? AND request_id = ?',
       ).get(bridgeId, requestId);
-      if (existing) {
+      if (existing && existing.expires_at <= currentIso) {
+        this.db.prepare(
+          'DELETE FROM bridge_requests WHERE bridge_id = ? AND request_id = ?',
+        ).run(bridgeId, requestId);
+      } else if (existing) {
         if (existing.operation !== operation || existing.task_id !== taskId || existing.payload_hash !== payloadHash) {
           throw new BridgeRequestConflictError({ bridgeId, requestId, operation });
         }
@@ -85,9 +101,8 @@ export class BridgeRequestsRepository {
       }
       const responseJson = JSON.stringify(outcome.response);
       if (responseJson === undefined) throw new TypeError('bridge mutation response must be JSON serializable');
-      const now = new Date();
-      const createdAt = now.toISOString();
-      const expiresAt = new Date(now.getTime() + this.requestTtlMs).toISOString();
+      const createdAt = currentIso;
+      const expiresAt = new Date(currentTime.getTime() + this.requestTtlMs).toISOString();
       this.db.prepare(`
         INSERT INTO bridge_requests (
           bridge_id, request_id, operation, task_id, payload_hash, response_json, status, created_at, expires_at
@@ -115,13 +130,15 @@ export class BridgeRequestsRepository {
     };
   }
 
-  pruneExpired({ now = new Date().toISOString(), limit = 1000 } = {}) {
+  pruneExpired({ now = this.now(), limit = DEFAULT_BRIDGE_REQUEST_PRUNE_LIMIT } = {}) {
     if (!Number.isInteger(limit) || limit < 1) throw new TypeError('limit must be a positive integer');
+    const currentTime = now instanceof Date ? now : new Date(now);
+    if (Number.isNaN(currentTime.getTime())) throw new TypeError('now must be a valid date');
     return this.db.prepare(`
       DELETE FROM bridge_requests
       WHERE rowid IN (
         SELECT rowid FROM bridge_requests WHERE expires_at <= ? ORDER BY expires_at LIMIT ?
       )
-    `).run(now, limit).changes;
+    `).run(currentTime.toISOString(), limit).changes;
   }
 }

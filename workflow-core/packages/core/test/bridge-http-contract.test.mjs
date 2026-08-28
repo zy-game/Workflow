@@ -22,13 +22,17 @@ let base;
 let bridgeToken;
 let bridgeTokenId;
 
-async function call(pathname, { token = bridgeToken, body = {} } = {}) {
+async function request(pathname, { token = bridgeToken, method = 'POST', body = {} } = {}) {
   const headers = { 'content-type': 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
-  const response = await fetch(`${base}${pathname}`, {
-    method: 'POST', headers, body: JSON.stringify(body),
-  });
+  const options = { method, headers };
+  if (method !== 'GET') options.body = JSON.stringify(body);
+  const response = await fetch(`${base}${pathname}`, options);
   return { status: response.status, body: await response.json() };
+}
+
+async function call(pathname, options = {}) {
+  return request(pathname, options);
 }
 
 before(async () => {
@@ -155,6 +159,24 @@ test('Bridge HTTP preserves service statuses, terminal conflicts, and token revo
   });
   assert.equal(revoked.status, 401);
   assert.equal(revoked.body.code, 'invalid_token');
+});
+
+test('Bridge tokens cannot use generic task and interaction read routes', async () => {
+  const restricted = auth.createMachineToken({
+    subject_id: 'unity-read-restricted', role: 'bridge', project_ids: ['project-a'],
+    actions: ['*', 'task:read', 'worker:register'],
+  });
+  const list = await request('/api/v1/tasks', {
+    token: restricted.token, method: 'GET',
+  });
+  assert.equal(list.status, 403);
+  assert.equal(list.body.code, 'forbidden');
+
+  const interactions = await request('/api/v1/interactions', {
+    token: restricted.token, method: 'GET',
+  });
+  assert.equal(interactions.status, 403);
+  assert.equal(interactions.body.code, 'forbidden');
 });
 
 test('generic REST task claim remains unavailable', async () => {

@@ -1,4 +1,5 @@
 // core-db.js - owns the clean-break Workflow Core schema.
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { DEFAULT_PRIORITY, PRIORITY_MAX, PRIORITY_MIN } from '@workflow-core/shared';
 import { initializeDatabase, transaction } from './base.js';
@@ -123,25 +124,6 @@ function createCurrentSchema(db) {
       consumed_at TEXT
     );
 
-        CREATE TABLE ai_suggestions (
-      suggestion_id TEXT PRIMARY KEY,
-      target_type TEXT NOT NULL CHECK (target_type IN ('skill','knowledge','settings','rule')),
-      title TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      payload_json TEXT NOT NULL DEFAULT '{}',
-      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','ignored')),
-      reason TEXT,
-      metrics_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL,
-      resolved_at TEXT
-    );
-
-    CREATE TABLE server_settings (
-      key TEXT PRIMARY KEY,
-      value_json TEXT NOT NULL DEFAULT '{}',
-      updated_at TEXT NOT NULL
-    );
-
     CREATE TABLE worker_skills (
       name TEXT PRIMARY KEY,
       content TEXT NOT NULL,
@@ -199,6 +181,12 @@ function createCurrentSchema(db) {
       chat_id TEXT,
       ts TEXT NOT NULL
     );
+
+    CREATE TABLE server_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -243,7 +231,7 @@ export function createSchema(db) {
           updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS worker_credentials_worker_idx ON worker_credentials(worker_id);
-CREATE TABLE IF NOT EXISTS enrollments (
+        CREATE TABLE IF NOT EXISTS enrollments (
           code TEXT PRIMARY KEY,
           worker_id TEXT,
           machine TEXT,
@@ -251,33 +239,49 @@ CREATE TABLE IF NOT EXISTS enrollments (
           created_at TEXT NOT NULL,
           consumed_at TEXT
         );
-        CREATE TABLE IF NOT EXISTS ai_suggestions (
-          suggestion_id TEXT PRIMARY KEY,
-          target_type TEXT NOT NULL CHECK (target_type IN ('skill','knowledge','settings','rule')),
-          title TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          payload_json TEXT NOT NULL DEFAULT '{}',
-          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','ignored')),
-          reason TEXT,
-          metrics_json TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL,
-          resolved_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS server_settings (
-          key TEXT PRIMARY KEY,
-          value_json TEXT NOT NULL DEFAULT '{}',
-          updated_at TEXT NOT NULL
-        );
         CREATE TABLE IF NOT EXISTS worker_skills (
           name TEXT PRIMARY KEY,
           content TEXT NOT NULL,
           version INTEGER NOT NULL DEFAULT 1,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS server_settings (
+          key TEXT PRIMARY KEY,
+          value_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
       `);
       return;
     }
     if (current === 13) {
+      const activeClaims = db.prepare(`
+        SELECT task_id, claim_token
+        FROM tasks
+        WHERE claim_token IS NOT NULL
+          AND status IN ('dispatched','running','awaiting_input')
+      `).all();
+      const latestClaimEvent = db.prepare(`
+        SELECT event_id, payload_json
+        FROM task_events
+        WHERE task_id = ? AND type = 'claimed'
+        ORDER BY seq DESC
+        LIMIT 1
+      `);
+      const updateClaimEvent = db.prepare(
+        'UPDATE task_events SET payload_json = ? WHERE event_id = ?',
+      );
+      for (const claim of activeClaims) {
+        const event = latestClaimEvent.get(claim.task_id);
+        if (!event) continue;
+        const payload = JSON.parse(event.payload_json);
+        if (!payload.claim_token_hash) {
+          payload.claim_token_hash = crypto
+            .createHash('sha256')
+            .update(claim.claim_token)
+            .digest('hex');
+          updateClaimEvent.run(JSON.stringify(payload), event.event_id);
+        }
+      }
       db.exec(`
         ALTER TABLE workers ADD COLUMN transport TEXT;
         ALTER TABLE workers ADD COLUMN last_pull_at TEXT;
@@ -296,6 +300,11 @@ CREATE TABLE IF NOT EXISTS enrollments (
         );
         CREATE INDEX bridge_requests_task_idx ON bridge_requests(task_id, created_at);
         CREATE INDEX bridge_requests_expiry_idx ON bridge_requests(expires_at);
+        CREATE TABLE server_settings (
+          key TEXT PRIMARY KEY,
+          value_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
         PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION};
       `);
       return;

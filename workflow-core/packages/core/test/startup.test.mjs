@@ -81,6 +81,54 @@ test('Core starts without Feishu, reports it disabled, and shuts down cleanly', 
   }
 });
 
+test('Core composes Bridge routes with the shared schema and keeps generic claims unavailable', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-start-bridge-'));
+  const publicPort = await freePort();
+  const internalPort = await freePort();
+  let runtime;
+  try {
+    runtime = await startCore(runtimeEnv(dir, publicPort, internalPort), { log: () => {} });
+    const { token } = runtime.authRepository.createMachineToken({
+      subject_id: 'startup-bridge', role: 'bridge', project_ids: ['project-a'],
+    });
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const registration = await fetch(`http://127.0.0.1:${publicPort}/api/v1/bridge/register`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        request_id: 'startup-register',
+        protocol_version: 1,
+        metadata: { projects: ['project-a'], max_concurrency: 1 },
+      }),
+    });
+    assert.equal(registration.status, 200);
+    assert.equal((await registration.json()).worker.worker_id, 'startup-bridge');
+    assert.deepEqual(runtime.coreDatabase.integrityCheck(), { ok: true, version: 14 });
+
+    const genericClaim = await fetch(`http://127.0.0.1:${publicPort}/api/v1/tasks/claim`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ request_id: 'startup-generic-claim' }),
+    });
+    assert.equal(genericClaim.status, 404);
+
+    runtime.coreDatabase.db.prepare(`
+      INSERT INTO bridge_requests (
+        bridge_id, request_id, operation, task_id, payload_hash, response_json, status, created_at, expires_at
+      ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
+    `).run(
+      'startup-bridge', 'startup-expired', 'test', 'hash', '{}', 200,
+      '2000-01-01T00:00:00.000Z', '2000-01-02T00:00:00.000Z',
+    );
+    await runtime.shutdown();
+    runtime = await startCore(runtimeEnv(dir, publicPort, internalPort), { log: () => {} });
+    assert.equal(runtime.bridgeRequestsRepository.get('startup-bridge', 'startup-expired'), null);
+  } finally {
+    await runtime?.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('Core exposes /worker as its only execution WebSocket', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-start-worker-only-'));
   const publicPort = await freePort();
