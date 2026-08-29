@@ -253,15 +253,17 @@ Workflow Task Event
 - server/patch overlay 的插件 ID、配置和 hook；
 - 现有迁移工具的只读和幂等不变量。
 
-### 阶段 B：单节点领域模型（进行中）
+### 阶段 B：单节点领域模型（已完成）
 
 已完成 Core 本地稳定 `node_id`、Task 的 origin/executor 路由字段、`default -> origin` 归一化、项目执行节点快照，以及 Worker WebSocket/Bridge pull 的本地节点过滤。当前仍是单 Core 的本地执行适配，不是 Peer 事件同步。
 
-### 阶段 C：对等同步（待开始）
+### 阶段 C：对等同步（进行中）
 
-增加 Peer 身份、事件认证、同步游标、断线缓存、重复事件去重和冲突记录。服务器作为稳定 Peer/Relay 接入，但不改变任务所有权规则。
+第一批已落地 core.db schema v16：`peer_nodes`（Peer 注册/撤销）、`peer_sync_outbox`（本节点决策的单调事件日志，随任务事务原子写入）、`peer_sync_inbox`（按 `event_id` 幂等的收件日志）、`peer_sync_cursors`（每 Peer 的入站/出站游标）。HTTP 契约为 `POST /api/v1/peer/sync/handshake|pull|push|ack`，调用方身份取自 `peer` 角色机器 token 的 subject，不信任 body。任务创建仅由 origin 节点发布；执行状态更新由 origin 或 executor 节点发布；ingest 通过终态吸收的投影写入应用远端事件，重放事件只计 duplicate，不会重复投影或回环。
 
-### 阶段 D：执行路由（进行中）
+尚待实现：节点间的拉取/推送连接器（轮询循环、离线重放、store-and-forward relay）、事件签名、撤销传播、outbox 依据 ack 游标的清理、以及任务执行过程的 session 事件同步。
+
+### 阶段 D：执行路由（已完成）
 
 实现 `project.owner_node_id` 路由和 `default -> origin_node_id` 规则，启动 Agent Run 前执行权校验，并确保非执行节点只投影事件。
 

@@ -170,6 +170,91 @@ export class TaskRepository {
     });
   }
 
+  // Projection writes applied from peer-sync events. Routing fields are taken
+  // verbatim from the origin node's decision and are never re-resolved here;
+  // execution state transitions are guarded by a terminal-absorbing state
+  // machine so replayed or late events cannot resurrect a finished task.
+  createFromSync(input) {
+    const {
+      task_id, type, title = null, brief, priority = DEFAULT_PRIORITY, created_by,
+      project_id, origin_node_id, executor_node_id = null,
+      execution_policy_snapshot = {}, worker_selector = {}, dependencies = [],
+      idempotency_key = null, max_attempts = DEFAULT_MAX_ATTEMPTS,
+      agent_id = null, session_ref = null, requested_backend_kind = null,
+      required_capabilities = [], synced_from = null,
+    } = input;
+    if (!task_id || typeof task_id !== 'string') throw new TypeError('task_id is required');
+    if (!type || typeof type !== 'string') throw new TypeError('type is required');
+    if (!brief || typeof brief !== 'object' || Array.isArray(brief)) throw new TypeError('brief must be an object');
+    if (!created_by || typeof created_by !== 'string') throw new TypeError('created_by is required');
+    if (!project_id || typeof project_id !== 'string') throw new TypeError('project_id is required');
+    if (!origin_node_id || typeof origin_node_id !== 'string') throw new TypeError('origin_node_id is required');
+    const priorityValue = Number(priority);
+    if (!Number.isInteger(priorityValue) || priorityValue < PRIORITY_MIN || priorityValue > PRIORITY_MAX) {
+      throw new TypeError(`priority must be an integer ${PRIORITY_MIN}-${PRIORITY_MAX}`);
+    }
+    const attemptsLimit = Number(max_attempts);
+    if (!Number.isInteger(attemptsLimit) || attemptsLimit < 1 || attemptsLimit > 10) {
+      throw new TypeError('max_attempts must be an integer 1-10');
+    }
+    const now = new Date().toISOString();
+    return transaction(this.db, () => {
+      const existing = this.db.prepare('SELECT task_id FROM tasks WHERE task_id = ?').get(task_id);
+      if (existing) return { task: this.get(task_id), idempotent_replay: true };
+      this.db.prepare(`
+        INSERT INTO tasks (
+          task_id, type, title, brief_json, priority, status, created_by, origin_node_id, project_id,
+          executor_node_id, execution_policy_snapshot_json, worker_selector_json, dependencies_json, idempotency_key, attempts, max_attempts,
+          agent_id, session_ref, backend_kind, requested_backend_kind,
+          required_capabilities_json, execution_policy_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, '{}', ?, ?)
+      `).run(
+        task_id, type, title, JSON.stringify(brief), priorityValue, created_by, origin_node_id, project_id,
+        executor_node_id, JSON.stringify(execution_policy_snapshot || {}), JSON.stringify(worker_selector || {}),
+        JSON.stringify([...new Set(dependencies)]), idempotency_key, attemptsLimit, agent_id, session_ref,
+        requested_backend_kind, requested_backend_kind,
+        JSON.stringify([...new Set(required_capabilities)]), now, now,
+      );
+      this.#appendEvent(task_id, 'created', { type, priority: priorityValue, dependencies, synced_from }, 'peer-sync');
+      return { task: this.get(task_id), idempotent_replay: false };
+    });
+  }
+
+  // Applies a remote execution-state update. Returns { task, applied, reason }
+  // instead of throwing for expected projection outcomes; `reason` is null
+  // when applied, otherwise 'not_found' | 'terminal' | 'stale_transition'.
+  applySyncUpdate(taskId, { status, result_kind = null, result = null, session_ref = null, finished_at = null } = {}) {
+    const now = new Date().toISOString();
+    return transaction(this.db, () => {
+      const row = this.db.prepare('SELECT * FROM tasks WHERE task_id = ?').get(taskId);
+      if (!row) return { task: null, applied: false, reason: 'not_found' };
+      const task = taskFromRow(row);
+      const terminal = ['done', 'failed', 'cancelled'];
+      if (terminal.includes(task.status)) return { task, applied: false, reason: 'terminal' };
+      const allowedFrom = {
+        queued: ['awaiting_input', 'blocked', 'done', 'failed', 'cancelled'],
+        dispatched: ['running', 'awaiting_input', 'blocked', 'done', 'failed', 'cancelled'],
+        running: ['awaiting_input', 'blocked', 'done', 'failed', 'cancelled'],
+        awaiting_input: ['running', 'blocked', 'done', 'failed', 'cancelled'],
+        blocked: ['running', 'queued', 'done', 'failed', 'cancelled'],
+      };
+      if (!allowedFrom[task.status]?.includes(status)) {
+        return { task, applied: false, reason: 'stale_transition' };
+      }
+      this.db.prepare(`
+        UPDATE tasks SET status = ?, result_kind = ?, result_json = ?,
+        session_ref = COALESCE(?, session_ref),
+        claim_token = NULL, claim_worker_id = NULL, lease_deadline = NULL,
+        updated_at = ?, finished_at = COALESCE(?, finished_at) WHERE task_id = ?
+      `).run(
+        status, result_kind, JSON.stringify(result ?? {}),
+        session_ref, now, finished_at ?? (terminal.includes(status) ? now : null), taskId,
+      );
+      this.#appendEvent(taskId, 'peer_sync_update', { status, result_kind }, 'peer-sync');
+      return { task: this.get(taskId), applied: true, reason: null };
+    });
+  }
+
   get(taskId) {
     return taskFromRow(this.db.prepare('SELECT * FROM tasks WHERE task_id = ?').get(taskId));
   }

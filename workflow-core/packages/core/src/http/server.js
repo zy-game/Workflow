@@ -100,7 +100,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -578,6 +578,66 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     });
   }
 
+  // --- peer sync: handshake, pull, push, ack ---
+  // Peer identity comes from the machine token subject, never from the body,
+  // so a peer cannot push events under another node's identity.
+  if (peerSyncService) {
+    const peerIdentity = (req) => {
+      const principal = requireAction(req, 'peer:sync');
+      if (principal.auth_type !== 'machine' || principal.role !== 'peer') {
+        throw new HttpError(403, 'peer_identity_required', 'a dedicated peer machine token is required');
+      }
+      const node = principal.subject_id.startsWith('machine:')
+        ? principal.subject_id.slice('machine:'.length) : principal.subject_id;
+      if (!node) throw new HttpError(403, 'peer_identity_required', 'peer token has no subject identity');
+      return node;
+    };
+
+    router.add('POST', '/api/v1/peer/sync/handshake', (req, res, body) => {
+      const node = peerIdentity(req);
+      const peer = peerSyncService.registerPeer({
+        node_id: node,
+        endpoint: body.endpoint ?? null,
+        display_name: body.display_name ?? null,
+        protocol_version: body.protocol_version ?? undefined,
+      });
+      return {
+        ok: true,
+        node_id: nodeId,
+        peer,
+        protocol_version: peerSyncService.status().protocol_version,
+        head_seq: peerSyncService.headSeq(),
+      };
+    });
+
+    router.add('POST', '/api/v1/peer/sync/pull', (req, res, body) => {
+      const node = peerIdentity(req);
+      peerSyncService.requireActivePeer(node);
+      const events = peerSyncService.eventsSince(body.since_seq ?? 0, { limit: body.limit });
+      return {
+        ok: true,
+        events,
+        next_seq: events.length ? events[events.length - 1].seq : peerSyncService.headSeq(),
+      };
+    });
+
+    router.add('POST', '/api/v1/peer/sync/push', (req, res, body) => {
+      const node = peerIdentity(req);
+      const result = peerSyncService.ingest({ from_node: node, events: body.events });
+      return { ok: true, ...result };
+    });
+
+    router.add('POST', '/api/v1/peer/sync/ack', (req, res, body) => {
+      const node = peerIdentity(req);
+      return { ok: true, cursor: peerSyncService.recordAck(node, body.seq) };
+    });
+
+    router.add('GET', '/api/v1/peer/sync/status', (req) => {
+      requireAction(req, 'peer:sync');
+      return { ok: true, ...peerSyncService.status() };
+    });
+  }
+
   // --- admin: machine tokens + audit ---
   router.add('GET', '/api/v1/admin/tokens', (req) => {
     requireAdmin(req);
@@ -966,6 +1026,9 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
         INTERACTION_NOT_DELIVERED: 409,
         TASK_NOT_FOUND: 404,
         LEASE_EXPIRED: 410,
+        PEER_UNKNOWN: 403,
+        PEER_PROTOCOL_UNSUPPORTED: 400,
+        PEER_ACK_INVALID: 400,
       };
       const numericStatus = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599
         ? error.status

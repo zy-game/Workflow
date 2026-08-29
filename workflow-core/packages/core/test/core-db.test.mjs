@@ -11,13 +11,13 @@ test('fresh Core schema contains only Worker execution state', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-schema-'));
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.equal(CORE_DB_SCHEMA_VERSION, 15);
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 15 });
+    assert.equal(CORE_DB_SCHEMA_VERSION, 16);
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 16 });
 
     const tables = new Set(core.db.prepare(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).all().map((row) => row.name));
-    for (const required of ['tasks', 'workers', 'interactions', 'task_events', 'bridge_requests', 'server_settings']) {
+    for (const required of ['tasks', 'workers', 'interactions', 'task_events', 'bridge_requests', 'server_settings', 'peer_nodes', 'peer_sync_outbox', 'peer_sync_inbox', 'peer_sync_cursors']) {
       assert.ok(tables.has(required), `missing ${required}`);
     }
     for (const obsolete of ['pending_approvals', 'cli_clients', 'cli_conversations']) {
@@ -46,15 +46,57 @@ test('Core repairs server settings on a current-version database from a pre-rele
   old.exec(`
     CREATE TABLE workers (worker_id TEXT PRIMARY KEY);
     CREATE TABLE enrollments (code TEXT PRIMARY KEY);
+    PRAGMA user_version = 16;
+  `);
+  old.close();
+  const core = new CoreDatabase({ dataDir: dir });
+  try {
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: CORE_DB_SCHEMA_VERSION });
+    assert.ok(core.db.prepare(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'server_settings'",
+    ).get());
+    for (const table of ['peer_nodes', 'peer_sync_outbox', 'peer_sync_inbox', 'peer_sync_cursors']) {
+      assert.ok(core.db.prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?",
+      ).get(table), `missing ${table}`);
+    }
+  } finally {
+    core.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Core migrates v15 peer sync tables and preserves task data', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-v15-schema-'));
+  const file = path.join(dir, 'core.db');
+  const old = new DatabaseSync(file);
+  old.exec(`
+    CREATE TABLE tasks (
+      task_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      origin_node_id TEXT,
+      project_id TEXT,
+      executor_node_id TEXT,
+      execution_policy_snapshot_json TEXT NOT NULL DEFAULT '{}'
+    );
+    INSERT INTO tasks(task_id, status, created_by, origin_node_id, project_id, executor_node_id, execution_policy_snapshot_json)
+      VALUES ('task-v15', 'done', 'account:legacy', 'node-origin', 'proj-1', 'node-owner', '{"mode":"kept"}');
     PRAGMA user_version = 15;
   `);
   old.close();
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 15 });
-    assert.ok(core.db.prepare(
-      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'server_settings'",
-    ).get());
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: CORE_DB_SCHEMA_VERSION });
+    const task = core.db.prepare('SELECT origin_node_id, executor_node_id, execution_policy_snapshot_json FROM tasks WHERE task_id = ?').get('task-v15');
+    assert.equal(task.origin_node_id, 'node-origin');
+    assert.equal(task.executor_node_id, 'node-owner');
+    assert.deepEqual(JSON.parse(task.execution_policy_snapshot_json), { mode: 'kept' });
+    for (const table of ['peer_nodes', 'peer_sync_outbox', 'peer_sync_inbox', 'peer_sync_cursors']) {
+      assert.ok(core.db.prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?",
+      ).get(table), `missing ${table}`);
+    }
   } finally {
     core.close();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -106,7 +148,7 @@ test('Core migrates v13 Worker data to the Bridge-capable schema', () => {
   old.close();
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 15 });
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: CORE_DB_SCHEMA_VERSION });
     const worker = core.db.prepare('SELECT transport, last_pull_at, bridge_protocol_version FROM workers WHERE worker_id = ?').get('worker-1');
     assert.equal(worker.transport, null);
     assert.equal(worker.last_pull_at, null);
@@ -144,7 +186,7 @@ test('Core migrates v14 task routing fields and preserves legacy ownership fallb
   old.close();
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 15 });
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: CORE_DB_SCHEMA_VERSION });
     const task = core.db.prepare('SELECT origin_node_id, project_id, executor_node_id, execution_policy_snapshot_json FROM tasks WHERE task_id = ?').get('task-v14');
     assert.equal(task.origin_node_id, 'account:legacy');
     assert.equal(task.project_id, null);

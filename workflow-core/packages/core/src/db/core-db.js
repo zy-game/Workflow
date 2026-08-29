@@ -5,7 +5,53 @@ import { DEFAULT_PRIORITY, PRIORITY_MAX, PRIORITY_MIN } from '@workflow-core/sha
 import { initializeDatabase, transaction } from './base.js';
 
 export const CORE_DB_FILE = 'core.db';
-export const CORE_DB_SCHEMA_VERSION = 15;
+export const CORE_DB_SCHEMA_VERSION = 16;
+
+// Shared DDL for the peer-sync tables. IF NOT EXISTS keeps it usable for
+// fresh schemas, current-version repair, and every migration branch.
+const PEER_SYNC_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS peer_nodes (
+    node_id TEXT PRIMARY KEY,
+    display_name TEXT,
+    endpoint_url TEXT,
+    protocol_version INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_seen_at TEXT
+  );
+  CREATE TABLE IF NOT EXISTS peer_sync_outbox (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    origin_node_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS peer_sync_outbox_origin_idx ON peer_sync_outbox(origin_node_id, seq);
+  CREATE TABLE IF NOT EXISTS peer_sync_inbox (
+    event_id TEXT PRIMARY KEY,
+    origin_node_id TEXT NOT NULL,
+    origin_seq INTEGER NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','applied','duplicate','conflict','rejected')),
+    detail_json TEXT NOT NULL DEFAULT '{}',
+    received_at TEXT NOT NULL,
+    applied_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS peer_sync_inbox_origin_idx ON peer_sync_inbox(origin_node_id, origin_seq);
+  CREATE TABLE IF NOT EXISTS peer_sync_cursors (
+    peer_node_id TEXT PRIMARY KEY,
+    inbound_cursor INTEGER NOT NULL DEFAULT 0,
+    outbound_acked_seq INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+  );
+`;
 
 function createCurrentSchema(db) {
   db.exec(`
@@ -191,6 +237,51 @@ function createCurrentSchema(db) {
       value_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE peer_nodes (
+      node_id TEXT PRIMARY KEY,
+      display_name TEXT,
+      endpoint_url TEXT,
+      protocol_version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_seen_at TEXT
+    );
+
+    CREATE TABLE peer_sync_outbox (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL UNIQUE,
+      origin_node_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX peer_sync_outbox_origin_idx ON peer_sync_outbox(origin_node_id, seq);
+
+    CREATE TABLE peer_sync_inbox (
+      event_id TEXT PRIMARY KEY,
+      origin_node_id TEXT NOT NULL,
+      origin_seq INTEGER NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','applied','duplicate','conflict','rejected')),
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      received_at TEXT NOT NULL,
+      applied_at TEXT
+    );
+    CREATE INDEX peer_sync_inbox_origin_idx ON peer_sync_inbox(origin_node_id, origin_seq);
+
+    CREATE TABLE peer_sync_cursors (
+      peer_node_id TEXT PRIMARY KEY,
+      inbound_cursor INTEGER NOT NULL DEFAULT 0,
+      outbound_acked_seq INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -261,6 +352,12 @@ export function createSchema(db) {
         try { db.exec("ALTER TABLE tasks ADD COLUMN execution_policy_snapshot_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* exists */ }
         db.exec('CREATE INDEX IF NOT EXISTS tasks_executor_idx ON tasks(executor_node_id, status, priority, created_at)');
       }
+      db.exec(PEER_SYNC_SCHEMA_SQL);
+      return;
+    }
+    if (current === 15) {
+      db.exec(PEER_SYNC_SCHEMA_SQL);
+      db.exec(`PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION}`);
       return;
     }
     if (current === 14) {
@@ -279,7 +376,8 @@ export function createSchema(db) {
             END;
         `);
       }
-      db.exec('PRAGMA user_version = 15');
+      db.exec(PEER_SYNC_SCHEMA_SQL);
+      db.exec(`PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION}`);
       return;
     }
     if (current === 13) {
@@ -340,6 +438,7 @@ export function createSchema(db) {
         );
         PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION};
       `);
+      db.exec(PEER_SYNC_SCHEMA_SQL);
       return;
     }
     if (current !== 0) {

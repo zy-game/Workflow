@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const NODE_ID_FILE = 'node-id';
-const NODE_ID_PATTERN = /^[a-z][a-z0-9._-]{2,63}$/;
+export const NODE_ID_PATTERN = /^[a-z][a-z0-9._-]{2,63}$/;
 
 export function normalizeNodeId(value) {
   const nodeId = String(value ?? '').trim();

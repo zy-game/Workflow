@@ -26,6 +26,7 @@ const MACHINE_ROLE_ACTIONS = Object.freeze({
     'knowledge:read', 'knowledge:write', 'worker:read', 'decision:write',
   ]),
   feishu: Object.freeze(['task:create', 'task:read', 'task:cancel', 'interaction:respond', 'outbound:*']),
+  peer: Object.freeze(['peer:sync', 'task:read']),
   admin: Object.freeze(['*']),
 });
 

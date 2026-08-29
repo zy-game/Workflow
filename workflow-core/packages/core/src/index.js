@@ -15,6 +15,7 @@ import { SettingsRepository } from './settings/repository.js';
 import { SuggestionsRepository } from './ai/suggestions-repository.js';
 import { BridgeRequestsRepository } from './bridge/requests-repository.js';
 import { createBridgeService } from './bridge/service.js';
+import { createPeerSyncService } from './sync/service.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -98,6 +99,7 @@ export async function startCore(env = process.env, dependencies = {}) {
   let workerChannel;
   let feishuService;
   let workflowAgent;
+  let peerSyncService;
   let internal;
   let publicServer;
   let shutdownPromise = null;
@@ -111,6 +113,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       forceCloseConnections(publicServer);
       forceCloseConnections(internal);
       await Promise.allSettled(listenerClosures);
+      peerSyncService?.close();
       knowledgeRepository?.close();
       coreDatabase?.close();
       authRepository?.close();
@@ -136,6 +139,8 @@ export async function startCore(env = process.env, dependencies = {}) {
       log,
     });
     const projectAgentsRegistry = new ProjectAgentRegistry({ coreDb: coreDatabase });
+    peerSyncService = createPeerSyncService({ coreDb: coreDatabase, nodeId: nodeIdentity.nodeId, taskRepository });
+
     const credentialCipher = new CredentialCipher({ dataDir: config.dataDir });
     const settingsRepository = new SettingsRepository({ coreDb: coreDatabase });
     const LLM_CLI_AVAILABLE = fs.existsSync("/opt/dsh8/lib/node_modules/@deepseek-ai/dsh/lib/bin.js");
@@ -263,6 +268,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       interactionRepository,
       workersRegistry,
       bridgeService,
+      peerSyncService,
       workerChannel,
       knowledgeRepository,
       feishuService,
