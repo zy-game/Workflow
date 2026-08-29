@@ -267,7 +267,9 @@ Workflow Task Event
 
 第四批：撤销改为粘性语义——已撤销 peer 的握手（registerPeer）不再复活它，只有显式 `activatePeer` 管理动作可恢复；服务端以 `PEER_REVOKED` 区分撤销与未注册，pull 客户端收到 `PEER_REVOKED` 后永久退出该 peer 的轮询。同时 claimed/progress 事件现在也投影到 peer（dispatched/running 与最近一条 note/percent），peer 任务列表可见实时执行状态，非终态更新不覆盖已有 result。
 
-尚待实现：事件签名、push 型传输与 store-and-forward relay、任务执行过程的 session 事件同步。
+第五批：push 型传输补齐——peer 配置新增 `pull`（默认 true）与 `push`（默认 false）标志。推送方以本方记录的 outbound ack 游标为起点分页推送 outbox，接收方在 push 响应里回显其 inbound_cursor 作为回执 ack，推送方据此本地记账并支持清理——全程只需推送方发起连接，适配"一方在 NAT 后不可被连接"的拓扑。registry-only peer（pull:false 且 push:false）仅注册不传输。双节点 e2e 验证：beta 不可被 alpha 连接时，alpha 的决策经 pull 到达 beta，beta 的执行结果经 push 回到 alpha。
+
+尚待实现：事件签名（HMAC/非对称）、store-and-forward relay（服务器中转，复用同一事件契约）。
 
 ### 阶段 D：执行路由（已完成）
 

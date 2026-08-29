@@ -38,7 +38,9 @@ function peers(env, name) {
     }
     const token = String(entry.token ?? '');
     if (!token) throw new Error(`${label}.token is required`);
-    return { node_id: nodeId, endpoint: endpoint.origin, token };
+    if (entry.pull != null && typeof entry.pull !== 'boolean') throw new Error(`${label}.pull must be a boolean`);
+    if (entry.push != null && typeof entry.push !== 'boolean') throw new Error(`${label}.push must be a boolean`);
+    return { node_id: nodeId, endpoint: endpoint.origin, token, pull: entry.pull !== false, push: entry.push === true };
   });
 }
 

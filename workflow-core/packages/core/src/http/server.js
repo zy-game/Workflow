@@ -624,7 +624,9 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     router.add('POST', '/api/v1/peer/sync/push', (req, res, body) => {
       const node = peerIdentity(req);
       const result = peerSyncService.ingest({ from_node: node, events: body.events });
-      return { ok: true, ...result };
+      // The receiver echoes its inbound cursor so a push-only peer (one that
+      // cannot be pulled from) still learns what was consumed and can prune.
+      return { ok: true, inbound_cursor: peerSyncService.getCursor(node).inbound_cursor, ...result };
     });
 
     router.add('POST', '/api/v1/peer/sync/ack', (req, res, body) => {

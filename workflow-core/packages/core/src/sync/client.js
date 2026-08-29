@@ -47,7 +47,8 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
     // PEER_UNKNOWN so the next tick can proceed without manual intervention.
     // PEER_REVOKED is final: drop the peer instead of hammering it.
     try {
-      await pullPeer(peer);
+      if (peer.pull !== false) await pullPeer(peer);
+      if (peer.push) await pushPeer(peer);
     } catch (error) {
       if (error.code === 'PEER_REVOKED') {
         revoked.add(peer.node_id);
@@ -56,7 +57,8 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
       }
       if (error.code !== 'PEER_UNKNOWN') throw error;
       await post(peer, '/handshake', { protocol_version: PEER_SYNC_PROTOCOL_VERSION });
-      await pullPeer(peer);
+      if (peer.pull !== false) await pullPeer(peer);
+      if (peer.push) await pushPeer(peer);
     }
   }
 
@@ -70,6 +72,24 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
       }
       since = Number(response.next_seq ?? since);
       await post(peer, '/ack', { seq: since });
+      if (events.length < PULL_PAGE_LIMIT) break;
+    }
+  }
+
+  // Push complements pull for peers that cannot accept inbound connections:
+  // the sender drives the transfer and the receiver's echoed inbound_cursor
+  // doubles as the acknowledgement, so no second connection is needed.
+  async function pushPeer(peer) {
+    let since = peerSyncService.getCursor(peer.node_id).outbound_acked_seq;
+    for (let page = 0; page < MAX_PULL_PAGES; page += 1) {
+      const events = peerSyncService.eventsSince(since, { limit: PULL_PAGE_LIMIT });
+      if (!events.length) break;
+      const response = await post(peer, '/push', { events });
+      const cursor = Number(response.inbound_cursor ?? 0);
+      if (Number.isInteger(cursor) && cursor > since) {
+        peerSyncService.recordAck(peer.node_id, cursor);
+        since = cursor;
+      }
       if (events.length < PULL_PAGE_LIMIT) break;
     }
   }

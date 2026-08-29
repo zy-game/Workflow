@@ -101,9 +101,15 @@ test('sync client and config reject malformed peer configuration', () => {
   const base = { WFC_DATA_DIR: os.tmpdir(), WFC_ALLOW_PLAIN_HTTP: '1' };
   const peers = loadConfig({
     ...base,
-    WFC_PEERS_JSON: JSON.stringify([{ node_id: 'node-beta', endpoint: 'https://beta.example:8710/', token: 'wfc-peer' }]),
+    WFC_PEERS_JSON: JSON.stringify([{ node_id: 'node-beta', endpoint: 'https://beta.example:8710/', token: 'wfc-peer', push: true }]),
   }).peers;
-  assert.deepEqual(peers, [{ node_id: 'node-beta', endpoint: 'https://beta.example:8710', token: 'wfc-peer' }]);
+  assert.deepEqual(peers, [{ node_id: 'node-beta', endpoint: 'https://beta.example:8710', token: 'wfc-peer', pull: true, push: true }]);
+  assert.deepEqual(loadConfig({ ...base, WFC_PEERS_JSON: JSON.stringify([{ node_id: 'node-beta', endpoint: 'https://beta.example', token: 't', pull: false }]) }).peers,
+    [{ node_id: 'node-beta', endpoint: 'https://beta.example', token: 't', pull: false, push: false }]);
+  assert.throws(
+    () => loadConfig({ ...base, WFC_PEERS_JSON: '[{"node_id":"node-beta","endpoint":"https://x","token":"t","push":"yes"}]' }),
+    /push must be a boolean/,
+  );
 
   assert.throws(
     () => loadConfig({ ...base, WFC_PEERS_JSON: '[{"node_id":"Bad_Node","endpoint":"https://x","token":"t"}]' }),
@@ -268,5 +274,51 @@ test('execution state stays live on peers and revocation permanently stops a pul
   assert.equal(beta.service.getPeer('node-alpha').status, 'revoked');
 
   await alphaClient.stop();
+  await betaClient.stop();
+});
+
+test('a node that cannot accept inbound connections still converges via push', async () => {
+  // Simulated NAT: only beta can initiate connections. Beta pulls from alpha
+  // and pushes to it; alpha has no client and never connects to beta.
+  const alpha = await startNode('node-alpha');
+  const beta = await startNode('node-beta');
+  issuePeerTokens(alpha, beta);
+  const betaClient = createPeerSyncClient({
+    peerSyncService: beta.service,
+    nodeId: 'node-beta',
+    intervalMs: 15_000,
+    peers: [{ node_id: 'node-alpha', endpoint: alpha.base, token: alpha.tokens['node-beta'], pull: true, push: true }],
+  });
+  beta.clients.push(betaClient);
+  betaClient.start();
+
+  // Alpha's decision reaches beta through pull...
+  const local = alpha.tasks.create({
+    type: 'code', brief: { prompt: 'alpha work' }, created_by: 'account:alice',
+    project_id: 'default', origin_node_id: 'node-alpha', executor_node_id: 'node-alpha',
+  }).task;
+  await waitFor('local task on beta via pull', () => beta.tasks.get(local.task_id));
+
+  // ...and beta's execution reaches alpha through push alone.
+  const delegated = alpha.tasks.create({
+    type: 'code', brief: { prompt: 'run on beta' }, created_by: 'account:alice',
+    project_id: 'project-b', origin_node_id: 'node-alpha', executor_node_id: 'node-beta',
+  }).task;
+  await betaClient.tick();
+  await waitFor('delegated task on beta via pull', () => beta.tasks.get(delegated.task_id));
+  const claimed = await waitFor('claim on beta', () => beta.tasks.claim({
+    worker_id: 'worker-beta-1', node_id: 'node-beta', backends: [{ kind: 'workflow-jsonl', capabilities: [] }],
+  }));
+  assert.equal(claimed.task_id, delegated.task_id);
+  beta.tasks.done(delegated.task_id, claimed.claim_token, { kind: 'done', result: { summary: 'built behind NAT' } });
+  await betaClient.tick();
+  await waitFor('completion pushed back to alpha', () => alpha.tasks.get(delegated.task_id)?.status === 'done');
+  assert.deepEqual(alpha.tasks.get(delegated.task_id).result, { summary: 'built behind NAT' });
+
+  // The push echo advanced beta's outbound ack bookkeeping and alpha's
+  // inbound cursor without alpha ever connecting to beta.
+  assert.ok(beta.service.getCursor('node-alpha').outbound_acked_seq > 0);
+  assert.ok(alpha.service.getCursor('node-beta').inbound_cursor > 0);
+
   await betaClient.stop();
 });
