@@ -18,7 +18,7 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
   }
   const byNodeId = new Map(peers.map((peer) => [peer.node_id, peer]));
   let timer = null;
-  let ticking = false;
+  let current = null;
   let stopped = true;
 
   async function post(peer, path, body) {
@@ -64,21 +64,25 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
     }
   }
 
-  async function tick() {
-    if (ticking) return;
-    ticking = true;
-    try {
-      for (const peer of peers) {
-        try {
-          await syncPeer(peer);
-        } catch (error) {
-          log(`[peer-sync] ${peer.node_id}: ${error.message}`);
+  // A concurrent caller joins the in-flight round instead of skipping it, so
+  // an awaited tick() always reflects events published before it was called.
+  function tick() {
+    if (current) return current;
+    current = (async () => {
+      try {
+        for (const peer of peers) {
+          try {
+            await syncPeer(peer);
+          } catch (error) {
+            log(`[peer-sync] ${peer.node_id}: ${error.message}${error.cause ? `: ${error.cause}` : ''}`);
+          }
         }
+        peerSyncService.pruneAcked();
+      } finally {
+        current = null;
       }
-      peerSyncService.pruneAcked();
-    } finally {
-      ticking = false;
-    }
+    })();
+    return current;
   }
 
   return {
@@ -101,7 +105,7 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
     async stop() {
       stopped = true;
       if (timer) { clearInterval(timer); timer = null; }
-      while (ticking) await new Promise((resolve) => setImmediate(resolve));
+      while (current) await current.catch(() => {});
     },
     tick,
   };

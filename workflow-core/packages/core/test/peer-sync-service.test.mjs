@@ -7,14 +7,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { CoreDatabase } from '../src/db/core-db.js';
+import { WorkflowRepository } from '../src/knowledge/repository.js';
 import { createPeerSyncService } from '../src/sync/service.js';
 import { TaskRepository } from '../src/tasks/repository.js';
 
-function node(dir, nodeId) {
-  const core = new CoreDatabase({ dataDir: fs.mkdtempSync(path.join(dir, `wfc-peer-${nodeId}-`)) });
+function node(dir, nodeId, { knowledge = false } = {}) {
+  const dataDir = fs.mkdtempSync(path.join(dir, `wfc-peer-${nodeId}-`));
+  const core = new CoreDatabase({ dataDir });
   const tasks = new TaskRepository({ coreDb: core, nodeId });
-  const service = createPeerSyncService({ coreDb: core, nodeId, taskRepository: tasks });
-  return { core, tasks, service, close() { service.close(); tasks.close(); core.close(); } };
+  const knowledgeRepository = knowledge
+    ? new WorkflowRepository({ filename: path.join(dataDir, 'workflow.db') })
+    : null;
+  const service = createPeerSyncService({ coreDb: core, nodeId, taskRepository: tasks, knowledgeRepository });
+  return { core, tasks, service, knowledge: knowledgeRepository, close() { service.close(); tasks.close(); core.close(); knowledgeRepository?.close(); } };
 }
 
 function fixture() {
@@ -257,5 +262,103 @@ test('revoked peers are refused at ingest and ack', () => {
     assert.equal(value.beta.service.ingest({ from_node: 'node-alpha', events: [] }).applied, 0);
   } finally {
     value.close();
+  }
+});
+
+test('project registry changes publish from the owner and project onto peers', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-peer-project-'));
+  const alpha = node(dir, 'node-alpha', { knowledge: true });
+  const beta = node(dir, 'node-beta', { knowledge: true });
+  try {
+    beta.service.registerPeer({ node_id: 'node-alpha' });
+
+    // A project without an owner is local-only and produces no event.
+    alpha.knowledge.resolveProject({ path: 'E:\\Workflow\\Unowned', machine: 'alpha-box' });
+    assert.equal(alpha.service.eventsSince(0).length, 0);
+
+    // Owner assignment publishes; the payload never carries machine paths.
+    const project = alpha.knowledge.resolveProject({
+      path: 'E:\\Workflow\\Owned', machine: 'alpha-box',
+      metadata: { owner_node_id: 'node-alpha', goal: 'ship the workflow' },
+    });
+    const events = alpha.service.eventsSince(0);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].entity_type, 'project');
+    assert.equal(events[0].operation, 'create');
+    assert.deepEqual(events[0].payload.metadata, { owner_node_id: 'node-alpha', goal: 'ship the workflow' });
+    assert.equal(events[0].payload.locations, undefined);
+
+    const pushed = beta.service.ingest({ from_node: 'node-alpha', events });
+    assert.equal(pushed.applied, 1);
+    const projection = beta.knowledge.getProject(project.id);
+    assert.equal(projection.metadata.owner_node_id, 'node-alpha');
+    assert.deepEqual(projection.locations, []);
+
+    // Later updates propagate; locations stay machine-local on the origin.
+    alpha.knowledge.addProjectLocation(project.id, { path: 'E:\\Workflow\\Owned', machine: 'alpha-box' });
+    alpha.knowledge.updateProject(project.id, {
+      status: 'paused',
+      metadata: { owner_node_id: 'node-alpha', goal: 'ship the workflow', priority: 'high' },
+    });
+    const updates = alpha.service.eventsSince(0).filter((event) => event.operation === 'update');
+    assert.equal(updates.length, 1);
+    beta.service.ingest({ from_node: 'node-alpha', events: updates });
+    const updated = beta.knowledge.getProject(project.id);
+    assert.equal(updated.status, 'paused');
+    assert.equal(updated.metadata.priority, 'high');
+  } finally {
+    alpha.close();
+    beta.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('project events are rejected from non-owners and self-heal missing creates', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-peer-project-guard-'));
+  const alpha = node(dir, 'node-alpha', { knowledge: true });
+  const beta = node(dir, 'node-beta', { knowledge: true });
+  try {
+    beta.service.registerPeer({ node_id: 'node-gamma' });
+    const spoofed = beta.service.ingest({
+      from_node: 'node-gamma',
+      events: [{
+        event_id: 'pse-proj-1', seq: 1, origin_node_id: 'node-gamma', entity_type: 'project',
+        entity_id: 'proj-x', operation: 'create',
+        payload: { id: 'proj-x', name: 'stolen', metadata: { owner_node_id: 'node-alpha' } },
+      }],
+    });
+    assert.equal(spoofed.results[0].status, 'rejected');
+    assert.deepEqual(spoofed.results[0].detail, { reason: 'unauthorized_publisher' });
+    assert.equal(beta.knowledge.getProject('proj-x'), null);
+
+    // An update for a project beta never saw projects it first.
+    beta.service.registerPeer({ node_id: 'node-alpha' });
+    const healed = beta.service.ingest({
+      from_node: 'node-alpha',
+      events: [{
+        event_id: 'pse-proj-2', seq: 2, origin_node_id: 'node-alpha', entity_type: 'project',
+        entity_id: 'proj-y', operation: 'update',
+        payload: { id: 'proj-y', name: 'late', status: 'active', metadata: { owner_node_id: 'node-alpha' } },
+      }],
+    });
+    assert.equal(healed.results[0].status, 'applied');
+    assert.deepEqual(healed.results[0].detail, { project_id: 'proj-y', healed: 'missing_create' });
+    assert.equal(beta.knowledge.getProject('proj-y').metadata.owner_node_id, 'node-alpha');
+
+    // A settled owner cannot be taken over by another peer.
+    const takeover = beta.service.ingest({
+      from_node: 'node-gamma',
+      events: [{
+        event_id: 'pse-proj-3', seq: 3, origin_node_id: 'node-gamma', entity_type: 'project',
+        entity_id: 'proj-y', operation: 'update',
+        payload: { id: 'proj-y', name: 'mine', status: 'active', metadata: { owner_node_id: 'node-gamma' } },
+      }],
+    });
+    assert.equal(takeover.results[0].status, 'rejected');
+    assert.equal(beta.knowledge.getProject('proj-y').name, 'late');
+  } finally {
+    alpha.close();
+    beta.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

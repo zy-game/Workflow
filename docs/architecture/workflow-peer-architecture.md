@@ -261,7 +261,9 @@ Workflow Task Event
 
 第一批已落地 core.db schema v16：`peer_nodes`（Peer 注册/撤销）、`peer_sync_outbox`（本节点决策的单调事件日志，随任务事务原子写入）、`peer_sync_inbox`（按 `event_id` 幂等的收件日志）、`peer_sync_cursors`（每 Peer 的入站/出站游标）。HTTP 契约为 `POST /api/v1/peer/sync/handshake|pull|push|ack`，调用方身份取自 `peer` 角色机器 token 的 subject，不信任 body。任务创建仅由 origin 节点发布；执行状态更新由 origin 或 executor 节点发布；ingest 通过终态吸收的投影写入应用远端事件，重放事件只计 duplicate，不会重复投影或回环。
 
-第二批已落地节点间拉取连接器 `src/sync/client.js`：每个节点按 `WFC_PEERS_JSON`（node_id、endpoint、远端签发的 peer token；token 只经环境配置通道）周期性从各 peer 拉取事件、本地 ingest、并回 ack；游标持久化在 core.db，节点离线或远端故障恢复后从断点续传；远端丢失数据库时对 `PEER_UNKNOWN` 自动重新握手。peer 确认过的 outbox 事件按最慢活跃 peer 的 ack 游标清理（`pruneAcked`），且序列号不回绕。双节点真 HTTP 端到端测试覆盖：创建同步、非执行节点不 claim、executor 完成回传、离线重放与清理。
+第二批已落地节点间拉取连接器 `src/sync/client.js`：每个节点按 `WFC_PEERS_JSON`（node_id、endpoint、远端签发的 peer token；token 只经环境配置通道）周期性从各 peer 拉取事件、本地 ingest、并回 ack；游标持久化在 core.db，节点离线或远端故障恢复后从断点续传；远端丢失数据库时对 `PEER_UNKNOWN` 自动重新握手。并发 `tick()` 加入进行中的一轮而不是跳过；peer 确认过的 outbox 事件按最慢活跃 peer 的 ack 游标清理（`pruneAcked`），且序列号不回绕。
+
+第三批已落地项目注册表同步：knowledge 仓库提供 `onChange` 观察者与 `createProjectFromSync` 投影写入；项目 create/update 通过同一事件管道传播（entity_type `project`），仅 owner 节点发布，payload 只含 name/type/goal/status/metadata，机器本地 locations 不出节点。ingest 规则：payload 的 owner 必须等于事件来源节点；已归属项目不能被其他节点接管；update 遇到缺失投影时自愈补建。由此形成跨节点路由闭环——peer 拿到项目 owner 后，本机创建的项目任务经路由 facade 自动指向 owner 节点执行，完成状态再同步回发起节点（双节点真 HTTP 端到端测试覆盖）。
 
 尚待实现：事件签名、撤销传播、push 型传输与 store-and-forward relay、任务执行过程的 session 事件同步。
 

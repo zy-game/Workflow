@@ -9,11 +9,13 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { AuthRepository } from '../src/auth/repository.js';
 import { loadConfig } from '../src/config.js';
+import { CoreDatabase } from '../src/db/core-db.js';
+import { WorkflowRepository } from '../src/knowledge/repository.js';
+import { createCoreServer } from '../src/http/server.js';
+import { TaskCreationFacade } from '../src/tasks/creation-facade.js';
+import { TaskRepository } from '../src/tasks/repository.js';
 import { createPeerSyncClient } from '../src/sync/client.js';
 import { createPeerSyncService } from '../src/sync/service.js';
-import { CoreDatabase } from '../src/db/core-db.js';
-import { createCoreServer } from '../src/http/server.js';
-import { TaskRepository } from '../src/tasks/repository.js';
 
 const nodes = [];
 
@@ -22,7 +24,8 @@ async function startNode(nodeId) {
   const auth = new AuthRepository({ dataDir: dir });
   const core = new CoreDatabase({ dataDir: dir });
   const tasks = new TaskRepository({ coreDb: core, nodeId });
-  const service = createPeerSyncService({ coreDb: core, nodeId, taskRepository: tasks });
+  const knowledge = new WorkflowRepository({ filename: path.join(dir, 'workflow.db') });
+  const service = createPeerSyncService({ coreDb: core, nodeId, taskRepository: tasks, knowledgeRepository: knowledge });
   const app = createCoreServer({ config: {}, nodeId, authRepository: auth, taskRepository: tasks, peerSyncService: service });
   const server = await app.listen({ host: '127.0.0.1', port: 0, tls: null });
   const node = {
@@ -31,6 +34,7 @@ async function startNode(nodeId) {
     auth,
     core,
     tasks,
+    knowledge,
     service,
     base: `http://127.0.0.1:${server.address().port}`,
     tokens: {},
@@ -40,6 +44,7 @@ async function startNode(nodeId) {
       server.close();
       service.close();
       tasks.close();
+      knowledge.close();
       core.close();
       auth.close();
       fs.rmSync(dir, { recursive: true, force: true });
@@ -176,6 +181,52 @@ test('two nodes converge through pull clients, replay offline events, and prune 
   assert.equal(trailingEvents.length, 1);
   assert.equal(trailingEvents[0].entity_id, trailing.task_id);
   assert.ok(trailingEvents[0].seq > ackedThrough);
+
+  await alphaClient.stop();
+  await betaClient.stop();
+});
+
+test('project ownership synchronizes and routes cross-node tasks to the owner', async () => {
+  const alpha = await startNode('node-alpha');
+  const beta = await startNode('node-beta');
+  issuePeerTokens(alpha, beta);
+  const alphaClient = clientFor(alpha, beta);
+  const betaClient = clientFor(beta, alpha);
+  alphaClient.start();
+  betaClient.start();
+
+  // The owner announces its project; beta receives the registry entry
+  // location-less and can route tasks for it.
+  const project = alpha.knowledge.resolveProject({
+    path: 'E:\\Workflow\\Shared', machine: 'alpha-box',
+    metadata: { owner_node_id: 'node-alpha' },
+  });
+  await betaClient.tick();
+  assert.equal(beta.knowledge.getProject(project.id)?.metadata.owner_node_id, 'node-alpha');
+
+  // Beta creates a task for the synced project through the routing facade;
+  // the owner lookup resolves to node-alpha as executor.
+  const betaFacade = new TaskCreationFacade({
+    taskRepository: beta.tasks, knowledgeRepository: beta.knowledge, nodeId: 'node-beta',
+  });
+  const { task } = betaFacade.create({
+    type: 'code', brief: { prompt: 'owner should run this' }, created_by: 'account:bob',
+    project_id: project.id,
+  });
+  assert.equal(task.executor_node_id, 'node-alpha');
+  assert.equal(task.origin_node_id, 'node-beta');
+
+  await alphaClient.tick();
+  await waitFor('task projection on the owner', () => alpha.tasks.get(task.task_id));
+  const claimed = await waitFor('claim on the owner node', () => alpha.tasks.claim({
+    worker_id: 'worker-alpha-1', node_id: 'node-alpha', backends: [{ kind: 'workflow-jsonl', capabilities: [] }],
+  }));
+  assert.equal(claimed.task_id, task.task_id);
+  alpha.tasks.done(task.task_id, claimed.claim_token, { kind: 'done', result: { summary: 'owner ran it' } });
+
+  await betaClient.tick();
+  await waitFor('completion visible on the origin node', () => beta.tasks.get(task.task_id)?.status === 'done');
+  assert.equal(beta.tasks.get(task.task_id).executor_node_id, 'node-alpha');
 
   await alphaClient.stop();
   await betaClient.stop();

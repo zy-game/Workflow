@@ -65,24 +65,54 @@ function eventOutcome(event) {
 
 export class PeerSyncService {
   // Shares the CoreDatabase handle with the task repository so outbox writes
-  // join the domain transaction that produced them.
-  constructor({ coreDb, nodeId, taskRepository, now = () => new Date().toISOString() } = {}) {
+  // join the domain transaction that produced them. The knowledge repository
+  // is optional and enables project-registry synchronization.
+  constructor({ coreDb, nodeId, taskRepository, knowledgeRepository = null, now = () => new Date().toISOString() } = {}) {
     if (!coreDb?.db) throw new TypeError('coreDb is required');
     if (!NODE_ID_PATTERN.test(String(nodeId ?? ''))) throw new TypeError('a valid nodeId is required');
     if (!taskRepository) throw new TypeError('taskRepository is required');
     this.db = coreDb.db;
     this.nodeId = String(nodeId);
     this.tasks = taskRepository;
+    this.knowledge = knowledgeRepository;
     this.now = now;
     this.unsubscribe = taskRepository.onEvent((event) => this.#onTaskEvent(event));
+    this.unsubscribeKnowledge = knowledgeRepository
+      ? knowledgeRepository.onChange((change) => this.#onKnowledgeChange(change))
+      : null;
   }
 
   close() {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubscribeKnowledge?.();
+    this.unsubscribeKnowledge = null;
   }
 
   // --- publishing ---
+
+  // Project events announce the registry to peers. Only the owner node
+  // publishes: a project without an owner is local-only until ownership is
+  // assigned. Machine-local locations never leave the node.
+  #onKnowledgeChange(change) {
+    if (change.entityType !== 'project') return;
+    const record = change.record;
+    const owner = record?.metadata?.owner_node_id ?? record?.metadata?.ownerNodeId ?? null;
+    if (owner !== this.nodeId) return;
+    this.#publish({
+      entity_type: 'project',
+      entity_id: record.id,
+      operation: change.operation === 'create' ? 'create' : 'update',
+      payload: {
+        id: record.id,
+        name: record.name,
+        type: record.type,
+        goal: record.goal,
+        status: record.status,
+        metadata: record.metadata ?? {},
+      },
+    });
+  }
 
   #onTaskEvent(event) {
     if (!SYNCED_TASK_EVENTS.has(event.type)) return;
@@ -261,7 +291,7 @@ export class PeerSyncService {
     if (origin_node_id !== fromNode) {
       return { event_id, status: 'rejected', detail: 'event origin does not match the authenticated peer' };
     }
-    if (entity_type !== 'task' || !entity_id || typeof entity_id !== 'string') {
+    if (!['task', 'project'].includes(entity_type) || !entity_id || typeof entity_id !== 'string') {
       return { event_id, status: 'rejected', detail: `unsupported entity type: ${entity_type}` };
     }
     if (!['create', 'update'].includes(operation)) {
@@ -269,6 +299,9 @@ export class PeerSyncService {
     }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       return { event_id, status: 'rejected', detail: 'payload must be an object' };
+    }
+    if (entity_type === 'project' && !this.knowledge) {
+      return { event_id, status: 'rejected', detail: { reason: 'knowledge_repository_unavailable' } };
     }
 
     const outcome = transaction(this.db, () => {
@@ -282,9 +315,11 @@ export class PeerSyncService {
       );
       if (!inserted.changes) return { status: 'duplicate', detail: null };
 
-      const detail = operation === 'create'
-        ? this.#applyTaskCreate(fromNode, payload)
-        : this.#applyTaskUpdate(fromNode, entity_id, payload);
+      const detail = entity_type === 'task'
+        ? (operation === 'create'
+          ? this.#applyTaskCreate(fromNode, payload)
+          : this.#applyTaskUpdate(fromNode, entity_id, payload))
+        : this.#applyProjectEvent(fromNode, entity_id, operation, payload);
       const timestamp = this.now();
       this.db.prepare(
         'UPDATE peer_sync_inbox SET status = ?, detail_json = ?, applied_at = ? WHERE event_id = ?',
@@ -292,6 +327,43 @@ export class PeerSyncService {
       return detail;
     });
     return { event_id, ...outcome };
+  }
+
+  // Project events are only credible from the project's owner node; the
+  // payload must carry that ownership so a peer cannot re-announce someone
+  // else's project. Updates self-heal a missed create by projecting first.
+  #applyProjectEvent(fromNode, projectId, operation, payload) {
+    const metadata = payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
+    const owner = metadata.owner_node_id ?? metadata.ownerNodeId ?? null;
+    if (owner !== fromNode) {
+      return { status: 'rejected', detail: { reason: 'unauthorized_publisher' } };
+    }
+    const fields = {
+      name: payload.name,
+      type: payload.type,
+      goal: payload.goal,
+      status: payload.status,
+      metadata,
+    };
+    try {
+      if (operation === 'create') {
+        const { project, idempotent_replay } = this.knowledge.createProjectFromSync({ id: projectId, ...fields });
+        return { status: idempotent_replay ? 'duplicate' : 'applied', detail: { project_id: project.id } };
+      }
+      const local = this.knowledge.getProject(projectId);
+      if (!local) {
+        const { project } = this.knowledge.createProjectFromSync({ id: projectId, ...fields });
+        return { status: 'applied', detail: { project_id: project.id, healed: 'missing_create' } };
+      }
+      const localOwner = local.metadata?.owner_node_id ?? local.metadata?.ownerNodeId ?? null;
+      if (localOwner && localOwner !== fromNode) {
+        return { status: 'rejected', detail: { reason: 'unauthorized_publisher' } };
+      }
+      const project = this.knowledge.updateProject(projectId, fields);
+      return { status: 'applied', detail: { project_id: project.id } };
+    } catch (error) {
+      return { status: 'rejected', detail: { reason: error.message } };
+    }
   }
 
   #applyTaskCreate(fromNode, payload) {

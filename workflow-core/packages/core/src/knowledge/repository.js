@@ -37,8 +37,22 @@ export class WorkflowRepository {
     this.filename = path.resolve(options.filename || path.join(os.homedir(), '.agents', 'workflow', 'workflow.db'));
     this.db = openKnowledgeDatabase(this.filename, options);
     this.transactionDepth = 0;
+    this.changeListeners = [];
   }
   close() { this.db.close(); }
+  // Observers fire after a synced entity mutation commits its change-log
+  // revision (the peer-sync publisher subscribes). Keep them cheap.
+  onChange(listener) {
+    this.changeListeners.push(listener);
+    return () => {
+      this.changeListeners = this.changeListeners.filter((entry) => entry !== listener);
+    };
+  }
+  #emitChange(entityType, entityId, operation, record) {
+    for (const listener of this.changeListeners) {
+      try { listener({ entityType, entityId, operation, record }); } catch { /* observer error is contained */ }
+    }
+  }
   transaction(fn) {
     if (this.transactionDepth) return fn(this);
     this.db.exec('BEGIN IMMEDIATE'); this.transactionDepth += 1;
@@ -73,15 +87,34 @@ export class WorkflowRepository {
     }
     if (location) return this.getProject(location.project_id);
     if (options.create === false) return null;
-    return this.transaction(() => {
+    const project = this.transaction(() => {
       location = this.db.prepare('SELECT project_id FROM project_locations WHERE machine=? AND path_flavor=? AND normalized_path=?').get(machine, flavor, normalized);
       if (location) return this.getProject(location.project_id);
       const id = options.projectId || uuid(); const timestamp = now();
       this.db.prepare('INSERT INTO projects(id,name,type,goal,status,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(id, String(options.name || projectBasename(options.path, flavor) || 'project'), String(options.type || 'unknown'), String(options.goal || ''), String(options.status || 'active'), json(options.metadata || {}), timestamp, timestamp);
       this.db.prepare('INSERT INTO project_locations(id,project_id,machine,path_flavor,normalized_path,display_path,aliases_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(uuid(), id, machine, flavor, normalized, displayProjectPath(options.path, flavor), json(cleanList(options.aliases)), timestamp, timestamp);
       const revision = this._change('project', id, id, 'create'); this.db.prepare('UPDATE projects SET server_revision=? WHERE id=?').run(revision, id);
-      const project = this.getProject(id); this._finishChange(revision, project); return project;
+      const created = this.getProject(id); this._finishChange(revision, created); return created;
     });
+    this.#emitChange('project', project.id, 'create', project);
+    return project;
+  }
+  // Peer-sync projection write: create with the origin's project id and
+  // metadata verbatim. Machine-local locations never travel with sync; the
+  // project arrives location-less until this machine registers its own path.
+  createProjectFromSync(input) {
+    if (!input.id || typeof input.id !== 'string') throw new TypeError('project id is required');
+    const result = this.transaction(() => {
+      const existing = this.getProject(input.id);
+      if (existing) return { project: existing, idempotent_replay: true };
+      const timestamp = now();
+      this.db.prepare('INSERT INTO projects(id,name,type,goal,status,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(input.id, String(input.name ?? 'project'), String(input.type ?? 'unknown'), String(input.goal ?? ''), String(input.status ?? 'active'), json(input.metadata ?? {}), timestamp, timestamp);
+      const revision = this._change('project', input.id, input.id, 'create'); this.db.prepare('UPDATE projects SET server_revision=? WHERE id=?').run(revision, input.id);
+      const project = this.getProject(input.id); this._finishChange(revision, project);
+      return { project, idempotent_replay: false };
+    });
+    if (!result.idempotent_replay) this.#emitChange('project', result.project.id, 'create', result.project);
+    return result;
   }
   addProjectLocation(projectId, options) {
     return this.transaction(() => {
@@ -110,11 +143,13 @@ export class WorkflowRepository {
   updateProject(id, patch, options = {}) {
     const current = this.getProject(id); if (!current) throw new Error(`Project not found: ${id}`);
     if (options.expectedRevision != null && Number(options.expectedRevision) !== current.revision) throw this._conflict(options.clientId, 'project', id, options.expectedRevision, current.revision, patch);
-    return this.transaction(() => {
+    const result = this.transaction(() => {
       const revision = this._change('project', id, id, 'update');
       this.db.prepare('UPDATE projects SET name=?,type=?,goal=?,status=?,metadata_json=?,server_revision=?,updated_at=? WHERE id=?').run(String(patch.name ?? current.name), String(patch.type ?? current.type), String(patch.goal ?? current.goal), String(patch.status ?? current.status), json(patch.metadata ?? current.metadata), revision, now(), id);
-      const result = this.getProject(id); this._finishChange(revision, result); return result;
+      const updated = this.getProject(id); this._finishChange(revision, updated); return updated;
     });
+    this.#emitChange('project', id, 'update', result);
+    return result;
   }
   _memoryTags(id) { return this.db.prepare('SELECT tag FROM memory_tags WHERE memory_id=? ORDER BY tag COLLATE NOCASE').all(id).map((row) => row.tag); }
   getMemory(id, options = {}) {

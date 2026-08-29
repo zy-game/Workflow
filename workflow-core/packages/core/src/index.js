@@ -141,8 +141,6 @@ export async function startCore(env = process.env, dependencies = {}) {
       log,
     });
     const projectAgentsRegistry = new ProjectAgentRegistry({ coreDb: coreDatabase });
-    peerSyncService = createPeerSyncService({ coreDb: coreDatabase, nodeId: nodeIdentity.nodeId, taskRepository });
-
     const credentialCipher = new CredentialCipher({ dataDir: config.dataDir });
     const settingsRepository = new SettingsRepository({ coreDb: coreDatabase });
     const LLM_CLI_AVAILABLE = fs.existsSync("/opt/dsh8/lib/node_modules/@deepseek-ai/dsh/lib/bin.js");
@@ -188,6 +186,12 @@ export async function startCore(env = process.env, dependencies = {}) {
       });
     };
     knowledgeRepository = new WorkflowRepository({ filename: config.knowledgeDb, readOnly: false });
+    peerSyncService = createPeerSyncService({
+      coreDb: coreDatabase,
+      nodeId: nodeIdentity.nodeId,
+      taskRepository,
+      knowledgeRepository,
+    });
     const taskCreationFacade = new TaskCreationFacade({ taskRepository, knowledgeRepository, nodeId: nodeIdentity.nodeId });
     workflowAgent = new WorkflowAgent({ taskRepository, taskCreationFacade, projectAgentsRegistry, knowledgeRepository, log });
     feishuService = config.feishu.enabled ? new FeishuService({
