@@ -16,6 +16,7 @@ import { SuggestionsRepository } from './ai/suggestions-repository.js';
 import { BridgeRequestsRepository } from './bridge/requests-repository.js';
 import { createBridgeService } from './bridge/service.js';
 import { createPeerSyncService } from './sync/service.js';
+import { createPeerSyncClient } from './sync/client.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -100,6 +101,7 @@ export async function startCore(env = process.env, dependencies = {}) {
   let feishuService;
   let workflowAgent;
   let peerSyncService;
+  let peerSyncClient;
   let internal;
   let publicServer;
   let shutdownPromise = null;
@@ -284,6 +286,17 @@ export async function startCore(env = process.env, dependencies = {}) {
     internal = await server.listen({ host: config.internalHost, port: config.internalPort, tls: null, surface: 'internal' });
     publicServer = await server.listen({ host: config.httpsHost, port: config.httpsPort, tls: config.tls, surface: 'public' });
     workerChannel.handleUpgrade(publicServer);
+    if (config.peers.length) {
+      peerSyncClient = createPeerSyncClient({
+        peerSyncService,
+        peers: config.peers,
+        nodeId: nodeIdentity.nodeId,
+        intervalMs: config.peerSyncIntervalMs,
+        log,
+      });
+      peerSyncClient.start();
+      log(`[workflow-core] peer sync: pulling from ${config.peers.map((peer) => peer.node_id).join(', ')}`);
+    }
     if (feishuService) {
       await connectFeishu(feishuService, {
         appId: config.feishu.appId,

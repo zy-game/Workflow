@@ -1,9 +1,45 @@
 // config.js - validated environment-driven configuration.
 import path from 'node:path';
+import { NODE_ID_PATTERN } from './node-identity.js';
 
 function text(env, name) {
   const value = env[name];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+// Peers are configured as a JSON array because each entry carries three
+// related values; the sync token is provisioned by the remote peer and only
+// ever travels through environment/system credential channels.
+function peers(env, name) {
+  const raw = text(env, name);
+  if (raw === null) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${name} must be a JSON array`);
+  }
+  if (!Array.isArray(parsed)) throw new Error(`${name} must be a JSON array`);
+  return parsed.map((entry, index) => {
+    const label = `${name}[${index}]`;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`${label} must be an object`);
+    }
+    const nodeId = String(entry.node_id ?? '');
+    if (!NODE_ID_PATTERN.test(nodeId)) throw new Error(`${label}.node_id must match ^[a-z][a-z0-9._-]{2,63}$`);
+    let endpoint;
+    try {
+      endpoint = new URL(String(entry.endpoint ?? ''));
+    } catch {
+      throw new Error(`${label}.endpoint must be an absolute http(s) URL`);
+    }
+    if (endpoint.protocol !== 'https:' && endpoint.protocol !== 'http:') {
+      throw new Error(`${label}.endpoint must be an absolute http(s) URL`);
+    }
+    const token = String(entry.token ?? '');
+    if (!token) throw new Error(`${label}.token is required`);
+    return { node_id: nodeId, endpoint: endpoint.origin, token };
+  });
 }
 
 function integer(env, name, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -74,6 +110,8 @@ export function loadConfig(env = process.env) {
     internalPort: integer(env, 'WFC_INTERNAL_PORT', 8711, { max: 65535 }),
     tls,
     claimTimeoutMs: integer(env, 'WFC_CLAIM_TIMEOUT_MS', 15 * 60 * 1000),
+    peerSyncIntervalMs: integer(env, 'WFC_PEER_SYNC_INTERVAL_MS', 15_000, { min: 1_000 }),
+    peers: peers(env, 'WFC_PEERS_JSON'),
     knowledgeDb: text(env, 'WFC_KNOWLEDGE_DB')
       ? path.resolve(text(env, 'WFC_KNOWLEDGE_DB'))
       : path.join(dataDir, 'workflow.db'),

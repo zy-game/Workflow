@@ -261,7 +261,9 @@ Workflow Task Event
 
 第一批已落地 core.db schema v16：`peer_nodes`（Peer 注册/撤销）、`peer_sync_outbox`（本节点决策的单调事件日志，随任务事务原子写入）、`peer_sync_inbox`（按 `event_id` 幂等的收件日志）、`peer_sync_cursors`（每 Peer 的入站/出站游标）。HTTP 契约为 `POST /api/v1/peer/sync/handshake|pull|push|ack`，调用方身份取自 `peer` 角色机器 token 的 subject，不信任 body。任务创建仅由 origin 节点发布；执行状态更新由 origin 或 executor 节点发布；ingest 通过终态吸收的投影写入应用远端事件，重放事件只计 duplicate，不会重复投影或回环。
 
-尚待实现：节点间的拉取/推送连接器（轮询循环、离线重放、store-and-forward relay）、事件签名、撤销传播、outbox 依据 ack 游标的清理、以及任务执行过程的 session 事件同步。
+第二批已落地节点间拉取连接器 `src/sync/client.js`：每个节点按 `WFC_PEERS_JSON`（node_id、endpoint、远端签发的 peer token；token 只经环境配置通道）周期性从各 peer 拉取事件、本地 ingest、并回 ack；游标持久化在 core.db，节点离线或远端故障恢复后从断点续传；远端丢失数据库时对 `PEER_UNKNOWN` 自动重新握手。peer 确认过的 outbox 事件按最慢活跃 peer 的 ack 游标清理（`pruneAcked`），且序列号不回绕。双节点真 HTTP 端到端测试覆盖：创建同步、非执行节点不 claim、executor 完成回传、离线重放与清理。
+
+尚待实现：事件签名、撤销传播、push 型传输与 store-and-forward relay、任务执行过程的 session 事件同步。
 
 ### 阶段 D：执行路由（已完成）
 

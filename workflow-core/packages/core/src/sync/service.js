@@ -365,6 +365,19 @@ export class PeerSyncService {
     };
   }
 
+  // Drops outbox events confirmed by every active peer. The slowest active
+  // peer bounds retention; peers registered without a cursor do not constrain
+  // pruning and bootstrap from the live head.
+  pruneAcked() {
+    const acked = this.db.prepare(`
+      SELECT MIN(outbound_acked_seq) AS acked
+      FROM peer_sync_cursors c
+      JOIN peer_nodes p ON p.node_id = c.peer_node_id AND p.status = 'active'
+    `).get().acked;
+    if (!acked) return 0;
+    return this.db.prepare('DELETE FROM peer_sync_outbox WHERE seq <= ?').run(Number(acked)).changes;
+  }
+
   status() {
     const inbox = this.db.prepare(
       'SELECT status, count(*) AS count FROM peer_sync_inbox GROUP BY status',
