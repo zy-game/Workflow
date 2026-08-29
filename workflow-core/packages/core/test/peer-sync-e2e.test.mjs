@@ -231,3 +231,42 @@ test('project ownership synchronizes and routes cross-node tasks to the owner', 
   await alphaClient.stop();
   await betaClient.stop();
 });
+
+test('execution state stays live on peers and revocation permanently stops a pull client', async () => {
+  const alpha = await startNode('node-alpha');
+  const beta = await startNode('node-beta');
+  issuePeerTokens(alpha, beta);
+  const alphaClient = clientFor(alpha, beta);
+  const betaClient = clientFor(beta, alpha);
+  alphaClient.start();
+  betaClient.start();
+
+  // The peer sees dispatched/running while the owner node works.
+  const { task } = alpha.tasks.create({
+    type: 'code', brief: { prompt: 'live status' }, created_by: 'account:alice',
+    project_id: 'default', origin_node_id: 'node-alpha', executor_node_id: 'node-alpha',
+  });
+  await betaClient.tick();
+  await waitFor('projection on beta', () => beta.tasks.get(task.task_id));
+  const claimed = alpha.tasks.claim({ worker_id: 'worker-alpha-1', node_id: 'node-alpha', backends: [{ kind: 'workflow-jsonl', capabilities: [] }] });
+  alpha.tasks.progress(task.task_id, claimed.claim_token, { note: 'halfway', percent: 50 });
+  await betaClient.tick();
+  await waitFor('running status on beta', () => beta.tasks.get(task.task_id)?.status === 'running');
+  assert.equal(beta.tasks.get(task.task_id).result, null);
+
+  // Once beta revokes alpha, beta's client drops alpha permanently: further
+  // owner-side events never arrive until an administrator re-activates.
+  beta.service.revokePeer('node-alpha');
+  const blocked = alpha.tasks.create({
+    type: 'code', brief: { prompt: 'after revoke' }, created_by: 'account:alice',
+    project_id: 'default', origin_node_id: 'node-alpha', executor_node_id: 'node-alpha',
+  }).task;
+  await betaClient.tick();
+  await betaClient.tick();
+  assert.deepEqual(betaClient.revokedPeers(), ['node-alpha']);
+  assert.equal(beta.tasks.get(blocked.task_id), null);
+  assert.equal(beta.service.getPeer('node-alpha').status, 'revoked');
+
+  await alphaClient.stop();
+  await betaClient.stop();
+});

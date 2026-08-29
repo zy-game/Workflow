@@ -13,8 +13,11 @@ export const PEER_SYNC_PROTOCOL_VERSION = 1;
 
 // Task events that carry a decision worth projecting onto peer nodes.
 // Claim/lease/progress/session events are execution-local to the worker
-// connection that holds the claim and are deliberately not synchronized.
-const SYNCED_TASK_EVENTS = new Set(['created', 'done', 'cancelled', 'dead_letter', 'awaiting_input']);
+// connection that holds the claim, but claim and progress are also projected
+// so peer task lists see live dispatched/running state.
+const SYNCED_TASK_EVENTS = new Set([
+  'created', 'claimed', 'progress', 'done', 'cancelled', 'dead_letter', 'awaiting_input',
+]);
 
 export function isPeerProtocolSupported(version) {
   return Number(version) === PEER_SYNC_PROTOCOL_VERSION;
@@ -139,7 +142,9 @@ export class PeerSyncService {
       ? 'awaiting_input'
       : event.type === 'cancelled' ? 'cancelled'
         : event.type === 'dead_letter' ? 'failed'
-          : task.status;
+          : event.type === 'claimed' ? 'dispatched'
+            : event.type === 'progress' ? 'running'
+              : task.status;
     this.#publish({
       entity_type: 'task',
       entity_id: task.task_id,
@@ -150,6 +155,8 @@ export class PeerSyncService {
         result: task.result,
         session_ref: task.session_ref,
         finished_at: task.finished_at,
+        note: event.payload?.note ?? null,
+        percent: event.payload?.percent ?? null,
       },
     });
   }
@@ -186,6 +193,14 @@ export class PeerSyncService {
       error.code = 'PEER_PROTOCOL_UNSUPPORTED';
       throw error;
     }
+    // Revocation is sticky: a revoked peer cannot re-register (a handshake
+    // must never resurrect it) and only activatePeer() restores access.
+    const existing = this.getPeer(peerId);
+    if (existing?.status === 'revoked') {
+      const error = new Error(`peer is revoked and must be explicitly re-activated: ${peerId}`);
+      error.code = 'PEER_REVOKED';
+      throw error;
+    }
     const timestamp = this.now();
     this.db.prepare(`
       INSERT INTO peer_nodes (node_id, display_name, endpoint_url, protocol_version, status, created_at, updated_at, last_seen_at)
@@ -199,6 +214,16 @@ export class PeerSyncService {
         last_seen_at = excluded.last_seen_at
     `).run(peerId, display_name, endpoint, Number(protocol_version), timestamp, timestamp, timestamp);
     return this.getPeer(peerId);
+  }
+
+  // Explicit administrative re-activation of a previously revoked peer.
+  activatePeer(nodeId) {
+    const timestamp = this.now();
+    const changes = this.db.prepare(
+      "UPDATE peer_nodes SET status = 'active', updated_at = ? WHERE node_id = ? AND status = 'revoked'",
+    ).run(timestamp, String(nodeId)).changes;
+    if (!changes) return this.getPeer(nodeId);
+    return this.getPeer(nodeId);
   }
 
   getPeer(nodeId) {
@@ -232,9 +257,14 @@ export class PeerSyncService {
 
   requireActivePeer(nodeId) {
     const peer = this.getPeer(nodeId);
-    if (!peer || peer.status !== 'active') {
-      const error = new Error(`peer is not registered or has been revoked: ${nodeId}`);
+    if (!peer) {
+      const error = new Error(`peer is not registered: ${nodeId}`);
       error.code = 'PEER_UNKNOWN';
+      throw error;
+    }
+    if (peer.status !== 'active') {
+      const error = new Error(`peer has been revoked: ${nodeId}`);
+      error.code = 'PEER_REVOKED';
       throw error;
     }
     return peer;
@@ -389,6 +419,8 @@ export class PeerSyncService {
       result: payload.result ?? null,
       session_ref: payload.session_ref ?? null,
       finished_at: payload.finished_at ?? null,
+      note: payload.note ?? null,
+      percent: payload.percent ?? null,
     };
     const { task, applied, reason } = this.tasks.applySyncUpdate(taskId, update);
     if (applied) return { status: 'applied', detail: { task_id: taskId, status: task.status } };

@@ -110,16 +110,16 @@ test('the executor node publishes completion and the origin applies the terminal
     value.beta.service.ingest({ from_node: 'node-alpha', events: pullAll(value.alpha).filter((e) => e.entity_id === task.task_id) });
 
     // Beta's worker claims and completes the task locally; beta publishes the
-    // completion because it is the executor, not the origin.
+    // claim (dispatched) and the completion because it is the executor.
     const claimed = value.beta.tasks.claim({ worker_id: 'worker-beta-1', node_id: 'node-beta', backends: [{ kind: 'workflow-jsonl', capabilities: [] }] });
     assert.equal(claimed.task_id, task.task_id);
     value.beta.tasks.done(claimed.task_id, claimed.claim_token, { kind: 'done', result: { summary: 'built' } });
     const updates = pullAll(value.beta).filter((e) => e.entity_id === task.task_id && e.operation === 'update');
-    assert.equal(updates.length, 1);
-    assert.equal(updates[0].payload.status, 'done');
+    assert.equal(updates.length, 2);
+    assert.deepEqual(updates.map((e) => e.payload.status), ['dispatched', 'done']);
 
     const applied = value.alpha.service.ingest({ from_node: 'node-beta', events: updates });
-    assert.equal(applied.applied, 1);
+    assert.equal(applied.applied, 2);
     assert.equal(value.alpha.tasks.get(task.task_id).status, 'done');
     assert.deepEqual(value.alpha.tasks.get(task.task_id).result, { summary: 'built' });
     assert.equal(value.alpha.tasks.get(task.task_id).executor_node_id, 'node-beta');
@@ -244,22 +244,69 @@ test('outbox paging stops at the limit and acks track per-peer progress', () => 
   }
 });
 
-test('revoked peers are refused at ingest and ack', () => {
+test('revocation is sticky and only explicit activation restores access', () => {
   const value = fixture();
   try {
     value.beta.service.registerPeer({ node_id: 'node-alpha' });
     value.beta.service.revokePeer('node-alpha');
     assert.throws(
       () => value.beta.service.ingest({ from_node: 'node-alpha', events: [] }),
-      (error) => error.code === 'PEER_UNKNOWN',
+      (error) => error.code === 'PEER_REVOKED',
     );
     assert.throws(
       () => value.beta.service.recordAck('node-alpha', 1),
-      (error) => error.code === 'PEER_UNKNOWN',
+      (error) => error.code === 'PEER_REVOKED',
     );
-    // Re-registration restores access.
-    value.beta.service.registerPeer({ node_id: 'node-alpha' });
+    // A handshake (registerPeer) must not resurrect a revoked peer.
+    assert.throws(
+      () => value.beta.service.registerPeer({ node_id: 'node-alpha' }),
+      (error) => error.code === 'PEER_REVOKED',
+    );
+    assert.equal(value.beta.service.getPeer('node-alpha').status, 'revoked');
+    // Explicit re-activation is the only way back.
+    value.beta.service.activatePeer('node-alpha');
+    assert.equal(value.beta.service.getPeer('node-alpha').status, 'active');
     assert.equal(value.beta.service.ingest({ from_node: 'node-alpha', events: [] }).applied, 0);
+  } finally {
+    value.close();
+  }
+});
+
+test('claim and progress project live execution state onto peers', () => {
+  const value = fixture();
+  try {
+    value.alpha.service.registerPeer({ node_id: 'node-beta' });
+    value.beta.service.registerPeer({ node_id: 'node-alpha' });
+    const { task } = value.alpha.tasks.create({
+      type: 'code', brief: { prompt: 'watch me run' }, created_by: 'account:alice',
+      project_id: 'default', origin_node_id: 'node-alpha', executor_node_id: 'node-alpha',
+    });
+    // Origin claims and works; peers see dispatched then running with the note.
+    const claimed = value.alpha.tasks.claim({ worker_id: 'worker-alpha-1', node_id: 'node-alpha', backends: [{ kind: 'workflow-jsonl', capabilities: [] }] });
+    assert.equal(claimed.status, 'dispatched');
+    value.alpha.tasks.progress(task.task_id, claimed.claim_token, { note: 'compiling', percent: 40 });
+
+    const updates = value.beta.service.ingest({
+      from_node: 'node-alpha',
+      events: value.alpha.service.eventsSince(0).filter((e) => e.entity_id === task.task_id),
+    });
+    assert.equal(updates.applied, 3);
+    const projection = value.beta.tasks.get(task.task_id);
+    assert.equal(projection.status, 'running');
+    assert.equal(projection.result, null);
+    const progressEvents = value.beta.tasks.events(task.task_id, { type: 'peer_sync_update' });
+    const last = progressEvents[progressEvents.length - 1];
+    assert.equal(last.payload.note, 'compiling');
+    assert.equal(last.payload.percent, 40);
+
+    // Completion still overwrites the result cleanly.
+    value.alpha.tasks.done(task.task_id, claimed.claim_token, { kind: 'done', result: { summary: 'ok' } });
+    value.beta.service.ingest({
+      from_node: 'node-alpha',
+      events: value.alpha.service.eventsSince(0).filter((e) => e.entity_id === task.task_id),
+    });
+    assert.equal(value.beta.tasks.get(task.task_id).status, 'done');
+    assert.deepEqual(value.beta.tasks.get(task.task_id).result, { summary: 'ok' });
   } finally {
     value.close();
   }

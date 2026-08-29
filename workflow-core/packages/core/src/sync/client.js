@@ -17,6 +17,9 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
     throw new TypeError('a node cannot configure itself as a peer');
   }
   const byNodeId = new Map(peers.map((peer) => [peer.node_id, peer]));
+  // Peers that rejected us with PEER_REVOKED are dropped for the lifetime of
+  // this client; only a restart (with updated configuration) retries them.
+  const revoked = new Set();
   let timer = null;
   let current = null;
   let stopped = true;
@@ -39,11 +42,18 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
   }
 
   async function syncPeer(peer) {
+    if (revoked.has(peer.node_id)) return;
     // A remote that lost its database no longer knows us; re-handshake on
-    // rejection so the next tick can proceed without manual intervention.
+    // PEER_UNKNOWN so the next tick can proceed without manual intervention.
+    // PEER_REVOKED is final: drop the peer instead of hammering it.
     try {
       await pullPeer(peer);
     } catch (error) {
+      if (error.code === 'PEER_REVOKED') {
+        revoked.add(peer.node_id);
+        log(`[peer-sync] ${peer.node_id}: revoked by the remote peer; stopping sync for it`);
+        return;
+      }
       if (error.code !== 'PEER_UNKNOWN') throw error;
       await post(peer, '/handshake', { protocol_version: PEER_SYNC_PROTOCOL_VERSION });
       await pullPeer(peer);
@@ -88,6 +98,7 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
   return {
     nodeId: effectiveNodeId,
     peers: [...byNodeId.keys()],
+    revokedPeers: () => [...revoked],
     start() {
       if (!stopped) return;
       stopped = false;

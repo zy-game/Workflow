@@ -1027,6 +1027,7 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
         TASK_NOT_FOUND: 404,
         LEASE_EXPIRED: 410,
         PEER_UNKNOWN: 403,
+        PEER_REVOKED: 403,
         PEER_PROTOCOL_UNSUPPORTED: 400,
         PEER_ACK_INVALID: 400,
       };

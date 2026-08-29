@@ -265,7 +265,9 @@ Workflow Task Event
 
 第三批已落地项目注册表同步：knowledge 仓库提供 `onChange` 观察者与 `createProjectFromSync` 投影写入；项目 create/update 通过同一事件管道传播（entity_type `project`），仅 owner 节点发布，payload 只含 name/type/goal/status/metadata，机器本地 locations 不出节点。ingest 规则：payload 的 owner 必须等于事件来源节点；已归属项目不能被其他节点接管；update 遇到缺失投影时自愈补建。由此形成跨节点路由闭环——peer 拿到项目 owner 后，本机创建的项目任务经路由 facade 自动指向 owner 节点执行，完成状态再同步回发起节点（双节点真 HTTP 端到端测试覆盖）。
 
-尚待实现：事件签名、撤销传播、push 型传输与 store-and-forward relay、任务执行过程的 session 事件同步。
+第四批：撤销改为粘性语义——已撤销 peer 的握手（registerPeer）不再复活它，只有显式 `activatePeer` 管理动作可恢复；服务端以 `PEER_REVOKED` 区分撤销与未注册，pull 客户端收到 `PEER_REVOKED` 后永久退出该 peer 的轮询。同时 claimed/progress 事件现在也投影到 peer（dispatched/running 与最近一条 note/percent），peer 任务列表可见实时执行状态，非终态更新不覆盖已有 result。
+
+尚待实现：事件签名、push 型传输与 store-and-forward relay、任务执行过程的 session 事件同步。
 
 ### 阶段 D：执行路由（已完成）
 

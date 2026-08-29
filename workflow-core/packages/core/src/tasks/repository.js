@@ -223,7 +223,9 @@ export class TaskRepository {
   // Applies a remote execution-state update. Returns { task, applied, reason }
   // instead of throwing for expected projection outcomes; `reason` is null
   // when applied, otherwise 'not_found' | 'terminal' | 'stale_transition'.
-  applySyncUpdate(taskId, { status, result_kind = null, result = null, session_ref = null, finished_at = null } = {}) {
+  // Non-terminal updates never overwrite an existing result; note/percent ride
+  // the local event log for display without their own columns.
+  applySyncUpdate(taskId, { status, result_kind = null, result = null, session_ref = null, finished_at = null, note = null, percent = null } = {}) {
     const now = new Date().toISOString();
     return transaction(this.db, () => {
       const row = this.db.prepare('SELECT * FROM tasks WHERE task_id = ?').get(taskId);
@@ -232,25 +234,28 @@ export class TaskRepository {
       const terminal = ['done', 'failed', 'cancelled'];
       if (terminal.includes(task.status)) return { task, applied: false, reason: 'terminal' };
       const allowedFrom = {
-        queued: ['awaiting_input', 'blocked', 'done', 'failed', 'cancelled'],
+        queued: ['dispatched', 'running', 'awaiting_input', 'blocked', 'done', 'failed', 'cancelled'],
         dispatched: ['running', 'awaiting_input', 'blocked', 'done', 'failed', 'cancelled'],
-        running: ['awaiting_input', 'blocked', 'done', 'failed', 'cancelled'],
+        running: ['dispatched', 'awaiting_input', 'blocked', 'done', 'failed', 'cancelled'],
         awaiting_input: ['running', 'blocked', 'done', 'failed', 'cancelled'],
         blocked: ['running', 'queued', 'done', 'failed', 'cancelled'],
       };
       if (!allowedFrom[task.status]?.includes(status)) {
         return { task, applied: false, reason: 'stale_transition' };
       }
+      const writesResult = terminal.includes(status) || result != null;
       this.db.prepare(`
         UPDATE tasks SET status = ?, result_kind = ?, result_json = ?,
         session_ref = COALESCE(?, session_ref),
         claim_token = NULL, claim_worker_id = NULL, lease_deadline = NULL,
         updated_at = ?, finished_at = COALESCE(?, finished_at) WHERE task_id = ?
       `).run(
-        status, result_kind, JSON.stringify(result ?? {}),
+        status,
+        writesResult ? result_kind : task.result_kind,
+        writesResult ? JSON.stringify(result ?? {}) : task.result === null ? null : JSON.stringify(task.result),
         session_ref, now, finished_at ?? (terminal.includes(status) ? now : null), taskId,
       );
-      this.#appendEvent(taskId, 'peer_sync_update', { status, result_kind }, 'peer-sync');
+      this.#appendEvent(taskId, 'peer_sync_update', { status, result_kind, note, percent }, 'peer-sync');
       return { task: this.get(taskId), applied: true, reason: null };
     });
   }
