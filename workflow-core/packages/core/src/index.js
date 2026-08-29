@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { AuthRepository } from './auth/repository.js';
 import { CoreDatabase } from './db/core-db.js';
 import { TaskRepository } from './tasks/repository.js';
+import { TaskCreationFacade } from './tasks/creation-facade.js';
 import { InteractionRepository } from './interactions/repository.js';
 import { WorkersRegistry } from './workers/registry.js';
 import { CredentialCipher } from './workers/credential-key.js';
@@ -22,6 +23,7 @@ import { WorkflowRepository } from './knowledge/repository.js';
 import { FeishuClient } from './feishu/client.js';
 import { FeishuService, connectFeishuWebSocket } from './feishu/service.js';
 import { loadConfig } from './config.js';
+import { loadNodeIdentity } from './node-identity.js';
 
 async function createAccountCli(authRepository, email, role) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -118,8 +120,9 @@ export async function startCore(env = process.env, dependencies = {}) {
 
   try {
     authRepository = new AuthRepository({ dataDir: config.dataDir });
+    const nodeIdentity = loadNodeIdentity({ dataDir: config.dataDir, nodeId: config.nodeId });
     coreDatabase = new CoreDatabase({ dataDir: config.dataDir });
-    const taskRepository = new TaskRepository({ coreDb: coreDatabase, claimTimeoutMs: config.claimTimeoutMs });
+    const taskRepository = new TaskRepository({ coreDb: coreDatabase, claimTimeoutMs: config.claimTimeoutMs, nodeId: nodeIdentity.nodeId });
     const interactionRepository = new InteractionRepository({ coreDb: coreDatabase });
     const workersRegistry = new WorkersRegistry({ coreDb: coreDatabase });
     const bridgeRequestsRepository = new BridgeRequestsRepository({ coreDb: coreDatabase });
@@ -129,6 +132,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       workersRegistry,
       taskRepository,
       interactionRepository,
+      nodeId: nodeIdentity.nodeId,
       log,
     });
     const projectAgentsRegistry = new ProjectAgentRegistry({ coreDb: coreDatabase });
@@ -177,10 +181,12 @@ export async function startCore(env = process.env, dependencies = {}) {
       });
     };
     knowledgeRepository = new WorkflowRepository({ filename: config.knowledgeDb, readOnly: false });
-    workflowAgent = new WorkflowAgent({ taskRepository, projectAgentsRegistry, knowledgeRepository, log });
+    const taskCreationFacade = new TaskCreationFacade({ taskRepository, knowledgeRepository, nodeId: nodeIdentity.nodeId });
+    workflowAgent = new WorkflowAgent({ taskRepository, taskCreationFacade, projectAgentsRegistry, knowledgeRepository, log });
     feishuService = config.feishu.enabled ? new FeishuService({
       client: new FeishuClient({ appId: config.feishu.appId, appSecret: config.feishu.appSecret }),
       taskRepository,
+      taskCreationFacade,
       interactionRepository,
       workerChannel: null,
       coreDb: coreDatabase,
@@ -189,12 +195,14 @@ export async function startCore(env = process.env, dependencies = {}) {
     workerChannel = createWorkerChannel({
       authRepository,
       taskRepository,
+      taskCreationFacade,
       interactionRepository,
       workersRegistry,
       feishuService,
       credentialCipher,
       serverLlm,
       knowledgeRepository,
+      nodeId: nodeIdentity.nodeId,
       log,
     });
     if (feishuService) feishuService.channel = workerChannel;
@@ -248,8 +256,10 @@ export async function startCore(env = process.env, dependencies = {}) {
     };
     const server = createCoreServer({
       config,
+      nodeId: nodeIdentity.nodeId,
       authRepository,
       taskRepository,
+      taskCreationFacade,
       interactionRepository,
       workersRegistry,
       bridgeService,
@@ -282,6 +292,7 @@ export async function startCore(env = process.env, dependencies = {}) {
     );
     return {
       config,
+      nodeIdentity,
       authRepository,
       coreDatabase,
       knowledgeRepository,

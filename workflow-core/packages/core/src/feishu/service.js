@@ -13,9 +13,10 @@ const APPROVE_REPLY = /^(?:批准|同意|允许|approve|allow)[!。.!，,\s]*$/i
 const DENY_REPLY = /^(?:拒绝|不同意|deny|reject)[!。.!，,\s]*$/i;
 
 export class FeishuService {
-  constructor({ client, taskRepository, interactionRepository, workerChannel, coreDb, db = null, log = () => {} } = {}) {
+  constructor({ client, taskRepository, taskCreationFacade = null, interactionRepository, workerChannel, coreDb, db = null, log = () => {} } = {}) {
     this.client = client;
     this.tasks = taskRepository;
+    this.creation = taskCreationFacade;
     this.interactions = interactionRepository;
     this.channel = workerChannel;
     this.db = db || coreDb.db;
@@ -106,7 +107,7 @@ export class FeishuService {
     }
 
     const brief = await this.#triage(text);
-    const { task } = this.tasks.create({
+    const { task } = (this.creation || this.tasks).create({
       type: 'feishu.message',
       title: excerptOf(text, 60),
       brief,

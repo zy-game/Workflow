@@ -7,6 +7,7 @@ import { CoreDatabase } from '../src/db/core-db.js';
 import { TaskRepository } from '../src/tasks/repository.js';
 import { ProjectAgentRegistry } from '../src/agents/registry.js';
 import { WorkflowAgent } from '../src/agents/workflow-agent.js';
+import { TaskCreationFacade } from '../src/tasks/creation-facade.js';
 
 let dir; let db; let tasks; let agents; let workflow;
 before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-workflow-agent-')); db = new CoreDatabase({ dataDir: dir }); tasks = new TaskRepository({ coreDb: db }); agents = new ProjectAgentRegistry({ coreDb: db }); workflow = new WorkflowAgent({ taskRepository: tasks, projectAgentsRegistry: agents }); });

@@ -5,7 +5,7 @@ import { DEFAULT_PRIORITY, PRIORITY_MAX, PRIORITY_MIN } from '@workflow-core/sha
 import { initializeDatabase, transaction } from './base.js';
 
 export const CORE_DB_FILE = 'core.db';
-export const CORE_DB_SCHEMA_VERSION = 14;
+export const CORE_DB_SCHEMA_VERSION = 15;
 
 function createCurrentSchema(db) {
   db.exec(`
@@ -17,7 +17,10 @@ function createCurrentSchema(db) {
       priority INTEGER NOT NULL CHECK (priority BETWEEN ${PRIORITY_MIN} AND ${PRIORITY_MAX}) DEFAULT ${DEFAULT_PRIORITY},
       status TEXT NOT NULL CHECK (status IN ('queued','dispatched','running','done','failed','blocked','awaiting_input','cancelled')) DEFAULT 'queued',
       created_by TEXT NOT NULL,
+      origin_node_id TEXT,
       project_id TEXT,
+      executor_node_id TEXT,
+      execution_policy_snapshot_json TEXT NOT NULL DEFAULT '{}',
       agent_id TEXT,
       session_ref TEXT,
       backend_kind TEXT,
@@ -41,6 +44,7 @@ function createCurrentSchema(db) {
       UNIQUE (created_by, idempotency_key)
     );
     CREATE INDEX tasks_dispatch_idx ON tasks(status, priority, created_at);
+    CREATE INDEX tasks_executor_idx ON tasks(executor_node_id, status, priority, created_at);
     CREATE INDEX tasks_worker_idx ON tasks(claim_worker_id, status);
 
     CREATE TABLE task_events (
@@ -251,6 +255,31 @@ export function createSchema(db) {
           updated_at TEXT NOT NULL
         );
       `);
+      if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
+        try { db.exec("ALTER TABLE tasks ADD COLUMN origin_node_id TEXT"); } catch { /* exists */ }
+        try { db.exec("ALTER TABLE tasks ADD COLUMN executor_node_id TEXT"); } catch { /* exists */ }
+        try { db.exec("ALTER TABLE tasks ADD COLUMN execution_policy_snapshot_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* exists */ }
+        db.exec('CREATE INDEX IF NOT EXISTS tasks_executor_idx ON tasks(executor_node_id, status, priority, created_at)');
+      }
+      return;
+    }
+    if (current === 14) {
+      if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
+        db.exec(`
+          ALTER TABLE tasks ADD COLUMN origin_node_id TEXT;
+          ALTER TABLE tasks ADD COLUMN executor_node_id TEXT;
+          ALTER TABLE tasks ADD COLUMN execution_policy_snapshot_json TEXT NOT NULL DEFAULT '{}';
+          CREATE INDEX tasks_executor_idx ON tasks(executor_node_id, status);
+          UPDATE tasks SET origin_node_id = COALESCE(origin_node_id, created_by),
+            executor_node_id = COALESCE(executor_node_id, created_by),
+            execution_policy_snapshot_json = CASE
+              WHEN execution_policy_snapshot_json IS NULL OR execution_policy_snapshot_json = '{}'
+                THEN COALESCE(execution_policy_json, '{}')
+              ELSE execution_policy_snapshot_json
+            END;
+        `);
+      }
+      db.exec('PRAGMA user_version = 15');
       return;
     }
     if (current === 13) {
@@ -286,6 +315,10 @@ export function createSchema(db) {
         ALTER TABLE workers ADD COLUMN transport TEXT;
         ALTER TABLE workers ADD COLUMN last_pull_at TEXT;
         ALTER TABLE workers ADD COLUMN bridge_protocol_version INTEGER;
+        ALTER TABLE tasks ADD COLUMN origin_node_id TEXT;
+        ALTER TABLE tasks ADD COLUMN executor_node_id TEXT;
+        ALTER TABLE tasks ADD COLUMN execution_policy_snapshot_json TEXT NOT NULL DEFAULT '{}';
+        CREATE INDEX tasks_executor_idx ON tasks(executor_node_id, status);
         CREATE TABLE bridge_requests (
           bridge_id TEXT NOT NULL,
           request_id TEXT NOT NULL,

@@ -11,6 +11,7 @@ import { execFile } from 'node:child_process';
 import { parseCookies, serializeSessionCookie, serializeSessionCookieClear, SESSION_COOKIE_NAME, verifyPassword } from '../auth/crypto.js';
 import { frame } from '@workflow-core/shared';
 import { ADMIN_HTML } from '../admin/console.js';
+import { TaskRoutingError } from '../tasks/creation-facade.js';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_BRIDGE_BODY_BYTES = 1024 * 1024;
@@ -99,7 +100,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, authRepository, taskRepository, interactionRepository = null, workersRegistry = null, bridgeService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -351,16 +352,22 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
     // not silently turn their tasks into project-scoped client work.
     const inferredProject = principal.project_ids?.length === 1 && principal.project_ids[0] !== '*'
       ? principal.project_ids[0] : null;
-    const projectId = body.project_id ?? inferredProject;
+    const projectId = body.project_id === null || body.project_id === '' ? null : (body.project_id ?? inferredProject);
     if (projectId) requireProject(principal, projectId);
-    if (projectId && knowledgeRepository && !knowledgeRepository.getProject(projectId)) {
+    const project = projectId && knowledgeRepository ? knowledgeRepository.getProject(projectId) : null;
+    if (projectId && knowledgeRepository && !project) {
       throw new HttpError(400, 'project_not_found', `project does not exist: ${projectId}`);
     }
+    const projectOwnerNode = projectId && knowledgeRepository
+      ? knowledgeRepository.getProjectOwnerNodeId?.(projectId) ?? null
+      : null;
     const projectAgent = projectId && projectAgentsRegistry ? projectAgentsRegistry.ensure(projectId) : null;
-    const { task, idempotent_replay } = taskRepository.create({
+    const { task, idempotent_replay } = (taskCreationFacade || taskRepository).create({
       ...body,
       created_by: principal.subject_id,
       project_id: projectId,
+      origin_node_id: nodeId,
+      executor_node_id: projectId ? (projectOwnerNode || undefined) : nodeId,
       agent_id: body.agent_id ?? projectAgent?.agent_id ?? null,
     });
     if (!idempotent_replay) setImmediate(() => workerChannel?.tryDispatch());
@@ -371,7 +378,7 @@ export function createCoreServer({ config = {}, authRepository, taskRepository, 
     router.add('POST', '/api/v1/workflow/tasks/decompose', (req, res, body) => {
       const principal = requireAction(req, 'task:create');
       requireProject(principal, body.project_id);
-      const tasks = workflowAgent.createTasks({ ...body, created_by: principal.subject_id });
+      const tasks = workflowAgent.createTasks({ ...body, created_by: principal.subject_id, origin_node_id: nodeId });
       setImmediate(() => workerChannel?.tryDispatch());
       return { ok: true, tasks };
     });

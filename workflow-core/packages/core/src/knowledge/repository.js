@@ -101,6 +101,11 @@ export class WorkflowRepository {
     const locations = this.db.prepare('SELECT machine,path_flavor,normalized_path,display_path,aliases_json FROM project_locations WHERE project_id=? ORDER BY machine,normalized_path').all(id).map((item) => ({ machine: item.machine, pathFlavor: item.path_flavor, normalizedPath: item.normalized_path, path: item.display_path, aliases: parseJson(item.aliases_json, []) }));
     return { id: row.id, name: row.name, type: row.type, goal: row.goal, status: row.status, metadata: parseJson(row.metadata_json, {}), revision: row.server_revision, createdAt: row.created_at, updatedAt: row.updated_at, locations };
   }
+  getProjectOwnerNodeId(id) {
+    const project = this.getProject(id);
+    if (!project) return null;
+    return project.metadata?.owner_node_id ?? project.metadata?.ownerNodeId ?? null;
+  }
   listProjects(options = {}) { return this.db.prepare(`SELECT id FROM projects ${options.all ? '' : "WHERE status<>'deleted'"} ORDER BY updated_at DESC`).all().map((row) => this.getProject(row.id)); }
   updateProject(id, patch, options = {}) {
     const current = this.getProject(id); if (!current) throw new Error(`Project not found: ${id}`);

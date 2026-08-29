@@ -18,7 +18,7 @@ import { WorkersRegistry } from '../src/workers/registry.js';
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-bridge-service-'));
   const core = new CoreDatabase({ dataDir: dir });
-  const taskRepository = new TaskRepository({ coreDb: core });
+  const taskRepository = new TaskRepository({ coreDb: core, nodeId: 'node-bridge' });
   const workersRegistry = new WorkersRegistry({ coreDb: core });
   const interactionRepository = new InteractionRepository({ coreDb: core });
   const bridgeRequestsRepository = new BridgeRequestsRepository({ coreDb: core });
@@ -28,6 +28,7 @@ function fixture() {
     workersRegistry,
     taskRepository,
     interactionRepository,
+    nodeId: 'node-bridge',
     now: () => clock.value,
   });
   return {
@@ -144,6 +145,27 @@ test('pull returns live claims first, fills concurrency, and replays the origina
     value.close();
   }
 });
+
+test('pull does not claim tasks assigned to another node', () => {
+  const value = fixture();
+  try {
+    register(value);
+    const task = value.taskRepository.create({
+      type: 'code', brief: { prompt: 'other-node' }, created_by: 'test',
+      project_id: 'project-a', origin_node_id: 'node-origin', executor_node_id: 'node-other',
+      backend_kind: 'workflow-jsonl', required_capabilities: ['run'],
+    }).task;
+    const pulled = value.service.pull({
+      bridgeId: 'bridge-1', subjectId: 'machine:bridge-1', requestId: 'pull-other-node', protocolVersion: 1,
+    });
+    assert.deepEqual(pulled.response.claims, []);
+    assert.equal(value.taskRepository.get(task.task_id).status, 'queued');
+    assert.equal(value.taskRepository.get(task.task_id).claim_worker_id, null);
+  } finally {
+    value.close();
+  }
+});
+
 
 test('task mutations enforce ownership, token, live lease, event bounds, and one progress call', () => {
   const value = fixture();

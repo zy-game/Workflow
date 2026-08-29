@@ -52,7 +52,9 @@ export class TaskRunner {
     const progress = (note, percent, events = []) => this.core.send('progress', { task_id: task.task_id, claim_token: task.claim_token, note, percent, events });
     try {
       progress(resumed ? 'resumed' : 'started', 0);
-      const project = task.project_id ? this.projectRegistry?.resolve(task.project_id) : null;
+      const project = task.project_id && task.project_id !== 'default'
+        ? this.projectRegistry?.resolve(task.project_id)
+        : null;
       const options = {
         task,
         projectId: task.project_id ?? null,

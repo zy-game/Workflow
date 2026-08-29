@@ -29,7 +29,7 @@ before(async () => {
   auth = new AuthRepository({ dataDir: dir });
   await auth.createAccount({ email: 'owner@example.com', password: 'correct-horse-battery' });
   coreDb = new CoreDatabase({ dataDir: dir });
-  tasks = new TaskRepository({ coreDb, claimTimeoutMs: 60_000 });
+  tasks = new TaskRepository({ coreDb, claimTimeoutMs: 60_000, nodeId: 'node-test' });
   interactions = new InteractionRepository({ coreDb });
   workers = new WorkersRegistry({ coreDb });
   channel = createWorkerChannel({
@@ -45,6 +45,7 @@ before(async () => {
     interactionRepository: interactions,
     workersRegistry: workers,
     workerChannel: channel,
+    nodeId: 'node-test',
   });
   server = await core.listen({ host: '127.0.0.1', port: 0, tls: null });
   channel.handleUpgrade(server);

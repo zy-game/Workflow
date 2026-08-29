@@ -41,6 +41,40 @@ function claimTag(tag, worker = 'machine:w1', overrides = {}) {
   });
 }
 
+test('normalizes default routing to the origin node and blocks other nodes', () => {
+  const originRepo = new TaskRepository({ dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-route-origin-')), nodeId: 'node-origin' });
+  try {
+    const task = originRepo.create({ type: 'workflow.run', brief: { goal: 'route' }, created_by: 'account:owner', worker_selector: { tag: 'route-default' } }).task;
+    assert.equal(task.project_id, 'default');
+    assert.equal(task.origin_node_id, 'node-origin');
+    assert.equal(task.executor_node_id, 'node-origin');
+    assert.deepEqual(task.execution_policy_snapshot, {
+      project_id: 'default', origin_node_id: 'node-origin', executor_node_id: 'node-origin',
+    });
+    assert.equal(originRepo.claim({ worker_id: 'machine:other', node_id: 'node-other', selector: { tag: 'route-default' }, capabilities: [], backends: [{ kind: 'workflow-jsonl', capabilities: [] }] }), null);
+    assert.equal(originRepo.get(task.task_id).status, 'queued');
+    assert.ok(originRepo.claim({ worker_id: 'machine:origin', node_id: 'node-origin', selector: { tag: 'route-default' }, capabilities: [], backends: [{ kind: 'workflow-jsonl', capabilities: [] }] }));
+  } finally {
+    const routeDir = originRepo.coreDatabase?.file ? path.dirname(originRepo.coreDatabase.file) : null;
+    originRepo.close();
+    if (routeDir) fs.rmSync(routeDir, { recursive: true, force: true });
+  }
+});
+
+test('preserves explicit project executor in the task policy snapshot', () => {
+  const task = makeTask('route-project', {
+    project_id: 'project-one', origin_node_id: 'node-origin', executor_node_id: 'node-owner',
+    execution_policy: { mode: 'project-owner' },
+  });
+  assert.equal(task.project_id, 'project-one');
+  assert.equal(task.executor_node_id, 'node-owner');
+  assert.equal(task.execution_policy_snapshot.mode, 'project-owner');
+  assert.equal(task.execution_policy_snapshot.executor_node_id, 'node-owner');
+  assert.equal(claimTag('route-project', 'machine:wrong', { node_id: 'node-wrong' }), null);
+  assert.equal(repo.get(task.task_id).status, 'queued');
+  assert.ok(claimTag('route-project', 'machine:owner', { node_id: 'node-owner' }));
+});
+
 test('creates tasks with defaults and records the creation event', () => {
   const task = makeTask('create');
   assert.equal(task.status, 'queued');

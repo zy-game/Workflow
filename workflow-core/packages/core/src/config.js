@@ -67,6 +67,7 @@ export function loadConfig(env = process.env) {
 
   return {
     dataDir,
+    nodeId: text(env, 'WFC_NODE_ID'),
     httpsHost,
     httpsPort: integer(env, 'WFC_HTTPS_PORT', 8710, { max: 65535 }),
     internalHost: '127.0.0.1',

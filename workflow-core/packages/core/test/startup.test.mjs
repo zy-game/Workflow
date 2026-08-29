@@ -103,7 +103,7 @@ test('Core composes Bridge routes with the shared schema and keeps generic claim
     });
     assert.equal(registration.status, 200);
     assert.equal((await registration.json()).worker.worker_id, 'startup-bridge');
-    assert.deepEqual(runtime.coreDatabase.integrityCheck(), { ok: true, version: 14 });
+    assert.deepEqual(runtime.coreDatabase.integrityCheck(), { ok: true, version: 15 });
 
     const genericClaim = await fetch(`http://127.0.0.1:${publicPort}/api/v1/tasks/claim`, {
       method: 'POST',

@@ -4,6 +4,7 @@ import { access, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { afterEach, test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore from '@deepseek-ai/dsh-session'
@@ -144,7 +145,7 @@ test('migrates a session log and verifies its attachment and SQLite invariants',
   assert.deepEqual(result.sqlite.counts, { persistence_state: 1, sessions: 1, events: 6 })
 })
 
-test('RC.8 rejects an RC.7 session database without mutating its schema stamp', async () => {
+test('rejects an incompatible session database without mutating its schema stamp', async () => {
   const root = await tempRoot('dsh-reject-rc7-')
   const destination = join(root, 'sessions.db')
   const db = new (await import('node:sqlite')).DatabaseSync(destination)
@@ -173,7 +174,7 @@ test('migration descriptors match the RC.8 domain packages locked through DSH', 
     ['@deepseek-ai/dsh-session-projection-cache', 'projectionCacheDomainSpec'],
     ['@deepseek-ai/dsh-message-feedback', 'messageFeedbackDomainSpec'],
   ].map(async ([packageName, exportName]) => {
-    const module = await import(requireFromDsh.resolve(packageName))
+    const module = await import(pathToFileURL(requireFromDsh.resolve(packageName)).href)
     const spec = module[exportName]
     return {
       name: spec.name,

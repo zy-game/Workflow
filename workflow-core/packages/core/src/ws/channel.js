@@ -26,7 +26,7 @@ function scopedProjects(principal, requested) {
 
 export function createWorkerChannel({
   authRepository, taskRepository, interactionRepository, workersRegistry,
-  feishuService = null, credentialCipher = null, log = () => {},
+  feishuService = null, credentialCipher = null, nodeId = null, log = () => {},
 } = {}) {
   const wss = new WebSocketServer({ noServer: true });
   const sessions = new Map();
@@ -75,7 +75,7 @@ export function createWorkerChannel({
   }
 
   function activeTaskCount(workerId) {
-    return taskRepository.activeForWorker(workerId).length;
+    return taskRepository.activeForWorker(workerId, undefined, nodeId).length;
   }
 
   function deliverInteraction(interaction) {
@@ -95,7 +95,7 @@ export function createWorkerChannel({
 
   function resumeSession(workerId) {
     let resumed = 0;
-    for (const task of taskRepository.activeForWorker(workerId)) {
+    for (const task of taskRepository.activeForWorker(workerId, undefined, nodeId)) {
       if (!sendTo(workerId, frame('dispatch', { task, resumed: true }))) break;
       resumed += 1;
     }
@@ -111,6 +111,7 @@ export function createWorkerChannel({
     while (activeTaskCount(workerId) < worker.max_concurrency) {
       const task = taskRepository.claim({
         worker_id: workerId,
+        node_id: nodeId,
         selector: worker.selector,
         project_ids: worker.projects,
         capabilities: worker.capabilities,
@@ -247,7 +248,7 @@ export function createWorkerChannel({
       }
       case 'heartbeat': {
         if (!workersRegistry.heartbeat(session.workerId, { state: payload.state ?? null })) throw new Error('not registered');
-        for (const task of taskRepository.activeForWorker(session.workerId)) {
+        for (const task of taskRepository.activeForWorker(session.workerId, undefined, nodeId)) {
           try { taskRepository.renew(task.task_id, task.claim_token); } catch { /* claim may have expired */ }
         }
         session.ws.send(JSON.stringify(frame('ping', { server_time: new Date().toISOString() })));

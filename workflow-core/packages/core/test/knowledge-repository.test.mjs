@@ -30,6 +30,13 @@ test('resolves projects by machine/path with aliases, creating on demand', () =>
   assert.equal(missing, null);
 });
 
+test('project owner resolver accepts canonical and legacy metadata names', () => {
+  const project = repo.resolveProject({ path: 'E:\\Workflow\\Owner', machine: 'WIN-DEV', metadata: { owner_node_id: 'node-owner' } });
+  assert.equal(repo.getProjectOwnerNodeId(project.id), 'node-owner');
+  repo.updateProject(project.id, { metadata: { ownerNodeId: 'node-legacy' } }, { expectedRevision: project.revision });
+  assert.equal(repo.getProjectOwnerNodeId(project.id), 'node-legacy');
+});
+
 test('memories round-trip with tags, FTS search in both languages, and revision conflicts', () => {
   const project = repo.resolveProject({ path: 'E:\\Workflow\\App', machine: 'WIN-DEV' });
   const created = repo.createMemory({

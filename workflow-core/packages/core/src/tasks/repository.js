@@ -21,7 +21,10 @@ function taskFromRow(row) {
     priority: Number(row.priority),
     status: row.status,
     created_by: row.created_by,
+    origin_node_id: row.origin_node_id,
     project_id: row.project_id,
+    executor_node_id: row.executor_node_id,
+    execution_policy_snapshot: JSON.parse(row.execution_policy_snapshot_json || row.execution_policy_json || '{}'),
     agent_id: row.agent_id,
     backend_kind: row.backend_kind,
     requested_backend_kind: row.requested_backend_kind,
@@ -56,7 +59,7 @@ function eventFromRow(row) {
 export class TaskRepository {
   // Accepts either a shared CoreDatabase ({ coreDb }) or its own data
   // directory; every repository over one core.db must share one handle.
-  constructor({ coreDb, dataDir, dbFile, busyTimeoutMs, claimTimeoutMs = DEFAULT_CLAIM_TIMEOUT_MS } = {}) {
+  constructor({ coreDb, dataDir, dbFile, busyTimeoutMs, claimTimeoutMs = DEFAULT_CLAIM_TIMEOUT_MS, nodeId = null } = {}) {
     if (coreDb) {
       this.db = coreDb.db;
       this.ownsDb = false;
@@ -66,6 +69,7 @@ export class TaskRepository {
       this.ownsDb = true;
     }
     this.claimTimeoutMs = claimTimeoutMs;
+    this.nodeId = nodeId == null ? null : String(nodeId);
     this.eventListeners = [];
   }
 
@@ -100,7 +104,8 @@ export class TaskRepository {
   create(input) {
     const {
       type, title = null, brief, priority = DEFAULT_PRIORITY, created_by,
-      project_id = null, worker_selector = {}, dependencies = [], idempotency_key = null,
+      project_id = null, origin_node_id = null, executor_node_id = null,
+      worker_selector = {}, dependencies = [], idempotency_key = null,
       max_attempts = DEFAULT_MAX_ATTEMPTS,
       agent_id = null, session_ref = null,
       backend_kind = null, required_capabilities = [], execution_policy = {},
@@ -141,17 +146,21 @@ export class TaskRepository {
           throw error;
         }
       }
+      const resolvedOrigin = origin_node_id || this.nodeId || created_by;
+      const resolvedProject = project_id || 'default';
+      const resolvedExecutor = executor_node_id || (resolvedProject === 'default' ? resolvedOrigin : null);
+      const policySnapshot = { ...execution_policy, project_id: resolvedProject, origin_node_id: resolvedOrigin, executor_node_id: resolvedExecutor };
       const taskId = `t-${crypto.randomUUID()}`;
       this.db.prepare(`
         INSERT INTO tasks (
-          task_id, type, title, brief_json, priority, status, created_by, project_id,
-          worker_selector_json, dependencies_json, idempotency_key, attempts, max_attempts,
+          task_id, type, title, brief_json, priority, status, created_by, origin_node_id, project_id,
+          executor_node_id, execution_policy_snapshot_json, worker_selector_json, dependencies_json, idempotency_key, attempts, max_attempts,
           agent_id, session_ref, backend_kind, requested_backend_kind,
           required_capabilities_json, execution_policy_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        taskId, type, title, JSON.stringify(brief), priorityValue, created_by, project_id,
-        JSON.stringify(selector), JSON.stringify([...new Set(dependencies)]),
+        taskId, type, title, JSON.stringify(brief), priorityValue, created_by, resolvedOrigin, resolvedProject,
+        resolvedExecutor, JSON.stringify(policySnapshot), JSON.stringify(selector), JSON.stringify([...new Set(dependencies)]),
         idempotency_key, attemptsLimit, agent_id, session_ref,
         backend_kind, backend_kind, JSON.stringify([...new Set(required_capabilities)]),
         JSON.stringify(execution_policy), now, now,
@@ -178,13 +187,16 @@ export class TaskRepository {
     ).all(...args, bounded).map(taskFromRow);
   }
 
-  activeForWorker(workerId, now = new Date().toISOString()) {
+  activeForWorker(workerId, now = new Date().toISOString(), nodeId = null) {
+    const effectiveNodeId = nodeId ?? this.nodeId;
+    const nodeClause = effectiveNodeId == null ? '' : ' AND (executor_node_id IS NULL OR executor_node_id = ?)';
+    const values = effectiveNodeId == null ? [workerId, now] : [workerId, now, String(effectiveNodeId)];
     return this.db.prepare(`
       SELECT * FROM tasks
       WHERE claim_worker_id = ? AND status IN ('dispatched','running','awaiting_input')
-        AND lease_deadline IS NOT NULL AND lease_deadline > ?
+        AND lease_deadline IS NOT NULL AND lease_deadline > ?${nodeClause}
       ORDER BY started_at ASC, created_at ASC
-    `).all(workerId, now).map(taskFromRow);
+    `).all(...values).map(taskFromRow);
   }
 
   #dependenciesMet(taskId) {
@@ -201,7 +213,7 @@ export class TaskRepository {
   // hands the oldest priority-ordered queued task whose dependencies are done
   // to the claiming worker under a fresh lease.
   claim({
-    worker_id, selector = null, project_ids = null, project_id = undefined,
+    worker_id, node_id = null, selector = null, project_ids = null, project_id = undefined,
     capabilities = [], backends = [],
   } = {}) {
     if (!worker_id || typeof worker_id !== 'string') throw new TypeError('worker_id is required');
@@ -240,10 +252,13 @@ export class TaskRepository {
       for (const candidate of candidates) {
         const task = this.get(candidate.task_id);
         if (!this.#dependenciesMet(task.task_id)) continue;
+        if (task.executor_node_id && node_id && task.executor_node_id !== node_id) continue;
+        if (task.executor_node_id && !node_id && this.nodeId && task.executor_node_id !== this.nodeId) continue;
         if (selector && !selectorMatches(task.worker_selector, selector)) continue;
         if (Array.isArray(project_ids)) {
           const allowed = project_ids.map(String);
-          if (task.project_id && !allowed.includes('*') && !allowed.includes(task.project_id)) continue;
+          const isDefaultTask = task.project_id === 'default';
+          if (task.project_id && !isDefaultTask && !allowed.includes('*') && !allowed.includes(task.project_id)) continue;
         }
         if (project_id !== undefined && task.project_id !== project_id) continue;
         const required = new Set(task.required_capabilities);

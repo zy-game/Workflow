@@ -11,8 +11,8 @@ test('fresh Core schema contains only Worker execution state', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-schema-'));
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.equal(CORE_DB_SCHEMA_VERSION, 14);
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 14 });
+    assert.equal(CORE_DB_SCHEMA_VERSION, 15);
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 15 });
 
     const tables = new Set(core.db.prepare(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -46,12 +46,12 @@ test('Core repairs server settings on a current-version database from a pre-rele
   old.exec(`
     CREATE TABLE workers (worker_id TEXT PRIMARY KEY);
     CREATE TABLE enrollments (code TEXT PRIMARY KEY);
-    PRAGMA user_version = 14;
+    PRAGMA user_version = 15;
   `);
   old.close();
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 14 });
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 15 });
     assert.ok(core.db.prepare(
       "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'server_settings'",
     ).get());
@@ -106,7 +106,7 @@ test('Core migrates v13 Worker data to the Bridge-capable schema', () => {
   old.close();
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 14 });
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 15 });
     const worker = core.db.prepare('SELECT transport, last_pull_at, bridge_protocol_version FROM workers WHERE worker_id = ?').get('worker-1');
     assert.equal(worker.transport, null);
     assert.equal(worker.last_pull_at, null);
@@ -125,6 +125,36 @@ test('Core migrates v13 Worker data to the Bridge-capable schema', () => {
   }
 });
 
+test('Core migrates v14 task routing fields and preserves legacy ownership fallback', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-v14-schema-'));
+  const file = path.join(dir, 'core.db');
+  const old = new DatabaseSync(file);
+  old.exec(`
+    CREATE TABLE tasks (
+      task_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      project_id TEXT,
+      execution_policy_json TEXT NOT NULL DEFAULT '{}'
+    );
+    INSERT INTO tasks(task_id, status, created_by, execution_policy_json)
+      VALUES ('task-v14', 'done', 'account:legacy', '{"mode":"legacy"}');
+    PRAGMA user_version = 14;
+  `);
+  old.close();
+  const core = new CoreDatabase({ dataDir: dir });
+  try {
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 15 });
+    const task = core.db.prepare('SELECT origin_node_id, project_id, executor_node_id, execution_policy_snapshot_json FROM tasks WHERE task_id = ?').get('task-v14');
+    assert.equal(task.origin_node_id, 'account:legacy');
+    assert.equal(task.project_id, null);
+    assert.equal(task.executor_node_id, 'account:legacy');
+    assert.deepEqual(JSON.parse(task.execution_policy_snapshot_json), { mode: 'legacy' });
+  } finally {
+    core.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 test('Core rejects unsupported legacy databases instead of partially migrating them', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-old-schema-'));
   const file = path.join(dir, 'core.db');

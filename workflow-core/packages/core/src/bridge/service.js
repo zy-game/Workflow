@@ -132,6 +132,7 @@ export function createBridgeService({
   workersRegistry,
   taskRepository,
   interactionRepository,
+  nodeId = null,
   now = () => new Date(),
   log = () => {},
 } = {}) {
@@ -266,7 +267,7 @@ export function createBridgeService({
         fail('BRIDGE_NOT_REGISTERED', 'bridge is not registered');
       }
       const current = workersRegistry.get(bridgeId) ?? worker;
-      const claims = taskRepository.activeForWorker(bridgeId).map((task) => ({
+      const claims = taskRepository.activeForWorker(bridgeId, undefined, nodeId).map((task) => ({
         ...taskResponse(task),
         resumed: true,
       }));
@@ -274,6 +275,7 @@ export function createBridgeService({
         while (claims.length < current.max_concurrency) {
           const task = taskRepository.claim({
             worker_id: bridgeId,
+            node_id: nodeId,
             selector: current.selector,
             project_ids: current.projects,
             capabilities: current.capabilities,
