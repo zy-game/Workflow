@@ -11,13 +11,13 @@ test('fresh Core schema contains only Worker execution state', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-schema-'));
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.equal(CORE_DB_SCHEMA_VERSION, 17);
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 17 });
+    assert.equal(CORE_DB_SCHEMA_VERSION, 18);
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 18 });
 
     const tables = new Set(core.db.prepare(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).all().map((row) => row.name));
-    for (const required of ['tasks', 'workers', 'interactions', 'task_events', 'bridge_requests', 'server_settings', 'peer_nodes', 'peer_sync_outbox', 'peer_sync_inbox', 'peer_sync_cursors']) {
+    for (const required of ['tasks', 'workers', 'interactions', 'task_events', 'bridge_requests', 'server_settings', 'peer_nodes', 'peer_sync_outbox', 'peer_relay_outbox', 'peer_sync_inbox', 'peer_sync_cursors']) {
       assert.ok(tables.has(required), `missing ${required}`);
     }
     for (const obsolete of ['pending_approvals', 'cli_clients', 'cli_conversations']) {
@@ -46,7 +46,7 @@ test('Core repairs server settings on a current-version database from a pre-rele
   old.exec(`
     CREATE TABLE workers (worker_id TEXT PRIMARY KEY);
     CREATE TABLE enrollments (code TEXT PRIMARY KEY);
-    PRAGMA user_version = 17;
+    PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION};
   `);
   old.close();
   const core = new CoreDatabase({ dataDir: dir });
@@ -55,7 +55,7 @@ test('Core repairs server settings on a current-version database from a pre-rele
     assert.ok(core.db.prepare(
       "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'server_settings'",
     ).get());
-    for (const table of ['peer_nodes', 'peer_sync_outbox', 'peer_sync_inbox', 'peer_sync_cursors']) {
+    for (const table of ['peer_nodes', 'peer_sync_outbox', 'peer_relay_outbox', 'peer_sync_inbox', 'peer_sync_cursors']) {
       assert.ok(core.db.prepare(
         "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?",
       ).get(table), `missing ${table}`);

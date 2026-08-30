@@ -194,6 +194,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       taskRepository,
       knowledgeRepository,
       signingKey: { privateKey: syncKeyPair.privateKey, publicKeyBase64: syncKeyPair.publicKeyBase64 },
+      relay: config.peerRelay,
     });
     const taskCreationFacade = new TaskCreationFacade({ taskRepository, knowledgeRepository, nodeId: nodeIdentity.nodeId });
     workflowAgent = new WorkflowAgent({ taskRepository, taskCreationFacade, projectAgentsRegistry, knowledgeRepository, log });

@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { parseCookies, serializeSessionCookie, serializeSessionCookieClear, SESSION_COOKIE_NAME, verifyPassword } from '../auth/crypto.js';
+import { NODE_ID_PATTERN } from '../node-identity.js';
 import { frame } from '@workflow-core/shared';
 import { ADMIN_HTML } from '../admin/console.js';
 import { TaskRoutingError } from '../tasks/creation-facade.js';
@@ -615,12 +616,26 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     router.add('POST', '/api/v1/peer/sync/pull', (req, res, body) => {
       const node = peerIdentity(req);
       peerSyncService.requireActivePeer(node);
-      const events = peerSyncService.eventsSince(body.since_seq ?? 0, { limit: body.limit });
+      const origin = body.origin ?? null;
+      if (origin != null && !NODE_ID_PATTERN.test(String(origin))) {
+        throw new HttpError(400, 'invalid_origin', 'origin must be a node id');
+      }
+      const since = Number(body.since_seq ?? 0);
+      const events = peerSyncService.eventsSince(since, { limit: body.limit, origin });
+      // An empty page must never move the cursor backwards: pruning may have
+      // removed everything at or below the caller's position.
+      const head = origin == null ? peerSyncService.headSeq() : 0;
       return {
         ok: true,
+        origin: origin ?? null,
         events,
-        next_seq: events.length ? events[events.length - 1].seq : peerSyncService.headSeq(),
+        next_seq: events.length ? events[events.length - 1].seq : Math.max(since, head),
       };
+    });
+
+    router.add('GET', '/api/v1/peer/sync/origins', (req) => {
+      peerIdentity(req);
+      return { ok: true, origins: peerSyncService.relayOrigins() };
     });
 
     router.add('POST', '/api/v1/peer/sync/push', (req, res, body) => {
@@ -633,7 +648,7 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
 
     router.add('POST', '/api/v1/peer/sync/ack', (req, res, body) => {
       const node = peerIdentity(req);
-      return { ok: true, cursor: peerSyncService.recordAck(node, body.seq) };
+      return { ok: true, cursor: peerSyncService.recordAck(node, body.seq, body.origin ?? '') };
     });
 
     router.add('GET', '/api/v1/peer/sync/status', (req) => {

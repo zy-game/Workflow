@@ -5,7 +5,7 @@ import { DEFAULT_PRIORITY, PRIORITY_MAX, PRIORITY_MIN } from '@workflow-core/sha
 import { initializeDatabase, transaction } from './base.js';
 
 export const CORE_DB_FILE = 'core.db';
-export const CORE_DB_SCHEMA_VERSION = 17;
+export const CORE_DB_SCHEMA_VERSION = 18;
 
 // Shared DDL for the peer-sync tables. IF NOT EXISTS keeps it usable for
 // fresh schemas, current-version repair, and every migration branch.
@@ -33,6 +33,18 @@ const PEER_SYNC_SCHEMA_SQL = `
     sig TEXT
   );
   CREATE INDEX IF NOT EXISTS peer_sync_outbox_origin_idx ON peer_sync_outbox(origin_node_id, seq);
+  CREATE TABLE IF NOT EXISTS peer_relay_outbox (
+    origin_node_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    event_id TEXT NOT NULL UNIQUE,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    sig TEXT,
+    PRIMARY KEY (origin_node_id, seq)
+  );
   CREATE TABLE IF NOT EXISTS peer_sync_inbox (
     event_id TEXT PRIMARY KEY,
     origin_node_id TEXT NOT NULL,
@@ -48,10 +60,12 @@ const PEER_SYNC_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS peer_sync_inbox_origin_idx ON peer_sync_inbox(origin_node_id, origin_seq);
   CREATE TABLE IF NOT EXISTS peer_sync_cursors (
-    peer_node_id TEXT PRIMARY KEY,
+    peer_node_id TEXT NOT NULL,
+    origin_node_id TEXT NOT NULL DEFAULT '',
     inbound_cursor INTEGER NOT NULL DEFAULT 0,
     outbound_acked_seq INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (peer_node_id, origin_node_id)
   );
 `;
 
@@ -280,13 +294,56 @@ function createCurrentSchema(db) {
     );
     CREATE INDEX peer_sync_inbox_origin_idx ON peer_sync_inbox(origin_node_id, origin_seq);
 
+    CREATE TABLE peer_relay_outbox (
+      origin_node_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      event_id TEXT NOT NULL UNIQUE,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      sig TEXT,
+      PRIMARY KEY (origin_node_id, seq)
+    );
+
     CREATE TABLE peer_sync_cursors (
-      peer_node_id TEXT PRIMARY KEY,
+      peer_node_id TEXT NOT NULL,
+      origin_node_id TEXT NOT NULL DEFAULT '',
       inbound_cursor INTEGER NOT NULL DEFAULT 0,
       outbound_acked_seq INTEGER NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (peer_node_id, origin_node_id)
     );
   `);
+}
+
+// v18 cursor shape: inbound/outbound cursors become per (peer, origin)
+// streams so one relay can carry many origins' event streams.
+function migrateCursorsToOriginStreams(db) {
+  const hasOriginColumn = db.prepare('PRAGMA table_info(peer_sync_cursors)').all()
+    .some((column) => column.name === 'origin_node_id');
+  if (hasOriginColumn) return;
+  db.exec(`
+    CREATE TABLE peer_sync_cursors_migrated (
+      peer_node_id TEXT NOT NULL,
+      origin_node_id TEXT NOT NULL DEFAULT '',
+      inbound_cursor INTEGER NOT NULL DEFAULT 0,
+      outbound_acked_seq INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (peer_node_id, origin_node_id)
+    );
+    INSERT INTO peer_sync_cursors_migrated
+      SELECT peer_node_id, '', inbound_cursor, outbound_acked_seq, updated_at FROM peer_sync_cursors;
+    DROP TABLE peer_sync_cursors;
+    ALTER TABLE peer_sync_cursors_migrated RENAME TO peer_sync_cursors;
+  `);
+}
+
+// Current-version repair: prerelease databases may predate the v18 shape.
+function repairCursorsTable(db) {
+  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'peer_sync_cursors'").get()) return;
+  migrateCursorsToOriginStreams(db);
 }
 
 export function createSchema(db) {
@@ -361,11 +418,20 @@ export function createSchema(db) {
         try { db.exec('ALTER TABLE peer_nodes ADD COLUMN public_key TEXT'); } catch { /* exists */ }
         try { db.exec('ALTER TABLE peer_sync_outbox ADD COLUMN sig TEXT'); } catch { /* exists */ }
       }
+      repairCursorsTable(db);
+      return;
+    }
+    if (current === 17) {
+      db.exec(PEER_SYNC_SCHEMA_SQL);
+      migrateCursorsToOriginStreams(db);
+      db.exec(`PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION}`);
       return;
     }
     if (current === 16) {
+      db.exec(PEER_SYNC_SCHEMA_SQL);
       db.exec('ALTER TABLE peer_nodes ADD COLUMN public_key TEXT');
       db.exec('ALTER TABLE peer_sync_outbox ADD COLUMN sig TEXT');
+      migrateCursorsToOriginStreams(db);
       db.exec(`PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION}`);
       return;
     }

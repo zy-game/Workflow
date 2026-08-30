@@ -72,7 +72,7 @@ export class PeerSyncService {
   // Shares the CoreDatabase handle with the task repository so outbox writes
   // join the domain transaction that produced them. The knowledge repository
   // is optional and enables project-registry synchronization.
-  constructor({ coreDb, nodeId, taskRepository, knowledgeRepository = null, signingKey = null, now = () => new Date().toISOString() } = {}) {
+  constructor({ coreDb, nodeId, taskRepository, knowledgeRepository = null, signingKey = null, relay = false, now = () => new Date().toISOString() } = {}) {
     if (!coreDb?.db) throw new TypeError('coreDb is required');
     if (!NODE_ID_PATTERN.test(String(nodeId ?? ''))) throw new TypeError('a valid nodeId is required');
     if (!taskRepository) throw new TypeError('taskRepository is required');
@@ -81,6 +81,7 @@ export class PeerSyncService {
     this.tasks = taskRepository;
     this.knowledge = knowledgeRepository;
     this.signingKey = signingKey;
+    this.relay = Boolean(relay);
     this.now = now;
     this.unsubscribe = taskRepository.onEvent((event) => this.#onTaskEvent(event));
     this.unsubscribeKnowledge = knowledgeRepository
@@ -193,12 +194,31 @@ export class PeerSyncService {
     return Number(this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS head FROM peer_sync_outbox').get().head);
   }
 
-  eventsSince(sinceSeq, { limit = 500 } = {}) {
+  // Without `origin`, serves this node's own outbox. With `origin`, serves the
+  // relay stream for that origin node (relay mode): events are forwarded
+  // verbatim, preserving the origin's seq and signature.
+  eventsSince(sinceSeq, { limit = 500, origin = null } = {}) {
     const cursor = Number(sinceSeq ?? 0);
     const bounded = Math.min(2000, Math.max(1, Number(limit) || 500));
+    if (origin != null) {
+      return this.db.prepare(
+        'SELECT * FROM peer_relay_outbox WHERE origin_node_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?',
+      ).all(String(origin), cursor, bounded).map(wireEventFromRow);
+    }
     return this.db.prepare(
       'SELECT * FROM peer_sync_outbox WHERE seq > ? ORDER BY seq ASC LIMIT ?',
     ).all(cursor, bounded).map(wireEventFromRow);
+  }
+
+  // Origins available through the relay stream, with their pinned public keys
+  // so pullers can verify forwarded signatures without contacting the origin.
+  relayOrigins() {
+    return this.db.prepare(`
+      SELECT DISTINCT r.origin_node_id AS node_id, p.public_key
+      FROM peer_relay_outbox r
+      LEFT JOIN peer_nodes p ON p.node_id = r.origin_node_id
+      ORDER BY r.origin_node_id
+    `).all().map((row) => ({ node_id: row.node_id, public_key: row.public_key ?? null }));
   }
 
   // --- peer registry ---
@@ -314,33 +334,42 @@ export class PeerSyncService {
   // --- ingest ---
 
   // Applies a batch of events pushed by a peer. The caller's node identity is
-  // transport-verified; events claiming a different origin are rejected.
-  // Each event commits independently so one malformed event cannot roll back
-  // the rest of the batch.
+  // transport-verified; events claiming another origin are accepted only as
+  // relayed traffic and must verify against the ORIGIN's pinned key. Each
+  // event commits independently so one malformed event cannot roll back the
+  // rest of the batch.
   ingest({ from_node, events }) {
     const peer = this.requireActivePeer(from_node);
     const results = [];
     let applied = 0;
-    let maxSeq = 0;
+    let rejected = 0;
+    let conflicts = 0;
+    const streamHeads = new Map();
     for (const event of Array.isArray(events) ? events : []) {
       const result = this.#ingestEvent(peer, event);
       results.push(result);
       if (result.status === 'applied' || result.status === 'duplicate') {
         applied += 1;
-        maxSeq = Math.max(maxSeq, Number(event.seq) || 0);
+        const origin = event.origin_node_id;
+        const stream = origin === peer.node_id ? '' : origin;
+        streamHeads.set(stream, Math.max(streamHeads.get(stream) ?? 0, Number(event.seq) || 0));
+      } else if (result.status === 'rejected') {
+        rejected += 1;
+      } else if (result.status === 'conflict') {
+        conflicts += 1;
       }
     }
-    if (maxSeq > 0) {
+    for (const [stream, head] of streamHeads) {
       this.db.prepare(`
-        INSERT INTO peer_sync_cursors (peer_node_id, inbound_cursor, outbound_acked_seq, updated_at)
-        VALUES (?, ?, 0, ?)
-        ON CONFLICT(peer_node_id) DO UPDATE SET
+        INSERT INTO peer_sync_cursors (peer_node_id, origin_node_id, inbound_cursor, outbound_acked_seq, updated_at)
+        VALUES (?, ?, ?, 0, ?)
+        ON CONFLICT(peer_node_id, origin_node_id) DO UPDATE SET
           inbound_cursor = MAX(inbound_cursor, excluded.inbound_cursor),
           updated_at = excluded.updated_at
-      `).run(peer.node_id, maxSeq, this.now());
+      `).run(peer.node_id, stream, head, this.now());
     }
     this.#touchPeer(peer.node_id);
-    return { results, applied, rejected: results.filter((r) => r.status === 'rejected').length, conflicts: results.filter((r) => r.status === 'conflict').length };
+    return { results, applied, rejected, conflicts };
   }
 
   #ingestEvent(peer, event) {
@@ -356,13 +385,19 @@ export class PeerSyncService {
     if (!Number.isInteger(Number(seq)) || Number(seq) < 1) {
       return { event_id, status: 'rejected', detail: 'seq must be a positive integer' };
     }
-    if (origin_node_id !== fromNode) {
-      return { event_id, status: 'rejected', detail: 'event origin does not match the authenticated peer' };
+    const relayed = origin_node_id !== fromNode;
+    // Relayed events (origin != caller) are how a store-and-forward relay
+    // serves unreachable origins; they must verify against the ORIGIN's
+    // pinned key so the relay cannot forge or tamper. A puller that has never
+    // pinned the origin's key fails closed instead of trusting the relay.
+    if (relayed && !this.relayForwardable(origin_node_id)) {
+      return { event_id, status: 'rejected', detail: { reason: 'origin_key_unknown' } };
     }
-    // Once a peer's key is pinned, every event must carry a valid signature
-    // over the canonical event bytes; tampered or downgraded events fail.
-    if (peer.public_key) {
-      const verified = verifyEvent(publicKeyFromBase64(peer.public_key), {
+    const verificationKey = relayed
+      ? this.getPeer(origin_node_id)?.public_key
+      : peer.public_key;
+    if (verificationKey) {
+      const verified = verifyEvent(publicKeyFromBase64(verificationKey), {
         event_id,
         seq: Number(seq),
         origin_node_id,
@@ -395,23 +430,50 @@ export class PeerSyncService {
         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '{}', ?, NULL)
         ON CONFLICT(event_id) DO NOTHING
       `).run(
-        event_id, fromNode, Number(seq), entity_type, entity_id,
+        event_id, origin_node_id, Number(seq), entity_type, entity_id,
         operation, JSON.stringify(payload), receivedAt,
       );
-      if (!inserted.changes) return { status: 'duplicate', detail: null };
+      if (!inserted.changes) {
+        this.#relayStore(event, origin_node_id);
+        return { status: 'duplicate', detail: null };
+      }
 
       const detail = entity_type === 'task'
         ? (operation === 'create'
           ? this.#applyTaskCreate(fromNode, payload)
-          : this.#applyTaskUpdate(fromNode, entity_id, payload))
-        : this.#applyProjectEvent(fromNode, entity_id, operation, payload);
+          : this.#applyTaskUpdate(origin_node_id, entity_id, payload))
+        : this.#applyProjectEvent(origin_node_id, entity_id, operation, payload);
       const timestamp = this.now();
       this.db.prepare(
         'UPDATE peer_sync_inbox SET status = ?, detail_json = ?, applied_at = ? WHERE event_id = ?',
       ).run(detail.status, JSON.stringify(detail.detail ?? {}), detail.status === 'applied' ? timestamp : null, event_id);
+      // Relay mode: forward direct events verbatim so unreachable peers can
+      // pull them later. Relayed events are never re-relayed (no amplification).
+      if (!relayed && ['applied', 'duplicate'].includes(detail.status)) {
+        this.#relayStore(event, origin_node_id);
+      }
       return detail;
     });
     return { event_id, ...outcome };
+  }
+
+  // A relayed event is ingestable only when this node already pins the
+  // origin's public key; otherwise the relay would be trusted to introduce
+  // arbitrary origins.
+  relayForwardable(originNodeId) {
+    return Boolean(this.getPeer(originNodeId)?.public_key);
+  }
+
+  #relayStore(event, originNodeId) {
+    if (!this.relay || event.origin_node_id !== originNodeId) return;
+    this.db.prepare(`
+      INSERT INTO peer_relay_outbox (origin_node_id, seq, event_id, entity_type, entity_id, operation, payload_json, created_at, sig)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(origin_node_id, seq) DO NOTHING
+    `).run(
+      originNodeId, Number(event.seq), event.event_id, event.entity_type, event.entity_id,
+      event.operation, JSON.stringify(event.payload ?? {}), event.created_at ?? this.now(), event.sig ?? null,
+    );
   }
 
   // Project events are only credible from the project's owner node; the
@@ -451,9 +513,9 @@ export class PeerSyncService {
     }
   }
 
-  #applyTaskCreate(fromNode, payload) {
+  #applyTaskCreate(originNodeId, payload) {
     try {
-      const { task, idempotent_replay } = this.tasks.createFromSync({ ...payload, synced_from: fromNode });
+      const { task, idempotent_replay } = this.tasks.createFromSync({ ...payload, synced_from: originNodeId });
       return { status: idempotent_replay ? 'duplicate' : 'applied', detail: { task_id: task.task_id } };
     } catch (error) {
       return { status: 'rejected', detail: { reason: error.message } };
@@ -492,9 +554,10 @@ export class PeerSyncService {
 
   // --- acknowledgements ---
 
-  // A peer confirms it has consumed our outbox through `seq`; used later for
-  // outbox pruning. Inbound progress is tracked by ingest itself.
-  recordAck(fromNode, seq) {
+  // A peer confirms it has consumed a stream through `seq`. The empty origin
+  // names this node's own outbox; a non-empty origin names a relay stream.
+  // Inbound progress is tracked by ingest itself.
+  recordAck(fromNode, seq, origin = '') {
     this.requireActivePeer(fromNode);
     const acked = Number(seq);
     if (!Number.isInteger(acked) || acked < 0) {
@@ -503,9 +566,9 @@ export class PeerSyncService {
       throw error;
     }
     this.db.prepare(`
-      INSERT INTO peer_sync_cursors (peer_node_id, inbound_cursor, outbound_acked_seq, updated_at)
-      VALUES (?, 0, ?, ?)
-      ON CONFLICT(peer_node_id) DO UPDATE SET
+      INSERT INTO peer_sync_cursors (peer_node_id, origin_node_id, inbound_cursor, outbound_acked_seq, updated_at)
+      VALUES (?, '', 0, ?, ?)
+      ON CONFLICT(peer_node_id, origin_node_id) DO UPDATE SET
         outbound_acked_seq = MAX(outbound_acked_seq, excluded.outbound_acked_seq),
         updated_at = excluded.updated_at
     `).run(String(fromNode), acked, this.now());
@@ -513,28 +576,51 @@ export class PeerSyncService {
     return this.getCursor(fromNode);
   }
 
-  getCursor(peerNodeId) {
-    const row = this.db.prepare('SELECT * FROM peer_sync_cursors WHERE peer_node_id = ?').get(String(peerNodeId));
-    if (!row) return { peer_node_id: String(peerNodeId), inbound_cursor: 0, outbound_acked_seq: 0, updated_at: null };
+  getCursor(peerNodeId, origin = '') {
+    const row = this.db.prepare(
+      'SELECT * FROM peer_sync_cursors WHERE peer_node_id = ? AND origin_node_id = ?',
+    ).get(String(peerNodeId), String(origin ?? ''));
+    if (!row) return { peer_node_id: String(peerNodeId), origin_node_id: String(origin ?? ''), inbound_cursor: 0, outbound_acked_seq: 0, updated_at: null };
     return {
       peer_node_id: row.peer_node_id,
+      origin_node_id: row.origin_node_id,
       inbound_cursor: Number(row.inbound_cursor),
       outbound_acked_seq: Number(row.outbound_acked_seq),
       updated_at: row.updated_at,
     };
   }
 
-  // Drops outbox events confirmed by every active peer. The slowest active
-  // peer bounds retention; peers registered without a cursor do not constrain
+  // Drops outbox events confirmed by every active peer, and relay-stream
+  // events confirmed by every active puller of that stream. The slowest
+  // consumer bounds retention; peers without a cursor row do not constrain
   // pruning and bootstrap from the live head.
   pruneAcked() {
     const acked = this.db.prepare(`
       SELECT MIN(outbound_acked_seq) AS acked
       FROM peer_sync_cursors c
       JOIN peer_nodes p ON p.node_id = c.peer_node_id AND p.status = 'active'
+      WHERE c.origin_node_id = ''
     `).get().acked;
-    if (!acked) return 0;
-    return this.db.prepare('DELETE FROM peer_sync_outbox WHERE seq <= ?').run(Number(acked)).changes;
+    let pruned = 0;
+    if (acked) {
+      pruned += this.db.prepare('DELETE FROM peer_sync_outbox WHERE seq <= ?').run(Number(acked)).changes;
+    }
+    for (const row of this.db.prepare(
+      'SELECT DISTINCT origin_node_id AS origin FROM peer_relay_outbox',
+    ).all()) {
+      const relayAcked = this.db.prepare(`
+        SELECT MIN(outbound_acked_seq) AS acked
+        FROM peer_sync_cursors c
+        JOIN peer_nodes p ON p.node_id = c.peer_node_id AND p.status = 'active'
+        WHERE c.origin_node_id = ? AND c.outbound_acked_seq > 0
+      `).get(row.origin).acked;
+      if (relayAcked) {
+        pruned += this.db.prepare(
+          'DELETE FROM peer_relay_outbox WHERE origin_node_id = ? AND seq <= ?',
+        ).run(row.origin, Number(relayAcked)).changes;
+      }
+    }
+    return pruned;
   }
 
   get publicKeyBase64() {
@@ -550,6 +636,8 @@ export class PeerSyncService {
       protocol_version: PEER_SYNC_PROTOCOL_VERSION,
       signing: Boolean(this.signingKey),
       public_key: this.publicKeyBase64,
+      relay: this.relay,
+      relay_origins: this.relay ? this.relayOrigins().map((row) => row.node_id) : [],
       head_seq: this.headSeq(),
       peers: this.listPeers(),
       inbox: Object.fromEntries(inbox.map((row) => [row.status, Number(row.count)])),

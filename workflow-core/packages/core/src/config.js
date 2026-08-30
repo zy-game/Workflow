@@ -40,7 +40,16 @@ function peers(env, name) {
     if (!token) throw new Error(`${label}.token is required`);
     if (entry.pull != null && typeof entry.pull !== 'boolean') throw new Error(`${label}.pull must be a boolean`);
     if (entry.push != null && typeof entry.push !== 'boolean') throw new Error(`${label}.push must be a boolean`);
-    return { node_id: nodeId, endpoint: endpoint.origin, token, pull: entry.pull !== false, push: entry.push === true };
+    let origins = [];
+    if (entry.origins != null) {
+      if (!Array.isArray(entry.origins)) throw new Error(`${label}.origins must be an array of node ids`);
+      origins = [...new Set(entry.origins.map((origin) => {
+        const originId = String(origin ?? '');
+        if (!NODE_ID_PATTERN.test(originId)) throw new Error(`${label}.origins entries must match ^[a-z][a-z0-9._-]{2,63}$`);
+        return originId;
+      }))];
+    }
+    return { node_id: nodeId, endpoint: endpoint.origin, token, pull: entry.pull !== false, push: entry.push === true, origins };
   });
 }
 
@@ -113,6 +122,7 @@ export function loadConfig(env = process.env) {
     tls,
     claimTimeoutMs: integer(env, 'WFC_CLAIM_TIMEOUT_MS', 15 * 60 * 1000),
     peerSyncIntervalMs: integer(env, 'WFC_PEER_SYNC_INTERVAL_MS', 15_000, { min: 1_000 }),
+    peerRelay: flag(env, 'WFC_PEER_RELAY'),
     peers: peers(env, 'WFC_PEERS_JSON'),
     knowledgeDb: text(env, 'WFC_KNOWLEDGE_DB')
       ? path.resolve(text(env, 'WFC_KNOWLEDGE_DB'))

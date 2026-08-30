@@ -20,7 +20,7 @@ import { createPeerSyncService } from '../src/sync/service.js';
 
 const nodes = [];
 
-async function startNode(nodeId, { sign = false } = {}) {
+async function startNode(nodeId, { sign = false, relay = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wfc-peer-e2e-${nodeId}-`));
   const auth = new AuthRepository({ dataDir: dir });
   const core = new CoreDatabase({ dataDir: dir });
@@ -33,6 +33,7 @@ async function startNode(nodeId, { sign = false } = {}) {
     taskRepository: tasks,
     knowledgeRepository: knowledge,
     signingKey: keyPair ? { privateKey: keyPair.privateKey, publicKeyBase64: keyPair.publicKeyBase64 } : null,
+    relay,
   });
   const app = createCoreServer({ config: {}, nodeId, authRepository: auth, taskRepository: tasks, peerSyncService: service });
   const server = await app.listen({ host: '127.0.0.1', port: 0, tls: null });
@@ -109,14 +110,18 @@ test('sync client and config reject malformed peer configuration', () => {
   const base = { WFC_DATA_DIR: os.tmpdir(), WFC_ALLOW_PLAIN_HTTP: '1' };
   const peers = loadConfig({
     ...base,
-    WFC_PEERS_JSON: JSON.stringify([{ node_id: 'node-beta', endpoint: 'https://beta.example:8710/', token: 'wfc-peer', push: true }]),
+    WFC_PEERS_JSON: JSON.stringify([{ node_id: 'node-beta', endpoint: 'https://beta.example:8710/', token: 'wfc-peer', push: true, origins: ['node-alpha', 'node-alpha'] }]),
   }).peers;
-  assert.deepEqual(peers, [{ node_id: 'node-beta', endpoint: 'https://beta.example:8710', token: 'wfc-peer', pull: true, push: true }]);
+  assert.deepEqual(peers, [{ node_id: 'node-beta', endpoint: 'https://beta.example:8710', token: 'wfc-peer', pull: true, push: true, origins: ['node-alpha'] }]);
   assert.deepEqual(loadConfig({ ...base, WFC_PEERS_JSON: JSON.stringify([{ node_id: 'node-beta', endpoint: 'https://beta.example', token: 't', pull: false }]) }).peers,
-    [{ node_id: 'node-beta', endpoint: 'https://beta.example', token: 't', pull: false, push: false }]);
+    [{ node_id: 'node-beta', endpoint: 'https://beta.example', token: 't', pull: false, push: false, origins: [] }]);
   assert.throws(
     () => loadConfig({ ...base, WFC_PEERS_JSON: '[{"node_id":"node-beta","endpoint":"https://x","token":"t","push":"yes"}]' }),
     /push must be a boolean/,
+  );
+  assert.throws(
+    () => loadConfig({ ...base, WFC_PEERS_JSON: '[{"node_id":"node-beta","endpoint":"https://x","token":"t","origins":["Bad"]}]' }),
+    /origins entries must match/,
   );
 
   assert.throws(
@@ -356,6 +361,7 @@ test('signed nodes converge: keys pin via handshake and tampering fails closed',
     type: 'code', brief: { prompt: 'signed delegation' }, created_by: 'account:alice',
     project_id: 'project-s', origin_node_id: 'node-alpha', executor_node_id: 'node-beta',
   }).task;
+  await alphaClient.tick();
   await betaClient.tick();
   await waitFor('delegated projection on beta', () => beta.tasks.get(delegated.task_id));
   const claimed = await waitFor('claim on beta', () => beta.tasks.claim({
@@ -365,6 +371,73 @@ test('signed nodes converge: keys pin via handshake and tampering fails closed',
   await alphaClient.tick();
   await waitFor('signed completion back on alpha', () => alpha.tasks.get(delegated.task_id)?.status === 'done');
   assert.deepEqual(alpha.tasks.get(delegated.task_id).result, { summary: 'signed done' });
+
+  await alphaClient.stop();
+  await betaClient.stop();
+});
+
+test('a relay carries origin streams between nodes that cannot reach each other', async () => {
+  // All three nodes only ever talk to the relay; alpha and beta are mutually
+  // unreachable and learn each other's data exclusively through it.
+  const relay = await startNode('node-relay', { sign: true, relay: true });
+  const alpha = await startNode('node-alpha', { sign: true });
+  const beta = await startNode('node-beta', { sign: true });
+  relay.tokens['node-alpha'] = relay.auth.createMachineToken({ subject_id: 'node-alpha', role: 'peer', project_ids: [] }).token;
+  relay.tokens['node-beta'] = relay.auth.createMachineToken({ subject_id: 'node-beta', role: 'peer', project_ids: [] }).token;
+
+  const alphaClient = createPeerSyncClient({
+    peerSyncService: alpha.service, nodeId: 'node-alpha', intervalMs: 15_000,
+    peers: [{ node_id: 'node-relay', endpoint: relay.base, token: relay.tokens['node-alpha'], pull: true, push: true, origins: ['node-beta'] }],
+  });
+  const betaClient = createPeerSyncClient({
+    peerSyncService: beta.service, nodeId: 'node-beta', intervalMs: 15_000,
+    peers: [{ node_id: 'node-relay', endpoint: relay.base, token: relay.tokens['node-beta'], pull: true, push: true, origins: ['node-alpha'] }],
+  });
+  alpha.clients.push(alphaClient);
+  beta.clients.push(betaClient);
+  alphaClient.start();
+  betaClient.start();
+
+  // Alpha's decision reaches beta through the relay's alpha stream.
+  const { task } = alpha.tasks.create({
+    type: 'code', brief: { prompt: 'via relay' }, created_by: 'account:alice',
+    project_id: 'default', origin_node_id: 'node-alpha', executor_node_id: 'node-alpha',
+  });
+  await alphaClient.tick();
+  await betaClient.tick();
+  await waitFor('relayed projection on beta', () => beta.tasks.get(task.task_id));
+
+  // The relayed event verified against alpha's pinned key, discovered through
+  // the relay's stream index.
+  assert.equal(beta.service.getPeer('node-alpha').public_key, alpha.service.publicKeyBase64);
+
+  // Beta executes a delegated task; the completion flows back through the
+  // relay's beta stream to alpha.
+  const delegated = alpha.tasks.create({
+    type: 'code', brief: { prompt: 'run on beta' }, created_by: 'account:alice',
+    project_id: 'project-r', origin_node_id: 'node-alpha', executor_node_id: 'node-beta',
+  }).task;
+  await alphaClient.tick();
+  await betaClient.tick();
+  await waitFor('delegated projection on beta', () => beta.tasks.get(delegated.task_id));
+  const claimed = await waitFor('claim on beta', () => beta.tasks.claim({
+    worker_id: 'worker-beta-1', node_id: 'node-beta', backends: [{ kind: 'workflow-jsonl', capabilities: [] }],
+  }));
+  beta.tasks.done(claimed.task_id, claimed.claim_token, { kind: 'done', result: { summary: 'relayed execution' } });
+  await betaClient.tick();
+  await alphaClient.tick();
+  await waitFor('completion relayed back to alpha', () => alpha.tasks.get(delegated.task_id)?.status === 'done');
+  assert.deepEqual(alpha.tasks.get(delegated.task_id).result, { summary: 'relayed execution' });
+  // After convergence both sides hold each other's keys, learned through the relay.
+  assert.equal(alpha.service.getPeer('node-beta').public_key, beta.service.publicKeyBase64);
+  assert.equal(beta.service.getPeer('node-alpha').public_key, alpha.service.publicKeyBase64);
+
+  // The relay is a carrier, not a decision maker: it stored both origins'
+  // verbatim events with their original signatures.
+  assert.equal(relay.service.status().relay, true);
+  assert.deepEqual(relay.service.relayOrigins().map((entry) => entry.node_id).sort(), ['node-alpha', 'node-beta']);
+  assert.ok(relay.service.getCursor('node-alpha').outbound_acked_seq > 0);
+  assert.ok(relay.service.getCursor('node-beta').outbound_acked_seq > 0);
 
   await alphaClient.stop();
   await betaClient.stop();

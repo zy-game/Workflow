@@ -41,6 +41,21 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
     return payload;
   }
 
+  async function get(peer, path) {
+    const response = await fetch(`${peer.endpoint}/api/v1/peer/sync${path}`, {
+      headers: { authorization: `Bearer ${peer.token}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(`peer sync ${path} failed: ${payload.code ?? response.status}`);
+      error.code = payload.code ?? 'PEER_REQUEST_FAILED';
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
   async function syncPeer(peer) {
     if (revoked.has(peer.node_id)) return;
     // Key exchange runs before the first transfer: peers without a pinned
@@ -57,6 +72,7 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
         }
       }
       if (peer.pull !== false) await pullPeer(peer);
+      if (peer.origins?.length) await pullRelayedOrigins(peer);
       if (peer.push) await pushPeer(peer);
     } catch (error) {
       if (error.code === 'PEER_REVOKED') {
@@ -73,21 +89,39 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
         peerSyncService.registerPeer({ node_id: peer.node_id, public_key: handshake.public_key });
       }
       if (peer.pull !== false) await pullPeer(peer);
+      if (peer.origins?.length) await pullRelayedOrigins(peer);
       if (peer.push) await pushPeer(peer);
     }
   }
 
-  async function pullPeer(peer) {
-    let since = peerSyncService.getCursor(peer.node_id).inbound_cursor;
+  async function pullPeer(peer, origin = null) {
+    let since = peerSyncService.getCursor(peer.node_id, origin ?? '').inbound_cursor;
     for (let page = 0; page < MAX_PULL_PAGES; page += 1) {
-      const response = await post(peer, '/pull', { since_seq: since, limit: PULL_PAGE_LIMIT });
+      const response = await post(peer, '/pull', { since_seq: since, origin, limit: PULL_PAGE_LIMIT });
       const events = Array.isArray(response.events) ? response.events : [];
       if (events.length) {
         peerSyncService.ingest({ from_node: peer.node_id, events });
       }
       since = Number(response.next_seq ?? since);
-      await post(peer, '/ack', { seq: since });
+      await post(peer, '/ack', { seq: since, origin });
       if (events.length < PULL_PAGE_LIMIT) break;
+    }
+  }
+
+  // Relayed origins: pin the origin's key from the relay's stream index, then
+  // pull that origin's stream through the relay. Signature verification is
+  // local, so the relay cannot forge or alter what it forwards.
+  async function pullRelayedOrigins(peer) {
+    const wanted = Array.isArray(peer.origins) ? peer.origins : [];
+    if (!wanted.length) return;
+    const index = await get(peer, '/origins');
+    const known = new Map((index.origins ?? []).map((entry) => [entry.node_id, entry.public_key]));
+    for (const origin of wanted) {
+      const publicKey = known.get(origin);
+      if (publicKey && peerSyncService.getPeer(origin)?.public_key !== publicKey) {
+        peerSyncService.registerPeer({ node_id: origin, public_key: publicKey });
+      }
+      await pullPeer(peer, origin);
     }
   }
 

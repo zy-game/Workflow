@@ -271,7 +271,9 @@ Workflow Task Event
 
 第六批：事件签名落地（core.db schema v17，`peer_nodes.public_key` 与 `peer_sync_outbox.sig`）。每个节点在数据目录持久化一把 ed25519 同步密钥（`sync-key.json`，0600），出箱事件按规范化 JSON（键排序）签名，seq 由数据库分配后两阶段补签。公钥经握手交换并双向 pin：首次握手写 pin，此后同一节点 ID 换 key 即拒绝（`PEER_KEY_MISMATCH`）；已 pin 的 peer 推来的事件必须带有效签名，篡改或去签名一律 `bad_signature` 拒绝（fail-closed）。未配置签名密钥的节点保持兼容（不 pin、不验签）。签名是 relay 中继的前置条件：中继转发的远端事件可被接收方直接验证 origin 签名，中继无法篡改。
 
-尚待实现：store-and-forward relay（服务器中继；签名验证已就绪，需定义 via 转发语义与混合游标）。
+第七批：store-and-forward relay 落地（core.db schema v18）。中继节点（`WFC_PEER_RELAY=1`）在 ingest 直推事件时逐字存入 `peer_relay_outbox`（保留 origin 原始 seq 与签名，不重编序列，绝不二次转发）；pull/ack 契约增加 `origin` 参数按 origin 流服务，游标表升级为 (peer, origin) 二维主键；新增 `GET /api/v1/peer/sync/origins` 流索引发 origin 公钥供拉取方 pin。验签始终按事件 origin 的 pin key 进行——中继是搬运工而非信任源，无法伪造或篡改；拉取方未 pin 过 origin key 时对中继流量 fail-closed。中继按最慢活跃拉取方的 ack 游标清理各 origin 流。三节点 e2e 验证：alpha 与 beta 互不可达、只连中继时，任务与执行结果经两条 origin 流双向收敛，且中继完整保留双方原始签名。
+
+阶段 C 至此完整：事件模型、幂等 ingest、双向 pull/push、离线重放、游标与清理、粘性撤销、项目注册表同步、owner 路由闭环、执行状态可见性、事件签名、store-and-forward relay。后续增强（非阻塞）：origin key 的带外轮换流程、中继流按拉取方授权的细粒度隔离。
 
 ### 阶段 D：执行路由（已完成）
 

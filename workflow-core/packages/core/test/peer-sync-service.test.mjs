@@ -240,10 +240,10 @@ test('outbox paging stops at the limit and acks track per-peer progress', () => 
     assert.equal(secondPage.length, 2);
 
     assert.deepEqual(value.alpha.service.recordAck('node-beta', 4), {
-      peer_node_id: 'node-beta', inbound_cursor: 0, outbound_acked_seq: 4, updated_at: value.alpha.service.getCursor('node-beta').updated_at,
+      peer_node_id: 'node-beta', origin_node_id: '', inbound_cursor: 0, outbound_acked_seq: 4, updated_at: value.alpha.service.getCursor('node-beta').updated_at,
     });
     assert.deepEqual(value.alpha.service.getCursor('node-gamma'), {
-      peer_node_id: 'node-gamma', inbound_cursor: 0, outbound_acked_seq: 0, updated_at: null,
+      peer_node_id: 'node-gamma', origin_node_id: '', inbound_cursor: 0, outbound_acked_seq: 0, updated_at: null,
     });
     const head = value.alpha.service.headSeq();
     assert.equal(head, 5);
