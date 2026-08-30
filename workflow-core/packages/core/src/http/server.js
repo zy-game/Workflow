@@ -600,11 +600,13 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
         endpoint: body.endpoint ?? null,
         display_name: body.display_name ?? null,
         protocol_version: body.protocol_version ?? undefined,
+        public_key: body.public_key ?? undefined,
       });
       return {
         ok: true,
         node_id: nodeId,
         peer,
+        public_key: peerSyncService.publicKeyBase64,
         protocol_version: peerSyncService.status().protocol_version,
         head_seq: peerSyncService.headSeq(),
       };

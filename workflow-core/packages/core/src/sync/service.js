@@ -8,6 +8,7 @@
 import crypto from 'node:crypto';
 import { transaction } from '../db/base.js';
 import { NODE_ID_PATTERN } from '../node-identity.js';
+import { publicKeyFromBase64, signEvent, verifyEvent } from './sync-key.js';
 
 export const PEER_SYNC_PROTOCOL_VERSION = 1;
 
@@ -33,6 +34,7 @@ function wireEventFromRow(row) {
     operation: row.operation,
     payload: JSON.parse(row.payload_json || '{}'),
     created_at: row.created_at,
+    sig: row.sig ?? null,
   };
 }
 
@@ -70,7 +72,7 @@ export class PeerSyncService {
   // Shares the CoreDatabase handle with the task repository so outbox writes
   // join the domain transaction that produced them. The knowledge repository
   // is optional and enables project-registry synchronization.
-  constructor({ coreDb, nodeId, taskRepository, knowledgeRepository = null, now = () => new Date().toISOString() } = {}) {
+  constructor({ coreDb, nodeId, taskRepository, knowledgeRepository = null, signingKey = null, now = () => new Date().toISOString() } = {}) {
     if (!coreDb?.db) throw new TypeError('coreDb is required');
     if (!NODE_ID_PATTERN.test(String(nodeId ?? ''))) throw new TypeError('a valid nodeId is required');
     if (!taskRepository) throw new TypeError('taskRepository is required');
@@ -78,6 +80,7 @@ export class PeerSyncService {
     this.nodeId = String(nodeId);
     this.tasks = taskRepository;
     this.knowledge = knowledgeRepository;
+    this.signingKey = signingKey;
     this.now = now;
     this.unsubscribe = taskRepository.onEvent((event) => this.#onTaskEvent(event));
     this.unsubscribeKnowledge = knowledgeRepository
@@ -162,13 +165,28 @@ export class PeerSyncService {
   }
 
   #publish({ entity_type, entity_id, operation, payload }) {
-    this.db.prepare(`
+    // Two-phase insert: the outbox seq is assigned by SQLite, and the
+    // signature must cover the final event including that seq. Both
+    // statements join the caller's transaction.
+    const eventId = `pse-${crypto.randomUUID()}`;
+    const createdAt = this.now();
+    const inserted = this.db.prepare(`
       INSERT INTO peer_sync_outbox (event_id, origin_node_id, entity_type, entity_id, operation, payload_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      `pse-${crypto.randomUUID()}`, this.nodeId, entity_type, entity_id,
-      operation, JSON.stringify(payload ?? {}), this.now(),
-    );
+    `).run(eventId, this.nodeId, entity_type, entity_id, operation, JSON.stringify(payload ?? {}), createdAt);
+    if (!this.signingKey) return;
+    const seq = Number(inserted.lastInsertRowid);
+    const sig = signEvent(this.signingKey.privateKey, {
+      event_id: eventId,
+      seq,
+      origin_node_id: this.nodeId,
+      entity_type,
+      entity_id,
+      operation,
+      payload: payload ?? {},
+      created_at: createdAt,
+    });
+    this.db.prepare('UPDATE peer_sync_outbox SET sig = ? WHERE seq = ?').run(sig, seq);
   }
 
   headSeq() {
@@ -185,13 +203,22 @@ export class PeerSyncService {
 
   // --- peer registry ---
 
-  registerPeer({ node_id, endpoint = null, display_name = null, protocol_version = PEER_SYNC_PROTOCOL_VERSION } = {}) {
+  registerPeer({ node_id, endpoint = null, display_name = null, protocol_version = PEER_SYNC_PROTOCOL_VERSION, public_key = undefined } = {}) {
     const peerId = String(node_id ?? '').trim();
     if (!NODE_ID_PATTERN.test(peerId)) throw new TypeError('node_id must match ^[a-z][a-z0-9._-]{2,63}$');
     if (!isPeerProtocolSupported(protocol_version)) {
       const error = new Error(`unsupported peer protocol version: ${protocol_version}`);
       error.code = 'PEER_PROTOCOL_UNSUPPORTED';
       throw error;
+    }
+    let pinnedKey = null;
+    if (public_key != null) {
+      try {
+        publicKeyFromBase64(String(public_key));
+      } catch {
+        throw new TypeError('public_key must be a base64 SPKI ed25519 key');
+      }
+      pinnedKey = String(public_key);
     }
     // Revocation is sticky: a revoked peer cannot re-register (a handshake
     // must never resurrect it) and only activatePeer() restores access.
@@ -201,18 +228,27 @@ export class PeerSyncService {
       error.code = 'PEER_REVOKED';
       throw error;
     }
+    // A pinned key is immutable: a changed key for a known node is exactly
+    // what key substitution looks like. Only an operator clearing the pin
+    // in the registry may rotate a key.
+    if (existing?.public_key && pinnedKey && existing.public_key !== pinnedKey) {
+      const error = new Error(`peer public key does not match the pinned key: ${peerId}`);
+      error.code = 'PEER_KEY_MISMATCH';
+      throw error;
+    }
     const timestamp = this.now();
     this.db.prepare(`
-      INSERT INTO peer_nodes (node_id, display_name, endpoint_url, protocol_version, status, created_at, updated_at, last_seen_at)
-      VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+      INSERT INTO peer_nodes (node_id, display_name, endpoint_url, protocol_version, status, created_at, updated_at, last_seen_at, public_key)
+      VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
       ON CONFLICT(node_id) DO UPDATE SET
         display_name = COALESCE(excluded.display_name, display_name),
         endpoint_url = COALESCE(excluded.endpoint_url, endpoint_url),
         protocol_version = excluded.protocol_version,
         status = 'active',
         updated_at = excluded.updated_at,
-        last_seen_at = excluded.last_seen_at
-    `).run(peerId, display_name, endpoint, Number(protocol_version), timestamp, timestamp, timestamp);
+        last_seen_at = excluded.last_seen_at,
+        public_key = COALESCE(peer_nodes.public_key, excluded.public_key)
+    `).run(peerId, display_name, endpoint, Number(protocol_version), timestamp, timestamp, timestamp, pinnedKey);
     return this.getPeer(peerId);
   }
 
@@ -235,6 +271,7 @@ export class PeerSyncService {
       endpoint_url: row.endpoint_url,
       protocol_version: Number(row.protocol_version),
       status: row.status,
+      public_key: row.public_key ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at,
       last_seen_at: row.last_seen_at,
@@ -286,7 +323,7 @@ export class PeerSyncService {
     let applied = 0;
     let maxSeq = 0;
     for (const event of Array.isArray(events) ? events : []) {
-      const result = this.#ingestEvent(peer.node_id, event);
+      const result = this.#ingestEvent(peer, event);
       results.push(result);
       if (result.status === 'applied' || result.status === 'duplicate') {
         applied += 1;
@@ -306,7 +343,8 @@ export class PeerSyncService {
     return { results, applied, rejected: results.filter((r) => r.status === 'rejected').length, conflicts: results.filter((r) => r.status === 'conflict').length };
   }
 
-  #ingestEvent(fromNode, event) {
+  #ingestEvent(peer, event) {
+    const fromNode = peer.node_id;
     const receivedAt = this.now();
     if (!event || typeof event !== 'object') {
       return { event_id: null, status: 'rejected', detail: 'event must be an object' };
@@ -320,6 +358,23 @@ export class PeerSyncService {
     }
     if (origin_node_id !== fromNode) {
       return { event_id, status: 'rejected', detail: 'event origin does not match the authenticated peer' };
+    }
+    // Once a peer's key is pinned, every event must carry a valid signature
+    // over the canonical event bytes; tampered or downgraded events fail.
+    if (peer.public_key) {
+      const verified = verifyEvent(publicKeyFromBase64(peer.public_key), {
+        event_id,
+        seq: Number(seq),
+        origin_node_id,
+        entity_type,
+        entity_id,
+        operation,
+        payload: payload ?? {},
+        created_at: event.created_at,
+      }, event.sig);
+      if (!verified) {
+        return { event_id, status: 'rejected', detail: { reason: 'bad_signature' } };
+      }
     }
     if (!['task', 'project'].includes(entity_type) || !entity_id || typeof entity_id !== 'string') {
       return { event_id, status: 'rejected', detail: `unsupported entity type: ${entity_type}` };
@@ -482,6 +537,10 @@ export class PeerSyncService {
     return this.db.prepare('DELETE FROM peer_sync_outbox WHERE seq <= ?').run(Number(acked)).changes;
   }
 
+  get publicKeyBase64() {
+    return this.signingKey ? this.signingKey.publicKeyBase64 : null;
+  }
+
   status() {
     const inbox = this.db.prepare(
       'SELECT status, count(*) AS count FROM peer_sync_inbox GROUP BY status',
@@ -489,6 +548,8 @@ export class PeerSyncService {
     return {
       node_id: this.nodeId,
       protocol_version: PEER_SYNC_PROTOCOL_VERSION,
+      signing: Boolean(this.signingKey),
+      public_key: this.publicKeyBase64,
       head_seq: this.headSeq(),
       peers: this.listPeers(),
       inbox: Object.fromEntries(inbox.map((row) => [row.status, Number(row.count)])),

@@ -11,8 +11,8 @@ test('fresh Core schema contains only Worker execution state', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-schema-'));
   const core = new CoreDatabase({ dataDir: dir });
   try {
-    assert.equal(CORE_DB_SCHEMA_VERSION, 16);
-    assert.deepEqual(core.integrityCheck(), { ok: true, version: 16 });
+    assert.equal(CORE_DB_SCHEMA_VERSION, 17);
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: 17 });
 
     const tables = new Set(core.db.prepare(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -46,7 +46,7 @@ test('Core repairs server settings on a current-version database from a pre-rele
   old.exec(`
     CREATE TABLE workers (worker_id TEXT PRIMARY KEY);
     CREATE TABLE enrollments (code TEXT PRIMARY KEY);
-    PRAGMA user_version = 16;
+    PRAGMA user_version = 17;
   `);
   old.close();
   const core = new CoreDatabase({ dataDir: dir });
@@ -97,6 +97,50 @@ test('Core migrates v15 peer sync tables and preserves task data', () => {
         "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?",
       ).get(table), `missing ${table}`);
     }
+  } finally {
+    core.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Core migrates v16 peer sync tables to the signed-event columns', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-core-v16-schema-'));
+  const file = path.join(dir, 'core.db');
+  const old = new DatabaseSync(file);
+  old.exec(`
+    CREATE TABLE peer_nodes (
+      node_id TEXT PRIMARY KEY,
+      display_name TEXT,
+      endpoint_url TEXT,
+      protocol_version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_seen_at TEXT
+    );
+    CREATE TABLE peer_sync_outbox (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL UNIQUE,
+      origin_node_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    INSERT INTO peer_nodes(node_id, display_name, created_at, updated_at)
+      VALUES ('node-beta', 'beta', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    PRAGMA user_version = 16;
+  `);
+  old.close();
+  const core = new CoreDatabase({ dataDir: dir });
+  try {
+    assert.deepEqual(core.integrityCheck(), { ok: true, version: CORE_DB_SCHEMA_VERSION });
+    const peerColumns = new Set(core.db.prepare('PRAGMA table_info(peer_nodes)').all().map((row) => row.name));
+    const outboxColumns = new Set(core.db.prepare('PRAGMA table_info(peer_sync_outbox)').all().map((row) => row.name));
+    assert.equal(peerColumns.has('public_key'), true, 'missing peer_nodes.public_key');
+    assert.equal(outboxColumns.has('sig'), true, 'missing peer_sync_outbox.sig');
+    assert.equal(core.db.prepare('SELECT public_key FROM peer_nodes WHERE node_id = ?').get('node-beta').public_key, null);
   } finally {
     core.close();
     fs.rmSync(dir, { recursive: true, force: true });

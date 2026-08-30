@@ -15,17 +15,25 @@ import { createCoreServer } from '../src/http/server.js';
 import { TaskCreationFacade } from '../src/tasks/creation-facade.js';
 import { TaskRepository } from '../src/tasks/repository.js';
 import { createPeerSyncClient } from '../src/sync/client.js';
+import { loadSyncKeyPair } from '../src/sync/sync-key.js';
 import { createPeerSyncService } from '../src/sync/service.js';
 
 const nodes = [];
 
-async function startNode(nodeId) {
+async function startNode(nodeId, { sign = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wfc-peer-e2e-${nodeId}-`));
   const auth = new AuthRepository({ dataDir: dir });
   const core = new CoreDatabase({ dataDir: dir });
   const tasks = new TaskRepository({ coreDb: core, nodeId });
   const knowledge = new WorkflowRepository({ filename: path.join(dir, 'workflow.db') });
-  const service = createPeerSyncService({ coreDb: core, nodeId, taskRepository: tasks, knowledgeRepository: knowledge });
+  const keyPair = sign ? loadSyncKeyPair({ dataDir: dir }) : null;
+  const service = createPeerSyncService({
+    coreDb: core,
+    nodeId,
+    taskRepository: tasks,
+    knowledgeRepository: knowledge,
+    signingKey: keyPair ? { privateKey: keyPair.privateKey, publicKeyBase64: keyPair.publicKeyBase64 } : null,
+  });
   const app = createCoreServer({ config: {}, nodeId, authRepository: auth, taskRepository: tasks, peerSyncService: service });
   const server = await app.listen({ host: '127.0.0.1', port: 0, tls: null });
   const node = {
@@ -320,5 +328,44 @@ test('a node that cannot accept inbound connections still converges via push', a
   assert.ok(beta.service.getCursor('node-alpha').outbound_acked_seq > 0);
   assert.ok(alpha.service.getCursor('node-beta').inbound_cursor > 0);
 
+  await betaClient.stop();
+});
+
+test('signed nodes converge: keys pin via handshake and tampering fails closed', async () => {
+  const alpha = await startNode('node-alpha', { sign: true });
+  const beta = await startNode('node-beta', { sign: true });
+  issuePeerTokens(alpha, beta);
+  const alphaClient = clientFor(alpha, beta);
+  const betaClient = clientFor(beta, alpha);
+  alphaClient.start();
+  betaClient.start();
+
+  const { task } = alpha.tasks.create({
+    type: 'code', brief: { prompt: 'signed flow' }, created_by: 'account:alice',
+    project_id: 'default', origin_node_id: 'node-alpha', executor_node_id: 'node-alpha',
+  });
+  await betaClient.tick();
+  await waitFor('signed projection on beta', () => beta.tasks.get(task.task_id));
+  // Both directions pinned each other's public key during handshake.
+  assert.equal(alpha.service.getPeer('node-beta').public_key, beta.service.publicKeyBase64);
+  assert.equal(beta.service.getPeer('node-alpha').public_key, alpha.service.publicKeyBase64);
+  assert.equal(beta.service.status().inbox.applied >= 1, true);
+
+  // The executor's completion is signed by beta and verified by alpha.
+  const delegated = alpha.tasks.create({
+    type: 'code', brief: { prompt: 'signed delegation' }, created_by: 'account:alice',
+    project_id: 'project-s', origin_node_id: 'node-alpha', executor_node_id: 'node-beta',
+  }).task;
+  await betaClient.tick();
+  await waitFor('delegated projection on beta', () => beta.tasks.get(delegated.task_id));
+  const claimed = await waitFor('claim on beta', () => beta.tasks.claim({
+    worker_id: 'worker-beta-1', node_id: 'node-beta', backends: [{ kind: 'workflow-jsonl', capabilities: [] }],
+  }));
+  beta.tasks.done(claimed.task_id, claimed.claim_token, { kind: 'done', result: { summary: 'signed done' } });
+  await alphaClient.tick();
+  await waitFor('signed completion back on alpha', () => alpha.tasks.get(delegated.task_id)?.status === 'done');
+  assert.deepEqual(alpha.tasks.get(delegated.task_id).result, { summary: 'signed done' });
+
+  await alphaClient.stop();
   await betaClient.stop();
 });

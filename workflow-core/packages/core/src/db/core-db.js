@@ -5,7 +5,7 @@ import { DEFAULT_PRIORITY, PRIORITY_MAX, PRIORITY_MIN } from '@workflow-core/sha
 import { initializeDatabase, transaction } from './base.js';
 
 export const CORE_DB_FILE = 'core.db';
-export const CORE_DB_SCHEMA_VERSION = 16;
+export const CORE_DB_SCHEMA_VERSION = 17;
 
 // Shared DDL for the peer-sync tables. IF NOT EXISTS keeps it usable for
 // fresh schemas, current-version repair, and every migration branch.
@@ -18,7 +18,8 @@ const PEER_SYNC_SCHEMA_SQL = `
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    last_seen_at TEXT
+    last_seen_at TEXT,
+    public_key TEXT
   );
   CREATE TABLE IF NOT EXISTS peer_sync_outbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,7 +29,8 @@ const PEER_SYNC_SCHEMA_SQL = `
     entity_id TEXT NOT NULL,
     operation TEXT NOT NULL,
     payload_json TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    sig TEXT
   );
   CREATE INDEX IF NOT EXISTS peer_sync_outbox_origin_idx ON peer_sync_outbox(origin_node_id, seq);
   CREATE TABLE IF NOT EXISTS peer_sync_inbox (
@@ -246,7 +248,8 @@ function createCurrentSchema(db) {
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      last_seen_at TEXT
+      last_seen_at TEXT,
+      public_key TEXT
     );
 
     CREATE TABLE peer_sync_outbox (
@@ -257,7 +260,8 @@ function createCurrentSchema(db) {
       entity_id TEXT NOT NULL,
       operation TEXT NOT NULL,
       payload_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      sig TEXT
     );
     CREATE INDEX peer_sync_outbox_origin_idx ON peer_sync_outbox(origin_node_id, seq);
 
@@ -353,6 +357,16 @@ export function createSchema(db) {
         db.exec('CREATE INDEX IF NOT EXISTS tasks_executor_idx ON tasks(executor_node_id, status, priority, created_at)');
       }
       db.exec(PEER_SYNC_SCHEMA_SQL);
+      if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'peer_nodes'").get()) {
+        try { db.exec('ALTER TABLE peer_nodes ADD COLUMN public_key TEXT'); } catch { /* exists */ }
+        try { db.exec('ALTER TABLE peer_sync_outbox ADD COLUMN sig TEXT'); } catch { /* exists */ }
+      }
+      return;
+    }
+    if (current === 16) {
+      db.exec('ALTER TABLE peer_nodes ADD COLUMN public_key TEXT');
+      db.exec('ALTER TABLE peer_sync_outbox ADD COLUMN sig TEXT');
+      db.exec(`PRAGMA user_version = ${CORE_DB_SCHEMA_VERSION}`);
       return;
     }
     if (current === 15) {

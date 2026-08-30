@@ -43,10 +43,19 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
 
   async function syncPeer(peer) {
     if (revoked.has(peer.node_id)) return;
-    // A remote that lost its database no longer knows us; re-handshake on
-    // PEER_UNKNOWN so the next tick can proceed without manual intervention.
-    // PEER_REVOKED is final: drop the peer instead of hammering it.
+    // Key exchange runs before the first transfer: peers without a pinned
+    // key handshake to publish our key and pin the remote's, so signature
+    // verification covers every subsequent event.
     try {
+      if (!peerSyncService.getPeer(peer.node_id)?.public_key) {
+        const handshake = await post(peer, '/handshake', {
+          protocol_version: PEER_SYNC_PROTOCOL_VERSION,
+          public_key: peerSyncService.publicKeyBase64,
+        });
+        if (handshake.public_key) {
+          peerSyncService.registerPeer({ node_id: peer.node_id, public_key: handshake.public_key });
+        }
+      }
       if (peer.pull !== false) await pullPeer(peer);
       if (peer.push) await pushPeer(peer);
     } catch (error) {
@@ -56,7 +65,13 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
         return;
       }
       if (error.code !== 'PEER_UNKNOWN') throw error;
-      await post(peer, '/handshake', { protocol_version: PEER_SYNC_PROTOCOL_VERSION });
+      const handshake = await post(peer, '/handshake', {
+        protocol_version: PEER_SYNC_PROTOCOL_VERSION,
+        public_key: peerSyncService.publicKeyBase64,
+      });
+      if (handshake.public_key) {
+        peerSyncService.registerPeer({ node_id: peer.node_id, public_key: handshake.public_key });
+      }
       if (peer.pull !== false) await pullPeer(peer);
       if (peer.push) await pushPeer(peer);
     }

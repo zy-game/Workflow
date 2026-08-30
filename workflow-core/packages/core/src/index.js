@@ -17,6 +17,7 @@ import { BridgeRequestsRepository } from './bridge/requests-repository.js';
 import { createBridgeService } from './bridge/service.js';
 import { createPeerSyncService } from './sync/service.js';
 import { createPeerSyncClient } from './sync/client.js';
+import { loadSyncKeyPair } from './sync/sync-key.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -186,11 +187,13 @@ export async function startCore(env = process.env, dependencies = {}) {
       });
     };
     knowledgeRepository = new WorkflowRepository({ filename: config.knowledgeDb, readOnly: false });
+    const syncKeyPair = loadSyncKeyPair({ dataDir: config.dataDir });
     peerSyncService = createPeerSyncService({
       coreDb: coreDatabase,
       nodeId: nodeIdentity.nodeId,
       taskRepository,
       knowledgeRepository,
+      signingKey: { privateKey: syncKeyPair.privateKey, publicKeyBase64: syncKeyPair.publicKeyBase64 },
     });
     const taskCreationFacade = new TaskCreationFacade({ taskRepository, knowledgeRepository, nodeId: nodeIdentity.nodeId });
     workflowAgent = new WorkflowAgent({ taskRepository, taskCreationFacade, projectAgentsRegistry, knowledgeRepository, log });

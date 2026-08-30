@@ -9,16 +9,24 @@ import { test } from 'node:test';
 import { CoreDatabase } from '../src/db/core-db.js';
 import { WorkflowRepository } from '../src/knowledge/repository.js';
 import { createPeerSyncService } from '../src/sync/service.js';
+import { loadSyncKeyPair } from '../src/sync/sync-key.js';
 import { TaskRepository } from '../src/tasks/repository.js';
 
-function node(dir, nodeId, { knowledge = false } = {}) {
+function node(dir, nodeId, { knowledge = false, sign = false } = {}) {
   const dataDir = fs.mkdtempSync(path.join(dir, `wfc-peer-${nodeId}-`));
   const core = new CoreDatabase({ dataDir });
   const tasks = new TaskRepository({ coreDb: core, nodeId });
   const knowledgeRepository = knowledge
     ? new WorkflowRepository({ filename: path.join(dataDir, 'workflow.db') })
     : null;
-  const service = createPeerSyncService({ coreDb: core, nodeId, taskRepository: tasks, knowledgeRepository });
+  const keyPair = sign ? loadSyncKeyPair({ dataDir }) : null;
+  const service = createPeerSyncService({
+    coreDb: core,
+    nodeId,
+    taskRepository: tasks,
+    knowledgeRepository,
+    signingKey: keyPair ? { privateKey: keyPair.privateKey, publicKeyBase64: keyPair.publicKeyBase64 } : null,
+  });
   return { core, tasks, service, knowledge: knowledgeRepository, close() { service.close(); tasks.close(); core.close(); knowledgeRepository?.close(); } };
 }
 
@@ -360,8 +368,7 @@ test('project registry changes publish from the owner and project onto peers', (
   }
 });
 
-test('project events are rejected from non-owners and self-heal missing creates', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-peer-project-guard-'));
+test('project events are rejected from non-owners and self-heal missing creates', () => {  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-peer-project-guard-'));
   const alpha = node(dir, 'node-alpha', { knowledge: true });
   const beta = node(dir, 'node-beta', { knowledge: true });
   try {
@@ -403,6 +410,73 @@ test('project events are rejected from non-owners and self-heal missing creates'
     });
     assert.equal(takeover.results[0].status, 'rejected');
     assert.equal(beta.knowledge.getProject('proj-y').name, 'late');
+  } finally {
+    alpha.close();
+    beta.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('sync keys persist and reload as the same identity', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-sync-key-'));
+  try {
+    const first = loadSyncKeyPair({ dataDir: dir });
+    const second = loadSyncKeyPair({ dataDir: dir });
+    assert.equal(first.publicKeyBase64, second.publicKeyBase64);
+    assert.ok(fs.existsSync(path.join(dir, 'sync-key.json')));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('pinned peer keys fail closed on tampered or unsigned events', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-peer-sign-'));
+  const alpha = node(dir, 'node-alpha', { sign: true });
+  const beta = node(dir, 'node-beta', { sign: true });
+  try {
+    // Handshake exchange pins both directions' keys.
+    const handshake = beta.service.registerPeer({
+      node_id: 'node-alpha',
+      public_key: alpha.service.publicKeyBase64,
+    });
+    // registerPeer returns the stored peer record: alpha's key is now pinned.
+    assert.equal(beta.service.getPeer('node-alpha').public_key, alpha.service.publicKeyBase64);
+    assert.equal(alpha.service.getPeer('node-beta'), null); // not yet registered on alpha
+
+    alpha.service.registerPeer({ node_id: 'node-beta', public_key: beta.service.publicKeyBase64 });
+    const { task } = alpha.tasks.create({
+      type: 'code', brief: { prompt: 'signed payload' }, created_by: 'account:alice',
+      project_id: 'default', origin_node_id: 'node-alpha', executor_node_id: 'node-alpha',
+    });
+    const events = alpha.service.eventsSince(0);
+    assert.equal(events[0].sig != null, true);
+
+    // A faithful event verifies and applies.
+    const applied = beta.service.ingest({ from_node: 'node-alpha', events });
+    assert.equal(applied.results[0].status, 'applied');
+
+    // Any tampering with signed content breaks verification.
+    const tampered = beta.service.ingest({
+      from_node: 'node-alpha',
+      events: [{ ...events[0], event_id: `${events[0].event_id}-x`, seq: events[0].seq + 900, payload: { ...events[0].payload, brief: { prompt: 'evil' } } }],
+    });
+    assert.equal(tampered.results[0].status, 'rejected');
+    assert.deepEqual(tampered.results[0].detail, { reason: 'bad_signature' });
+
+    // An unsigned event from a pinned peer fails closed.
+    const unsigned = beta.service.ingest({
+      from_node: 'node-alpha',
+      events: [{ ...events[0], event_id: `${events[0].event_id}-y`, seq: events[0].seq + 901, sig: null }],
+    });
+    assert.equal(unsigned.results[0].status, 'rejected');
+
+    // A pinned key is immutable: a different key for a known node is rejected.
+    const rogue = loadSyncKeyPair({ dataDir: fs.mkdtempSync(path.join(dir, 'rogue-')) });
+    assert.throws(
+      () => beta.service.registerPeer({ node_id: 'node-alpha', public_key: rogue.publicKeyBase64 }),
+      (error) => error.code === 'PEER_KEY_MISMATCH',
+    );
+    assert.equal(beta.tasks.get(task.task_id).brief.prompt, 'signed payload');
   } finally {
     alpha.close();
     beta.close();

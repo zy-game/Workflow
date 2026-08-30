@@ -269,7 +269,9 @@ Workflow Task Event
 
 第五批：push 型传输补齐——peer 配置新增 `pull`（默认 true）与 `push`（默认 false）标志。推送方以本方记录的 outbound ack 游标为起点分页推送 outbox，接收方在 push 响应里回显其 inbound_cursor 作为回执 ack，推送方据此本地记账并支持清理——全程只需推送方发起连接，适配"一方在 NAT 后不可被连接"的拓扑。registry-only peer（pull:false 且 push:false）仅注册不传输。双节点 e2e 验证：beta 不可被 alpha 连接时，alpha 的决策经 pull 到达 beta，beta 的执行结果经 push 回到 alpha。
 
-尚待实现：事件签名（HMAC/非对称）、store-and-forward relay（服务器中转，复用同一事件契约）。
+第六批：事件签名落地（core.db schema v17，`peer_nodes.public_key` 与 `peer_sync_outbox.sig`）。每个节点在数据目录持久化一把 ed25519 同步密钥（`sync-key.json`，0600），出箱事件按规范化 JSON（键排序）签名，seq 由数据库分配后两阶段补签。公钥经握手交换并双向 pin：首次握手写 pin，此后同一节点 ID 换 key 即拒绝（`PEER_KEY_MISMATCH`）；已 pin 的 peer 推来的事件必须带有效签名，篡改或去签名一律 `bad_signature` 拒绝（fail-closed）。未配置签名密钥的节点保持兼容（不 pin、不验签）。签名是 relay 中继的前置条件：中继转发的远端事件可被接收方直接验证 origin 签名，中继无法篡改。
+
+尚待实现：store-and-forward relay（服务器中继；签名验证已就绪，需定义 via 转发语义与混合游标）。
 
 ### 阶段 D：执行路由（已完成）
 
