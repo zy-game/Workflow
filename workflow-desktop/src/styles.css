@@ -102,3 +102,8 @@ select:focus, input:focus, textarea:focus { outline: 1px solid var(--accent); }
 .login h1 { margin: 0 0 8px; font-size: 22px; letter-spacing: 0.04em; color: var(--accent-strong); }
 .login label { display: flex; flex-direction: column; gap: 4px; color: var(--dim); }
 .login button { margin-top: 8px; padding: 10px; }
+
+.sessions .embed {
+  flex: 1; min-height: 480px; width: 100%;
+  border: 1px solid var(--border); border-radius: 12px; background: #fff;
+}

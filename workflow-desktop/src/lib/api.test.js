@@ -1,7 +1,7 @@
 // api.test.js - unit coverage for the desktop API client seam: session
 // storage, bearer attachment, error mapping, and endpoint shapes.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, CoreClient, clearSession, loadSession, saveSession } from './api.js';
+import { ApiError, CoreClient, clearSession, loadDshUrl, loadSession, saveDshUrl, saveSession } from './api.js';
 
 function jsonResponse(ok, status, body) {
   return {
@@ -20,6 +20,13 @@ describe('session storage', () => {
     expect(loadSession()).toEqual({ baseUrl: 'https://core.example:8710', token: 'wfc-token' });
     clearSession();
     expect(loadSession().token).toBe('');
+  });
+
+  it('stores the DSH web url trimmed and clears it on empty input', () => {
+    expect(saveDshUrl('  http://127.0.0.1:8080//')).toBe('http://127.0.0.1:8080');
+    expect(loadDshUrl()).toBe('http://127.0.0.1:8080');
+    expect(saveDshUrl('')).toBe('');
+    expect(loadDshUrl()).toBe('');
   });
 });
 

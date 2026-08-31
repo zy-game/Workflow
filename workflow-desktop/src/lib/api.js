@@ -11,6 +11,7 @@ export class ApiError extends Error {
 
 const TOKEN_KEY = 'workflow.core.token';
 const BASE_KEY = 'workflow.core.base';
+const DSH_KEY = 'workflow.dsh.base';
 
 export function loadSession() {
   return {
@@ -26,6 +27,17 @@ export function saveSession(baseUrl, token) {
 
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
+}
+
+export function loadDshUrl() {
+  return localStorage.getItem(DSH_KEY) || '';
+}
+
+export function saveDshUrl(url) {
+  const trimmed = String(url ?? '').trim().replace(/\/+$/, '');
+  if (trimmed) localStorage.setItem(DSH_KEY, trimmed);
+  else localStorage.removeItem(DSH_KEY);
+  return trimmed;
 }
 
 export class CoreClient {

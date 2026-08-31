@@ -5,12 +5,14 @@ import { Tasks } from './pages/Tasks.jsx';
 import { Projects } from './pages/Projects.jsx';
 import { Peers } from './pages/Peers.jsx';
 import { Sync } from './pages/Sync.jsx';
+import { Sessions } from './pages/Sessions.jsx';
 
 const PAGES = [
   { id: 'tasks', label: '任务', component: Tasks },
   { id: 'projects', label: '项目', component: Projects },
   { id: 'peers', label: '节点', component: Peers },
   { id: 'sync', label: '同步', component: Sync },
+  { id: 'sessions', label: '会话', component: Sessions },
 ];
 
 export function App() {
