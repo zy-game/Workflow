@@ -35,3 +35,14 @@
   config:
     providerUrl: http://127.0.0.1:18711/api/internal/v1/workflow/context
     maxChars: 6000
+
+# Optional: graft the Workflow web app onto the DSH web surface (a
+# "Workflow" button opening the task/project/peer pages full-screen, and a
+# same-origin proxy /workflow/* -> Workflow Core). Copy workflow-web.mjs and
+# workflow-client.js to /home/ubuntu/.dsh/plugins/ first, then uncomment:
+# - insert:
+#     - id: workflow-web
+#       name: 'file:///home/ubuntu/.dsh/plugins/workflow-web.mjs'
+#       config:
+#         coreUrl: 'http://127.0.0.1:8710'
+#         clientScript: '/home/ubuntu/.dsh/plugins/workflow-client.js'

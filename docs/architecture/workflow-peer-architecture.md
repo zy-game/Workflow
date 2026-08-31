@@ -281,6 +281,8 @@ Workflow Task Event
 
 第二批已落地桌面客户端 `workflow-desktop/`：Tauri 2 壳 + 自有 React UI，直接消费 Workflow Core API（不依赖 DSH web 前端壳、不做老 client 兼容）。页面：登录（client-login token）、任务（列表/过滤/新建/事件流）、项目（owner 与路径）、节点（撤销/恢复 + 流游标）、同步全景（自刷新）。Core 新增 `WFC_CORS_ORIGINS` 白名单跨域放行（OPTIONS 预检 + 响应头，仅精确匹配 origin），桌面 WebView 与浏览器开发模式均可直连。Core 全量测试与前端 vitest/vite build 已验证；`tauri build` 需要目标机器安装 Rust + MSVC Build Tools（本机待装）。
 
+第三批已落地 **DSH web 原生集成**（`dsh-workflow/web/`）：一个 host 插件（`workflow-web.mjs`，走与 workflow-context 相同的 patch 插入通道）把 Workflow 应用嫁接进 DSH 自带网页——`/workflow/*` 同源代理到 Core、`tapIndex` 向页面注入按钮脚本，DSH 网页右下角出现「⚙ Workflow」按钮，点开全屏使用任务/项目/节点/同步页面，无跨域、无需单独地址。配套一个（实验性）原生客户端插件包 `@workflow/dsh-web`，按 DSH 模块系统约定（`dsh.client.platform: "web"` + `exports["./client"]`）贡献 `sidebar.footer.action` 菜单按钮与 `shell.overlay` 全屏页面，待真实 DSH host 验证加载链路后切换。桌面 Tauri 壳与 DSH web 集成共用同一套 Core API，二者长期并存：桌面版面向本机使用，DSH web 集成面向多端浏览器访问。
+
 ### 阶段 D：执行路由（已完成）
 
 实现 `project.owner_node_id` 路由和 `default -> origin_node_id` 规则，启动 Agent Run 前执行权校验，并确保非执行节点只投影事件。

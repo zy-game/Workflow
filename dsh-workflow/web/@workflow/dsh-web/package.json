@@ -1,0 +1,24 @@
+{
+  "name": "@workflow/dsh-web",
+  "description": "Workflow pages inside the DSH web UI: sidebar action plus a full-screen overlay embedding the Workflow Core web app",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/client.js",
+  "exports": {
+    ".": {
+      "default": "./lib/client.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    }
+  },
+  "dsh": {
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib/client.js"
+  ]
+}
