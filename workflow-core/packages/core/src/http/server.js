@@ -1048,8 +1048,29 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     });
   }
 
+  // Desktop shells (Tauri webview) and local dev servers call the API
+  // cross-origin; only exact allow-listed origins get CORS headers.
+  function corsHeadersFor(req) {
+    const origin = req.headers.origin;
+    if (!origin || !config.corsOrigins?.length) return {};
+    if (!config.corsOrigins.includes(origin)) return {};
+    return {
+      'access-control-allow-origin': origin,
+      'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+      'access-control-allow-headers': 'authorization, content-type',
+      'access-control-max-age': '600',
+      vary: 'Origin',
+    };
+  }
+
   async function handle(req, res) {
+    const cors = corsHeadersFor(req);
     try {
+      if (req.method === 'OPTIONS') {
+        if (Object.keys(cors).length) send(res, 204, {}, cors);
+        else res.writeHead(204).end();
+        return;
+      }
       const url = new URL(req.url, 'http://local');
       const matched = router.match(req.method, url.pathname);
       if (!matched) throw new HttpError(404, 'not_found', `no route: ${req.method} ${url.pathname}`);
@@ -1059,7 +1080,7 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
         : bridgePath ? MAX_BRIDGE_BODY_BYTES : MAX_BODY_BYTES;
       const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, bodyLimit) : {};
       const result = await matched.handler(req, res, body, matched.params);
-      if (result !== null && result !== undefined) send(res, 200, result);
+      if (result !== null && result !== undefined) send(res, 200, result, cors);
     } catch (error) {
       if (res.headersSent) { res.destroy(); return; }
       // Repository validation/state errors carry a code and map to 400;
@@ -1091,7 +1112,7 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
         : numericStatus ?? bridgeStatuses[error.code] ?? (error.code === 'REVISION_CONFLICT' ? 409 : isRepositoryError ? 400 : 500);
       const code = error instanceof HttpError ? error.code : isRepositoryError ? error.code : 'internal_error';
       if (status === 500) console.error('[core] request failed:', error);
-      send(res, status, { ok: false, code, error: error.message });
+      send(res, status, { ok: false, code, error: error.message }, cors);
     }
   }
 

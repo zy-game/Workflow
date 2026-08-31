@@ -279,6 +279,8 @@ Workflow Task Event
 
 第一批已落地节点运维面：`GET /api/v1/admin/peers`（注册表 + 全部流游标）、`POST /api/v1/admin/peers/:id/revoke|activate`（撤销/恢复，粘性语义，写 `peer.revoked`/`peer.activated` 审计）、`GET /api/v1/admin/peer-sync`（同步全景：协议版本、签名/中继开关、origin 流、inbox 统计）。系统体检指标（systemCheckupMetrics）新增 peerSync 概要，供 AI 体检与管理台观察同步健康。
 
+第二批已落地桌面客户端 `workflow-desktop/`：Tauri 2 壳 + 自有 React UI，直接消费 Workflow Core API（不依赖 DSH web 前端壳、不做老 client 兼容）。页面：登录（client-login token）、任务（列表/过滤/新建/事件流）、项目（owner 与路径）、节点（撤销/恢复 + 流游标）、同步全景（自刷新）。Core 新增 `WFC_CORS_ORIGINS` 白名单跨域放行（OPTIONS 预检 + 响应头，仅精确匹配 origin），桌面 WebView 与浏览器开发模式均可直连。Core 全量测试与前端 vitest/vite build 已验证；`tauri build` 需要目标机器安装 Rust + MSVC Build Tools（本机待装）。
+
 ### 阶段 D：执行路由（已完成）
 
 实现 `project.owner_node_id` 路由和 `default -> origin_node_id` 规则，启动 Agent Run 前执行权校验，并确保非执行节点只投影事件。

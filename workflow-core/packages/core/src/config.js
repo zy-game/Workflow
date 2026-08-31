@@ -7,6 +7,20 @@ function text(env, name) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+// Extra origins allowed to call the HTTP API cross-origin (desktop shells,
+// local dev servers). Comma-separated; must include the scheme.
+function corsOrigins(env, name) {
+  const raw = text(env, name);
+  if (raw === null) return [];
+  return [...new Set(raw.split(',').map((value) => value.trim()).filter(Boolean))].map((origin) => {
+    try {
+      return new URL(origin).origin;
+    } catch {
+      throw new Error(`${name} entries must be absolute origins: ${origin}`);
+    }
+  });
+}
+
 // Peers are configured as a JSON array because each entry carries three
 // related values; the sync token is provisioned by the remote peer and only
 // ever travels through environment/system credential channels.
@@ -124,6 +138,7 @@ export function loadConfig(env = process.env) {
     peerSyncIntervalMs: integer(env, 'WFC_PEER_SYNC_INTERVAL_MS', 15_000, { min: 1_000 }),
     peerRelay: flag(env, 'WFC_PEER_RELAY'),
     peers: peers(env, 'WFC_PEERS_JSON'),
+    corsOrigins: corsOrigins(env, 'WFC_CORS_ORIGINS'),
     knowledgeDb: text(env, 'WFC_KNOWLEDGE_DB')
       ? path.resolve(text(env, 'WFC_KNOWLEDGE_DB'))
       : path.join(dataDir, 'workflow.db'),

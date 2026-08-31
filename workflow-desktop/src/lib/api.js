@@ -1,0 +1,116 @@
+// api.js - the single seam between the desktop UI and Workflow Core.
+// Plain fetch over CORS (Core allow-lists the shell origin); the bearer
+// token from client-login is held in memory and localStorage per host.
+export class ApiError extends Error {
+  constructor(status, code, message) {
+    super(message || code);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+const TOKEN_KEY = 'workflow.core.token';
+const BASE_KEY = 'workflow.core.base';
+
+export function loadSession() {
+  return {
+    baseUrl: localStorage.getItem(BASE_KEY) || '',
+    token: localStorage.getItem(TOKEN_KEY) || '',
+  };
+}
+
+export function saveSession(baseUrl, token) {
+  localStorage.setItem(BASE_KEY, baseUrl.replace(/\/+$/, ''));
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearSession() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export class CoreClient {
+  constructor(baseUrl, token = null) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.token = token;
+  }
+
+  static fromSession() {
+    const { baseUrl, token } = loadSession();
+    if (!baseUrl || !token) return null;
+    return new CoreClient(baseUrl, token);
+  }
+
+  async request(path, { method = 'GET', body = undefined } = {}) {
+    const headers = { 'content-type': 'application/json' };
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    let response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new ApiError(0, 'network_error', `cannot reach ${this.baseUrl}: ${error.message}`);
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401 && this.token) clearSession();
+      throw new ApiError(response.status, payload.code ?? 'request_failed', payload.error ?? payload.code);
+    }
+    return payload;
+  }
+
+  async login(email, password) {
+    const result = await this.request('/api/v1/auth/client-login', {
+      method: 'POST',
+      body: { email, password },
+    });
+    this.token = result.access_token;
+    return result.access_token;
+  }
+
+  tasks({ status = null, project_id = null, limit = 100 } = {}) {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (project_id) params.set('project_id', project_id);
+    if (limit) params.set('limit', String(limit));
+    const suffix = params.toString() ? `?${params}` : '';
+    return this.request(`/api/v1/tasks${suffix}`);
+  }
+
+  task(taskId) {
+    return this.request(`/api/v1/tasks/${encodeURIComponent(taskId)}`);
+  }
+
+  taskEvents(taskId, afterSeq = -1) {
+    return this.request(`/api/v1/tasks/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}`);
+  }
+
+  createTask({ type, brief, project_id = null, priority = 5 }) {
+    return this.request('/api/v1/tasks', {
+      method: 'POST',
+      body: { type, brief, project_id, priority },
+    });
+  }
+
+  projects() {
+    return this.request('/api/v1/workflow/projects');
+  }
+
+  adminPeers() {
+    return this.request('/api/v1/admin/peers');
+  }
+
+  revokePeer(nodeId) {
+    return this.request(`/api/v1/admin/peers/${encodeURIComponent(nodeId)}/revoke`, { method: 'POST' });
+  }
+
+  activatePeer(nodeId) {
+    return this.request(`/api/v1/admin/peers/${encodeURIComponent(nodeId)}/activate`, { method: 'POST' });
+  }
+
+  syncStatus() {
+    return this.request('/api/v1/admin/peer-sync');
+  }
+}

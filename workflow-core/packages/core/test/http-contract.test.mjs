@@ -147,3 +147,39 @@ test('unknown routes return structured 404', async () => {
   assert.equal(missing.status, 404);
   assert.equal(missing.body.code, 'not_found');
 });
+
+test('CORS preflight and responses honor the configured origin allow-list', async () => {
+  const core = createCoreServer({
+    config: { corsOrigins: ['tauri://localhost'] },
+    authRepository: auth,
+    taskRepository: tasks,
+  });
+  const corsServer = await core.listen({ host: '127.0.0.1', port: 0, tls: null });
+  try {
+    const corsBase = `http://127.0.0.1:${corsServer.address().port}`;
+    const preflight = await fetch(`${corsBase}/api/v1/tasks`, {
+      method: 'OPTIONS',
+      headers: { origin: 'tauri://localhost', 'access-control-request-method': 'GET' },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), 'tauri://localhost');
+    assert.equal(preflight.headers.get('access-control-allow-headers'), 'authorization, content-type');
+    assert.equal(preflight.headers.get('access-control-max-age'), '600');
+
+    // The task list requires a token, but CORS headers attach regardless of
+    // the response status so the browser can read the 401 body.
+    const unauthorized = await fetch(`${corsBase}/api/v1/tasks`, { headers: { origin: 'tauri://localhost' } });
+    assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get('access-control-allow-origin'), 'tauri://localhost');
+
+    const denied = await fetch(`${corsBase}/api/v1/tasks`, { headers: { origin: 'https://evil.example' } });
+    assert.equal(denied.status, 401);
+    assert.equal(denied.headers.get('access-control-allow-origin'), null);
+
+    const barePreflight = await fetch(`${corsBase}/api/v1/tasks`, { method: 'OPTIONS' });
+    assert.equal(barePreflight.status, 204);
+    assert.equal(barePreflight.headers.get('access-control-allow-origin'), null);
+  } finally {
+    corsServer.close();
+  }
+});
