@@ -46,6 +46,7 @@ export function Login({ onLogin }) {
       </label>
       {error && <div className="error">{error}</div>}
       <button type="submit" disabled={busy}>{busy ? '登录中…' : '登录'}</button>
+      <div className="dim" style={{ textAlign: 'center', fontSize: 12 }}>build 2026-08-31.3 · 同源代理模式</div>
     </form>
   );
 }
