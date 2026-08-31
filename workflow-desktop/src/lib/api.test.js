@@ -80,6 +80,24 @@ describe('CoreClient', () => {
     });
   });
 
+  it('empty base url keeps requests same-origin for the dev proxy', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(true, 200, { tasks: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new CoreClient('', 'wfc-t');
+    await client.tasks();
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/v1/tasks?limit=100');
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('maps a hanging request to a timeout error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'TimeoutError')));
+    })));
+    const client = new CoreClient('http://core', 'wfc-t', { timeoutMs: 50 });
+    await expect(client.tasks()).rejects.toMatchObject({ status: 0, code: 'timeout' });
+  });
+
   it('peer operations target the admin routes with the node id', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(true, 200, { ok: true }));
     vi.stubGlobal('fetch', fetchMock);

@@ -13,6 +13,10 @@ const TOKEN_KEY = 'workflow.core.token';
 const BASE_KEY = 'workflow.core.base';
 const DSH_KEY = 'workflow.dsh.base';
 
+// Same-origin mode: an empty base URL keeps requests on the page's own
+// origin (vite dev proxy); desktop builds point at the full Core URL.
+const REQUEST_TIMEOUT_MS = 15_000;
+
 export function loadSession() {
   return {
     baseUrl: localStorage.getItem(BASE_KEY) || '',
@@ -41,14 +45,15 @@ export function saveDshUrl(url) {
 }
 
 export class CoreClient {
-  constructor(baseUrl, token = null) {
-    this.baseUrl = baseUrl.replace(/\/+$/, '');
+  constructor(baseUrl, token = null, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+    this.baseUrl = String(baseUrl ?? '').trim().replace(/\/+$/, '');
     this.token = token;
+    this.timeoutMs = timeoutMs;
   }
 
   static fromSession() {
     const { baseUrl, token } = loadSession();
-    if (!baseUrl || !token) return null;
+    if (!token) return null;
     return new CoreClient(baseUrl, token);
   }
 
@@ -61,9 +66,13 @@ export class CoreClient {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
-      throw new ApiError(0, 'network_error', `cannot reach ${this.baseUrl}: ${error.message}`);
+      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+        throw new ApiError(0, 'timeout', `请求超时（${REQUEST_TIMEOUT_MS / 1000}s）：${this.baseUrl || '同源'}${path}`);
+      }
+      throw new ApiError(0, 'network_error', `无法访问 ${this.baseUrl || '同源服务'}: ${error.message}`);
     }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ApiError } from '../lib/api.js';
 
 export function Login({ onLogin }) {
-  const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:8710');
+  const [baseUrl, setBaseUrl] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -12,14 +12,14 @@ export function Login({ onLogin }) {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    const client = new CoreClient(baseUrl);
+    const client = new CoreClient(baseUrl.trim());
     try {
       const token = await client.login(email.trim(), password);
       onLogin(client.baseUrl, token);
     } catch (cause) {
       setError(cause instanceof ApiError && cause.status !== 0
         ? `登录失败：${cause.message}`
-        : `无法连接到 ${client.baseUrl}`);
+        : cause.message);
     } finally {
       setBusy(false);
     }
@@ -29,8 +29,12 @@ export function Login({ onLogin }) {
     <form className="login" onSubmit={submit}>
       <h1>Workflow</h1>
       <label>
-        Core 地址
-        <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} required />
+        Core 地址（留空 = 本机同源代理）
+        <input
+          value={baseUrl}
+          onChange={(event) => setBaseUrl(event.target.value)}
+          placeholder="例如 http://127.0.0.1:8710"
+        />
       </label>
       <label>
         邮箱
