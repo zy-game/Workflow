@@ -590,6 +590,19 @@ export class PeerSyncService {
     };
   }
 
+  // Every tracked stream cursor, for the operations surface.
+  cursors() {
+    return this.db.prepare(
+      'SELECT * FROM peer_sync_cursors ORDER BY peer_node_id, origin_node_id',
+    ).all().map((row) => ({
+      peer_node_id: row.peer_node_id,
+      origin_node_id: row.origin_node_id,
+      inbound_cursor: Number(row.inbound_cursor),
+      outbound_acked_seq: Number(row.outbound_acked_seq),
+      updated_at: row.updated_at,
+    }));
+  }
+
   // Drops outbox events confirmed by every active peer, and relay-stream
   // events confirmed by every active puller of that stream. The slowest
   // consumer bounds retention; peers without a cursor row do not constrain

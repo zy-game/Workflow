@@ -275,6 +275,10 @@ Workflow Task Event
 
 阶段 C 至此完整：事件模型、幂等 ingest、双向 pull/push、离线重放、游标与清理、粘性撤销、项目注册表同步、owner 路由闭环、执行状态可见性、事件签名、store-and-forward relay。后续增强（非阻塞）：origin key 的带外轮换流程、中继流按拉取方授权的细粒度隔离。
 
+### 阶段 E：客户端与运维（进行中）
+
+第一批已落地节点运维面：`GET /api/v1/admin/peers`（注册表 + 全部流游标）、`POST /api/v1/admin/peers/:id/revoke|activate`（撤销/恢复，粘性语义，写 `peer.revoked`/`peer.activated` 审计）、`GET /api/v1/admin/peer-sync`（同步全景：协议版本、签名/中继开关、origin 流、inbox 统计）。系统体检指标（systemCheckupMetrics）新增 peerSync 概要，供 AI 体检与管理台观察同步健康。
+
 ### 阶段 D：执行路由（已完成）
 
 实现 `project.owner_node_id` 路由和 `default -> origin_node_id` 规则，启动 Agent Run 前执行权校验，并确保非执行节点只投影事件。

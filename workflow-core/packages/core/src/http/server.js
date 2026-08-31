@@ -695,6 +695,39 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     };
   });
 
+  // --- admin: peer node operations ---
+  // Revocation is sticky (a revoked peer cannot re-handshake); activation is
+  // the explicit recovery action. Both leave audit events.
+  if (peerSyncService) {
+    router.add('GET', '/api/v1/admin/peers', (req) => {
+      requireAdmin(req);
+      return { ok: true, peers: peerSyncService.listPeers(), cursors: peerSyncService.cursors() };
+    });
+
+    router.add('GET', '/api/v1/admin/peer-sync', (req) => {
+      requireAdmin(req);
+      return { ok: true, sync: peerSyncService.status(), cursors: peerSyncService.cursors() };
+    });
+
+    router.add('POST', '/api/v1/admin/peers/:id/revoke', (req, res, body, params) => {
+      requireAdmin(req);
+      const peer = peerSyncService.revokePeer(params.id);
+      if (!peer) throw new HttpError(404, 'peer_not_found', 'peer is not registered');
+      authRepository.appendAudit({ type: 'peer.revoked', actor: 'admin', reason: peer.node_id });
+      return { ok: true, peer };
+    });
+
+    router.add('POST', '/api/v1/admin/peers/:id/activate', (req, res, body, params) => {
+      requireAdmin(req);
+      if (!peerSyncService.getPeer(params.id)) {
+        throw new HttpError(404, 'peer_not_found', 'peer is not registered');
+      }
+      const peer = peerSyncService.activatePeer(params.id);
+      authRepository.appendAudit({ type: 'peer.activated', actor: 'admin', reason: params.id });
+      return { ok: true, peer };
+    });
+  }
+
   // --- workers (live registry) ---
   if (workersRegistry) {
     router.add('GET', '/api/v1/workers', (req) => {

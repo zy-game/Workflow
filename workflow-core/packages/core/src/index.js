@@ -55,13 +55,21 @@ function forceCloseConnections(server) {
   server?.closeAllConnections?.();
 }
 
-function systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository }) {
+function systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService = null }) {
   const counts = taskRepository.countsByStatus?.() ?? {};
   const recent = taskRepository.list?.({ limit: 200 }) ?? [];
   const failed = recent.filter((t) => t.status === 'failed').slice(0, 15);
   const workers = workersRegistry.list();
   const knowledge = { projects: knowledgeRepository?.listProjects?.().length ?? 0, memories: knowledgeRepository?.listMemories?.({ all: true }).length ?? 0 };
-  return { counts, failed: failed.map((t) => ({ id: t.task_id, type: t.type, project: t.project_id, error: t.result?.error ?? null, attempts: t.attempts })), workers: workers.map((w) => ({ id: w.worker_id, connected: w.connected, revoked: w.revoked, projects: (w.projects ?? []).length })), pendingSuggestions: suggestionsRepository?.stats?.().pending ?? 0, knowledge };
+  const sync = peerSyncService?.status?.() ?? null;
+  const peerSync = sync ? {
+    relay: sync.relay,
+    signing: sync.signing,
+    headSeq: sync.head_seq,
+    peers: sync.peers.map((peer) => ({ node_id: peer.node_id, status: peer.status, lastSeenAt: peer.last_seen_at })),
+    inbox: sync.inbox,
+  } : null;
+  return { counts, failed: failed.map((t) => ({ id: t.task_id, type: t.type, project: t.project_id, error: t.result?.error ?? null, attempts: t.attempts })), workers: workers.map((w) => ({ id: w.worker_id, connected: w.connected, revoked: w.revoked, projects: (w.projects ?? []).length })), pendingSuggestions: suggestionsRepository?.stats?.().pending ?? 0, knowledge, peerSync };
 }
 
 function applySuggestion(ctx, suggestion) {
@@ -234,7 +242,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       const context = stat.baseline
         ? 'Previous round summary (use as context, do not repeat it):\n' + String(stat.baseline).slice(0, 2000)
         : 'This is the first round for this role.';
-      const metrics = systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository });
+      const metrics = systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService });
       const recent = suggestionsRepository.list({});
       const metrics2 = {
         ...metrics,

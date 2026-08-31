@@ -22,6 +22,7 @@ let server;
 let base;
 let peerToken;
 let workerToken;
+let adminToken;
 
 async function call(pathname, { token = peerToken, method = 'POST', body = {} } = {}) {
   const headers = { 'content-type': 'application/json' };
@@ -40,6 +41,7 @@ before(async () => {
   const peerSyncService = createPeerSyncService({ coreDb: coreDatabase, nodeId: NODE_ID, taskRepository: tasks });
   peerToken = auth.createMachineToken({ subject_id: 'node-beta', role: 'peer', project_ids: [] }).token;
   workerToken = auth.createMachineToken({ subject_id: 'worker-a', role: 'worker', project_ids: [] }).token;
+  adminToken = auth.createMachineToken({ subject_id: 'admin-cli', role: 'admin', project_ids: [] }).token;
   const app = createCoreServer({
     config: {}, nodeId: NODE_ID, authRepository: auth, taskRepository: tasks, peerSyncService,
   });
@@ -140,4 +142,48 @@ test('ack records the peer cursor and status reports the sync state', async () =
   // Forged events are rejected before any inbox receipt, and the replayed
   // event only surfaces in its push response, so one applied receipt remains.
   assert.deepEqual(status.body.inbox, { applied: 1 });
+});
+
+test('admin peer operations gate, revoke, activate, and audit', async () => {
+  // Handshake first so node-beta is a registered peer of this node.
+  await call('/api/v1/peer/sync/handshake', { body: { endpoint: 'https://beta.example:8710' } });
+
+  const forbidden = await call('/api/v1/admin/peers', { token: workerToken, method: 'GET' });
+  assert.equal(forbidden.status, 403);
+  const workerRevoke = await call('/api/v1/admin/peers/node-beta/revoke', { token: workerToken });
+  assert.equal(workerRevoke.status, 403);
+
+  const listing = await call('/api/v1/admin/peers', { token: adminToken, method: 'GET' });
+  assert.equal(listing.status, 200);
+  assert.equal(listing.body.peers[0].node_id, 'node-beta');
+  assert.equal(listing.body.peers[0].endpoint_url, 'https://beta.example:8710');
+  assert.ok(Array.isArray(listing.body.cursors));
+
+  const missing = await call('/api/v1/admin/peers/node-ghost/revoke', { token: adminToken });
+  assert.equal(missing.status, 404);
+
+  // Revocation is sticky at the protocol level immediately.
+  const revoked = await call('/api/v1/admin/peers/node-beta/revoke', { token: adminToken });
+  assert.equal(revoked.status, 200);
+  assert.equal(revoked.body.peer.status, 'revoked');
+  const rejectedPull = await call('/api/v1/peer/sync/pull', { body: { since_seq: 0 } });
+  assert.equal(rejectedPull.status, 403);
+  assert.equal(rejectedPull.body.code, 'PEER_REVOKED');
+
+  // Activation is the explicit recovery action; audit records both moves.
+  const activated = await call('/api/v1/admin/peers/node-beta/activate', { token: adminToken });
+  assert.equal(activated.status, 200);
+  assert.equal(activated.body.peer.status, 'active');
+  const recovered = await call('/api/v1/peer/sync/pull', { body: { since_seq: 0 } });
+  assert.equal(recovered.status, 200);
+
+  const audit = await call('/api/v1/admin/audit?type=peer.', { token: adminToken, method: 'GET' });
+  const peerEvents = audit.body.events.filter((event) => event.type.startsWith('peer.'));
+  assert.deepEqual(peerEvents.map((event) => event.type).sort(), ['peer.activated', 'peer.revoked']);
+
+  const sync = await call('/api/v1/admin/peer-sync', { token: adminToken, method: 'GET' });
+  assert.equal(sync.status, 200);
+  assert.equal(sync.body.sync.node_id, NODE_ID);
+  assert.equal(sync.body.sync.relay, false);
+  assert.ok(Array.isArray(sync.body.cursors));
 });
