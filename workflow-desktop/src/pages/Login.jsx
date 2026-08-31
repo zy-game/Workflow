@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ApiError } from '../lib/api.js';
+import { ApiError, CoreClient } from '../lib/api.js';
 
 export function Login({ onLogin }) {
   const [baseUrl, setBaseUrl] = useState('');

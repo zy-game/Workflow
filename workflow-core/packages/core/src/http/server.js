@@ -1063,6 +1063,39 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     };
   }
 
+  const WEB_MIME = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.map': 'application/json; charset=utf-8',
+    '.woff2': 'font/woff2',
+  };
+
+  // Serves the built web client (WFC_WEB_DIST) on the public server: same
+  // origin as the API, so the browser needs no CORS or proxy at all. Path
+  // traversal is rejected; unknown extension-less paths fall back to the
+  // SPA entry point.
+  function serveWebDist(pathname, res, cors) {
+    if (!config.webDist) return false;
+    const root = path.resolve(config.webDist);
+    const relative = decodeURIComponent(pathname).replace(/^\/+/, '') || 'index.html';
+    let candidate = path.resolve(root, relative);
+    if (candidate !== root && !candidate.startsWith(root + path.sep)) return false;
+    if (!fs.existsSync(candidate) || fs.statSync(candidate).isDirectory()) {
+      if (path.extname(relative)) return false;
+      candidate = path.join(root, 'index.html');
+      if (!fs.existsSync(candidate)) return false;
+    }
+    const type = WEB_MIME[path.extname(candidate).toLowerCase()] ?? 'application/octet-stream';
+    res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', ...cors });
+    fs.createReadStream(candidate).pipe(res);
+    return true;
+  }
+
   async function handle(req, res) {
     const cors = corsHeadersFor(req);
     try {
@@ -1073,7 +1106,10 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
       }
       const url = new URL(req.url, 'http://local');
       const matched = router.match(req.method, url.pathname);
-      if (!matched) throw new HttpError(404, 'not_found', `no route: ${req.method} ${url.pathname}`);
+      if (!matched) {
+        if (req.method === 'GET' && serveWebDist(url.pathname, res, cors)) return;
+        throw new HttpError(404, 'not_found', `no route: ${req.method} ${url.pathname}`);
+      }
       const bridgePath = url.pathname.startsWith('/api/v1/bridge/');
       const bodyLimit = url.pathname.endsWith('/events')
         ? MAX_BRIDGE_EVENTS_BODY_BYTES

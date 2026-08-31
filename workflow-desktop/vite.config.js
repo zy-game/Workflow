@@ -2,7 +2,18 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'log-api-requests',
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          console.log('[req]', req.method, req.url);
+          next();
+        });
+      },
+    },
+  ],
   server: {
     port: 5183,
     strictPort: true,
@@ -15,5 +26,5 @@ export default defineConfig({
   clearScreen: false,
   envPrefix: ['VITE_', 'TAURI_'],
   build: { target: 'chrome105', outDir: 'dist' },
-  test: { environment: 'node', setupFiles: ['src/test/setup.js'], include: ['src/**/*.test.js'] },
+  test: { environment: 'jsdom', setupFiles: ['src/test/setup.js'], include: ['src/**/*.test.{js,jsx}'] },
 });

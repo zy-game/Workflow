@@ -139,6 +139,9 @@ export function loadConfig(env = process.env) {
     peerRelay: flag(env, 'WFC_PEER_RELAY'),
     peers: peers(env, 'WFC_PEERS_JSON'),
     corsOrigins: corsOrigins(env, 'WFC_CORS_ORIGINS'),
+    // Optional directory of a built web client served on the public server
+    // (same origin as the API - no CORS involved at all).
+    webDist: text(env, 'WFC_WEB_DIST') ? path.resolve(text(env, 'WFC_WEB_DIST')) : null,
     knowledgeDb: text(env, 'WFC_KNOWLEDGE_DB')
       ? path.resolve(text(env, 'WFC_KNOWLEDGE_DB'))
       : path.join(dataDir, 'workflow.db'),
