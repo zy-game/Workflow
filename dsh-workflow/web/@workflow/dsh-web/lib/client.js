@@ -16,24 +16,41 @@ window.__ModuleLoader__.load({
 			try { return localStorage.getItem(CORE_URL_KEY) || "http://127.0.0.1:8710"; }
 			catch(e) { return "http://127.0.0.1:8710"; }
 		}
-		function getToken() {
-			try { return localStorage.getItem(TOKEN_KEY) || ""; }
-			catch(e) { return ""; }
-		}
-		function setToken(t) {
-			try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch(e) {}
-		}
+			function getToken() {
+				try { return localStorage.getItem(TOKEN_KEY) || ""; }
+				catch(e) { return ""; }
+			}
+			var authListeners = new Set();
+			function setToken(t) {
+				try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch(e) {}
+				authListeners.forEach(function(listener) { listener(!!t); });
+			}
+			function useAuth() {
+				var state = React.useState(!!getToken());
+				React.useEffect(function() {
+					authListeners.add(state[1]);
+					return function() { authListeners.delete(state[1]); };
+				}, []);
+				return state[0];
+			}
 
-		async function api(path, opts) {
-			var url = coreUrl().replace(/\/+$/, "") + path;
-			var headers = { "content-type": "application/json" };
-			var tk = getToken();
-			if (tk) headers.authorization = "Bearer " + tk;
-			var resp = await fetch(url, Object.assign({ headers: headers }, opts || {}));
-			var body = await resp.json().catch(function() { return {}; });
-			if (!resp.ok) throw { status: resp.status, message: body.error || body.code || ("HTTP " + resp.status) };
-			return body;
-		}
+			async function api(path, opts) {
+				var url = coreUrl().replace(/\/+$/, "") + path;
+				var headers = { "content-type": "application/json" };
+				var tk = getToken();
+				if (tk) headers.authorization = "Bearer " + tk;
+				var resp = await fetch(url, Object.assign({ headers: headers }, opts || {}));
+				var body = await resp.json().catch(function() { return {}; });
+				if (!resp.ok) {
+					if (resp.status === 401 && tk) {
+						setToken("");
+						setActivePage(null);
+					}
+					throw { status: resp.status, message: body.error || body.code || ("HTTP " + resp.status) };
+				}
+				return body;
+			}
+
 
 		// 当前打开的页面：null | "tasks" | "projects" | "peers" | "sync" | "login"
 		var activePage = null;
@@ -239,27 +256,38 @@ window.__ModuleLoader__.load({
 		// 后台管理模式：未登录 → 全屏登录墙盖住整个 DSH；登录成功 → 收起，
 		// 显示 DSH 页面（侧边栏含 Workflow 菜单）。点菜单打开对应页面，
 		// 未登录时点菜单也会弹登录墙。
-		function WorkflowPanel() {
-			var sbWidth = useSidebarWidth();
-			var pageState = useActivePage();
-			var page = pageState[0];
-			var authed = !!getToken();
-			// 未登录：全屏登录墙，挡住一切
-			if (!authed) return fullScreenLogin(sbWidth);
-			// 已登录且未点菜单：不遮挡，DSH 正常显示
-			if (!page) return null;
-			var View = VIEWS[page] || TasksView;
-			var titles = { tasks: "任务", projects: "项目", peers: "节点", sync: "同步" };
-			// 干净的页面：细标题行 + 内容，无横向 tab
-			return h("div", { style: S.panel(sbWidth) },
-				h("div", { style: { display: "flex", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid #2c2f37", flexShrink: 0 } },
-					h("span", { style: { fontWeight: 500, fontSize: "13px", color: "#8b8f99" } }, titles[page] || "Workflow"),
-					h("span", { style: S.spacer }),
-					h("button", { onClick: function() { setActivePage(null); }, style: Object.assign({}, S.btnGhost, { fontSize: "12px" }) }, "返回")
-				),
-				h("div", { style: S.content }, h(View))
-			);
-		}
+			function WorkflowPanel() {
+				var sbWidth = useSidebarWidth();
+				var pageState = useActivePage();
+				var page = pageState[0];
+				var authed = useAuth();
+				React.useEffect(function() {
+					if (!getToken()) return;
+					api("/api/v1/auth/client-session").catch(function() {});
+				}, []);
+				function logout() {
+					api("/api/v1/auth/client-logout", { method: "POST" }).catch(function() {}).finally(function() {
+						setActivePage(null);
+						setToken("");
+					});
+				}
+				// 未登录：全屏登录墙，挡住一切
+				if (!authed) return fullScreenLogin(sbWidth);
+				// 已登录且未点菜单：不遮挡，DSH 正常显示
+				if (!page) return null;
+				var View = VIEWS[page] || TasksView;
+				var titles = { tasks: "任务", projects: "项目", peers: "节点", sync: "同步" };
+				// 干净的页面：细标题行 + 内容，无横向 tab
+				return h("div", { style: S.panel(sbWidth) },
+					h("div", { style: { display: "flex", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid #2c2f37", flexShrink: 0 } },
+						h("span", { style: { fontWeight: 500, fontSize: "13px", color: "#8b8f99" } }, titles[page] || "Workflow"),
+						h("span", { style: S.spacer }),
+						h("button", { onClick: function() { setActivePage(null); }, style: Object.assign({}, S.btnGhost, { fontSize: "12px" }) }, "返回"),
+						h("button", { onClick: logout, style: Object.assign({}, S.btnGhost, { fontSize: "12px", marginLeft: "10px" }) }, "退出登录")
+					),
+					h("div", { style: S.content }, h(View))
+				);
+			}
 
 		// 全屏登录墙：盖住整个 DSH，只显示 Workflow 登录
 		function fullScreenLogin(sbWidth) {

@@ -1,0 +1,26 @@
+{
+  "name": "workflow-dsh-desktop",
+  "description": "Workflow × DSH desktop shell: runs Workflow Core and the DSH web UI in one native window",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win nsis",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.workflow.dsh-desktop",
+    "productName": "Workflow",
+    "win": { "target": ["nsis"] },
+    "files": ["main.js", "preload.js", "lib/**"],
+    "extraResources": [
+      { "from": "../workflow-core", "to": "workflow-core", "filter": ["**/*", "!node_modules/**", "!test/**"] },
+      { "from": "../dsh-workflow/web/@workflow", "to": "dsh-plugin", "filter": ["**/*"] }
+    ]
+  }
+}

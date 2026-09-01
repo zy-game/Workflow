@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import { apply, createWorkflowWeb } from '../web/workflow-web.mjs'
 
@@ -95,6 +96,17 @@ test('proxy pipes browser requests to Core with rewritten paths', async () => {
     await new Promise((resolve) => surface.close(resolve))
     await new Promise((resolve) => core.close(resolve))
   }
+})
+
+test('client auth state is reactive and invalid sessions return to login', () => {
+  const root = path.dirname(fileURLToPath(import.meta.url))
+  const client = fs.readFileSync(path.join(root, '../web/@workflow/dsh-web/lib/client.js'), 'utf8')
+  assert.match(client, /var authListeners = new Set\(\)/)
+  assert.match(client, /function useAuth\(\)/)
+  assert.match(client, /resp\.status === 401 && tk/)
+  assert.match(client, /setActivePage\(null\)/)
+  assert.match(client, /client-session/)
+  assert.match(client, /client-logout/)
 })
 
 test('client script route serves the configured file', async () => {
