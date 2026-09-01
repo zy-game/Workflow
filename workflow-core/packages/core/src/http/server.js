@@ -325,7 +325,7 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     send(res, 200, {
       ok: true, access_token: issued.token, token_type: 'bearer', expires_at: issued.expiresAt,
       account: { account_id: account.account_id, email: account.email, role: account.role },
-    });
+    }, corsHeadersFor(req));
     return null;
   });
 
@@ -1098,6 +1098,23 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
 
   async function handle(req, res) {
     const cors = corsHeadersFor(req);
+    // Inject CORS headers into every response, whichever code path writes it:
+    // patch writeHead once so route handlers sending directly (cookie login,
+    // bridge outcomes, static dist) cannot bypass the allow-list.
+    if (Object.keys(cors).length) {
+      const originalWriteHead = res.writeHead.bind(res);
+      res.writeHead = (status, ...rest) => {
+        const headersIndex = rest.length > 1 ? 1 : (typeof rest[0] === 'object' ? 0 : -1);
+        if (headersIndex >= 0 && rest[headersIndex] && typeof rest[headersIndex] === 'object' && !Array.isArray(rest[headersIndex])) {
+          rest[headersIndex] = { ...cors, ...rest[headersIndex] };
+        } else if (headersIndex >= 0) {
+          rest.splice(headersIndex, 0, { ...cors });
+        } else if (rest.length === 0 || typeof rest[0] === 'string') {
+          rest.unshift({ ...cors });
+        }
+        return originalWriteHead(status, ...rest);
+      };
+    }
     try {
       if (req.method === 'OPTIONS') {
         if (Object.keys(cors).length) send(res, 204, {}, cors);

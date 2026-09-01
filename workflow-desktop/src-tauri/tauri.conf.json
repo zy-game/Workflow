@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.workflow.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5183",
+    "beforeDevCommand": "",
+    "devUrl": "http://127.0.0.1:8710",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },

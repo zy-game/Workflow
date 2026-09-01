@@ -1,24 +1,26 @@
 {
   "name": "@workflow/dsh-web",
-  "description": "Workflow pages inside the DSH web UI: sidebar action plus a full-screen overlay embedding the Workflow Core web app",
+  "description": "Workflow pages inside the DSH web UI: sidebar action plus a full-screen panel showing tasks, projects, peers and sync status",
   "version": "0.1.0",
   "type": "module",
-  "main": "lib/client.js",
+  "main": "lib/index.js",
   "exports": {
     ".": {
-      "default": "./lib/client.js"
+      "default": "./lib/index.js"
     },
     "./client": {
       "default": "./lib/client.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "dsh": {
     "client": {
-      "inject": [],
+      "inject": ["slots"],
       "platform": "web"
     }
   },
   "files": [
+    "lib/index.js",
     "lib/client.js"
   ]
 }
