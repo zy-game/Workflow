@@ -748,7 +748,7 @@ Electron（`powerMonitor` 与原生通知都是现成能力）。preload 只暴�
 工作项：
 
 1. [x] **Probe 协议**：`packages/core/src/probe/`（repository + service），HTTP 路由 `POST /api/v1/probe`、`GET /api/v1/probe/:id`、`POST /api/v1/probe/:id/result`；探询随 Bridge `pull` 送达执行器。5 个测试覆盖"不建任务/不占 lease、probe_id 幂等、无证据拒绝、超时降级为 expired"。已部署到生产。
-2. **执行器侧只读调查**：Worker 增加 probe 处理路径，只读 sandbox，超时返回 `unknown`。
+2. [x] **执行器侧只读调查**：`BackendContract.investigate()` 默认返回 `unknown`（不会猜）；`ProbeRunner` 按 `budget_ms` 中止并回 `unknown`、并发超限立即回 `unknown`、非法 verdict 归一为 `unknown`；探询经 Worker 控制通道（`probe_request` / `probe_result`）投递，未送达的 claim 会归还给其他执行器。端到端测试覆盖"Worker 经 WebSocket 收到探询、回传证据、任务与 claim 路径不受影响"。已部署。
 3. **提案闸门**：扩展 `ai/suggestions-repository.js` 承载 Proposal（含 `commitment_id`、选项、否决截止）。
 4. **否决窗口**：飞书私聊卡片 + 定时器；支持否决与超时两条路径。
 5. **T1/T2 回复**：飞书群回复，带受众过滤占位。
