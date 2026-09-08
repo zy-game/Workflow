@@ -747,7 +747,7 @@ Electron（`powerMonitor` 与原生通知都是现成能力）。preload 只暴�
 
 工作项：
 
-1. **Probe 协议**：新增 `packages/core/src/probe/`（repository + service），Bridge 增加 `/api/v1/probe` 路由。
+1. [x] **Probe 协议**：`packages/core/src/probe/`（repository + service），HTTP 路由 `POST /api/v1/probe`、`GET /api/v1/probe/:id`、`POST /api/v1/probe/:id/result`；探询随 Bridge `pull` 送达执行器。5 个测试覆盖"不建任务/不占 lease、probe_id 幂等、无证据拒绝、超时降级为 expired"。已部署到生产。
 2. **执行器侧只读调查**：Worker 增加 probe 处理路径，只读 sandbox，超时返回 `unknown`。
 3. **提案闸门**：扩展 `ai/suggestions-repository.js` 承载 Proposal（含 `commitment_id`、选项、否决截止）。
 4. **否决窗口**：飞书私聊卡片 + 定时器；支持否决与超时两条路径。
