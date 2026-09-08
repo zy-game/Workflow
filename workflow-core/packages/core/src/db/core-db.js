@@ -254,6 +254,20 @@ function createCurrentSchema(db) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE ai_suggestions (
+      suggestion_id TEXT PRIMARY KEY,
+      target_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      reason TEXT,
+      metrics_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+    CREATE INDEX ai_suggestions_status_idx ON ai_suggestions(status, created_at);
+
     CREATE TABLE peer_nodes (
       node_id TEXT PRIMARY KEY,
       display_name TEXT,
@@ -406,6 +420,19 @@ export function createSchema(db) {
           value_json TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS ai_suggestions (
+          suggestion_id TEXT PRIMARY KEY,
+          target_type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL DEFAULT '',
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending',
+          reason TEXT,
+          metrics_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          resolved_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ai_suggestions_status_idx ON ai_suggestions(status, created_at);
       `);
       if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
         try { db.exec("ALTER TABLE tasks ADD COLUMN origin_node_id TEXT"); } catch { /* exists */ }
