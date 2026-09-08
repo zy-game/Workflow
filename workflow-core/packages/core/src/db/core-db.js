@@ -335,6 +335,38 @@ function createCurrentSchema(db) {
     );
     CREATE INDEX feedback_subject_idx ON feedback(subject_type, subject_ref);
 
+    CREATE TABLE commitments (
+      commitment_id TEXT PRIMARY KEY,
+      owner_id TEXT,
+      project_id TEXT,
+      channel_ref TEXT,
+      statement TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'active',
+      trigger_policy TEXT NOT NULL DEFAULT 'on_signal',
+      attention_policy TEXT NOT NULL DEFAULT 'immediate',
+      due_at TEXT,
+      last_evaluated_at TEXT,
+      last_activity_at TEXT,
+      last_attention_at TEXT,
+      source_signal_ids_json TEXT NOT NULL DEFAULT '[]',
+      evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+      version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX commitments_state_idx ON commitments(state, updated_at);
+    CREATE INDEX commitments_project_idx ON commitments(project_id, state);
+
+    CREATE TABLE commitment_events (
+      event_id TEXT PRIMARY KEY,
+      commitment_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      actor TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX commitment_events_commitment_idx ON commitment_events(commitment_id, created_at);
+
     CREATE TABLE peer_nodes (
       node_id TEXT PRIMARY KEY,
       display_name TEXT,
@@ -563,6 +595,36 @@ export function createSchema(db) {
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS feedback_subject_idx ON feedback(subject_type, subject_ref);
+        CREATE TABLE IF NOT EXISTS commitments (
+          commitment_id TEXT PRIMARY KEY,
+          owner_id TEXT,
+          project_id TEXT,
+          channel_ref TEXT,
+          statement TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'active',
+          trigger_policy TEXT NOT NULL DEFAULT 'on_signal',
+          attention_policy TEXT NOT NULL DEFAULT 'immediate',
+          due_at TEXT,
+          last_evaluated_at TEXT,
+          last_activity_at TEXT,
+          last_attention_at TEXT,
+          source_signal_ids_json TEXT NOT NULL DEFAULT '[]',
+          evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+          version INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS commitments_state_idx ON commitments(state, updated_at);
+        CREATE INDEX IF NOT EXISTS commitments_project_idx ON commitments(project_id, state);
+        CREATE TABLE IF NOT EXISTS commitment_events (
+          event_id TEXT PRIMARY KEY,
+          commitment_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          actor TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS commitment_events_commitment_idx ON commitment_events(commitment_id, created_at);
       `);
       try { db.exec("ALTER TABLE proposals ADD COLUMN tier TEXT NOT NULL DEFAULT 'T2'"); } catch { /* exists */ }
       if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
