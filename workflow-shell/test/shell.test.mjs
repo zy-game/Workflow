@@ -23,6 +23,8 @@ const console_ = fs.readFileSync(path.join(root, '../../workflow-core/packages/c
 test('the shell loads the server-hosted console instead of its own UI', () => {
   assert.match(main, /loadURL\(`\$\{SERVER_URL\}\/console`\)/);
   assert.match(main, /WORKFLOW_SERVER_URL/);
+  // Packaged builds ship the Worker as a resource, so the base path differs.
+  assert.match(main, /app\.isPackaged \? process\.resourcesPath/);
   // No local HTML to drift out of sync with the console.
   assert.ok(!fs.existsSync(path.join(root, '../index.html')), 'the shell must not ship its own page');
 });
@@ -113,4 +115,14 @@ test('the executor supervises exactly one worker process', async () => {
   } finally {
     executor.stop();
   }
+});
+
+test('a packaged build ships the worker it supervises', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, '../package.json'), 'utf8'));
+  assert.deepEqual(pkg.build.win.target, ['nsis']);
+  assert.equal(pkg.build.productName, 'Workflow');
+  const shipped = pkg.build.extraResources.map((entry) => entry.to);
+  assert.ok(shipped.includes('workflow-core/packages'), 'the worker source must ship with the shell');
+  assert.ok(shipped.includes('workflow-core/node_modules'), 'the worker dependencies must ship too');
+  assert.match(pkg.scripts.build, /electron-builder/);
 });

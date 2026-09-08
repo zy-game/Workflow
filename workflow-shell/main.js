@@ -30,8 +30,11 @@ let executor = null;
 
 // The local Agent Runtime the shell supervises. It is the Worker, because the
 // Worker already owns the backend contract, leases and result reporting.
+// In development the Worker lives next to the shell in the repository; in a
+// packaged build it is shipped as a resource, so the base directory differs.
+const WORKER_BASE = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 const WORKER_ENTRY = process.env.WORKFLOW_WORKER_ENTRY
-  || path.join(__dirname, '..', 'workflow-core', 'packages', 'worker', 'src', 'index.js');
+  || path.join(WORKER_BASE, 'workflow-core', 'packages', 'worker', 'src', 'index.js');
 // The token is issued by Core for a specific subject, so the shell tells the
 // user which worker id to request instead of inventing one silently.
 const DEFAULT_WORKER_ID = `worker-${os.hostname()}`;
