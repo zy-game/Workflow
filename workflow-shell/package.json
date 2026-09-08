@@ -1,0 +1,14 @@
+{
+  "name": "workflow-shell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workflow desktop shell: the server-hosted console plus OS-level idle detection and native notifications",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

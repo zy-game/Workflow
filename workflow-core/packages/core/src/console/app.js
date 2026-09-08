@@ -99,6 +99,7 @@ input { font-family:inherit; }
   var state = {
     view: 'proposals', proposals: [], loading: false, error: '', busy: '', loginError: '', busyLogin: false,
     memory: { tree: [], path: null, content: '', history: [], error: '' },
+    notifiedCount: 0,
   };
   var timer = null;
 
@@ -125,16 +126,41 @@ input { font-family:inherit; }
       return id;
     } catch (e) { return 'tp-unknown'; }
   }
-  function idleBucket() {
+  // The browser can only see its own tab; the desktop shell can ask the OS.
+  function localIdleBucket() {
     if (document.visibilityState !== 'visible') return 'idle';
     return document.hasFocus() ? 'active' : 'recent';
   }
   function reportPresence() {
     if (!token()) return;
-    api('/api/v1/presence', {
-      method: 'POST',
-      body: { touchpoint_id: touchpointId(), kind: 'browser', idle_bucket: idleBucket() },
+    var desktop = window.workflowDesktop;
+    var bucket = desktop && desktop.idleBucket
+      ? Promise.resolve(desktop.idleBucket()).catch(function () { return localIdleBucket(); })
+      : Promise.resolve(localIdleBucket());
+    bucket.then(function (value) {
+      return api('/api/v1/presence', {
+        method: 'POST',
+        body: {
+          touchpoint_id: touchpointId(),
+          kind: desktop ? 'desktop' : 'browser',
+          idle_bucket: value,
+        },
+      });
     }).catch(function () { /* presence is best effort */ });
+  }
+
+  // A native notification is the one thing a closed tab cannot do.
+  function notifyIfMorePending(proposals) {
+    var desktop = window.workflowDesktop;
+    var pending = (proposals || []).filter(function (proposal) { return proposal.state === 'pending'; });
+    if (!pending.length) { state.notifiedCount = 0; return; }
+    if (!desktop || !desktop.notify) return;
+    if (pending.length <= (state.notifiedCount || 0)) return;
+    state.notifiedCount = pending.length;
+    desktop.notify({
+      title: 'Workflow：' + pending.length + ' 条待决策',
+      body: pending[0].title,
+    });
   }
 
   function api(path, options) {
@@ -161,7 +187,10 @@ input { font-family:inherit; }
     if (!token()) return;
     state.loading = true; state.error = ''; render();
     api('/api/v1/proposals?state=pending')
-      .then(function (result) { state.proposals = result.proposals || []; })
+      .then(function (result) {
+        state.proposals = result.proposals || [];
+        notifyIfMorePending(state.proposals);
+      })
       .catch(function (err) { state.error = err.message || String(err); })
       .then(function () { state.loading = false; render(); });
   }
