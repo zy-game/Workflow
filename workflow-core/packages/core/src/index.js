@@ -232,6 +232,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       credentialCipher,
       serverLlm,
       knowledgeRepository,
+      probeService,
       nodeId: nodeIdentity.nodeId,
       log,
     });

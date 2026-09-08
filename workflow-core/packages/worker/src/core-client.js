@@ -7,7 +7,7 @@ const DEFAULT_HEARTBEAT_MS = 30_000;
 const RETRY_MAX_MS = 30_000;
 const TRANSIENT_TYPES = new Set([
   'status', 'progress', 'session_event', 'interaction_required',
-  'interaction_resolved', 'task_done', 'task_failed', 'error',
+  'interaction_resolved', 'task_done', 'task_failed', 'probe_result', 'error',
 ]);
 
 export class CoreConnection {

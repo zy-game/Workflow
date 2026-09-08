@@ -271,7 +271,7 @@ export function createBridgeService({
       // Probes ride the same pull: they are scoped to the bridge's projects
       // and never enter the claim/lease path.
       const probes = probeService
-        ? probeService.claimForBridge({ bridgeId, projectIds: current.projects })
+        ? probeService.claimForExecutor({ executorId: bridgeId, projectIds: current.projects })
         : [];
       const claims = taskRepository.activeForWorker(bridgeId, undefined, nodeId).map((task) => ({
         ...taskResponse(task),

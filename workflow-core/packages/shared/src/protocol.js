@@ -26,12 +26,12 @@ export const DEFAULT_PRIORITY = 5;
 export const WORKER_FRAME_TYPES = Object.freeze([
   'register', 'heartbeat', 'status', 'progress', 'session_event',
   'interaction_required', 'interaction_resolved', 'task_done', 'task_failed',
-  'error',
+  'probe_result', 'error',
 ]);
 
 export const CORE_FRAME_TYPES = Object.freeze([
   'config', 'dispatch', 'inject', 'cancel', 'pause', 'resume',
-  'interaction_response', 'interaction_cancel', 'ping', 'ack', 'error',
+  'interaction_response', 'interaction_cancel', 'probe_request', 'ping', 'ack', 'error',
 ]);
 
 const FRAME_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;

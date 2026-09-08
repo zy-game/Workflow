@@ -30,11 +30,12 @@ test('parseFrame rejects malformed envelopes', () => {
 test('frame directions expose only the Worker v4 control channel', () => {
   assert.deepEqual(WORKER_FRAME_TYPES, [
     'register', 'heartbeat', 'status', 'progress', 'session_event',
-    'interaction_required', 'interaction_resolved', 'task_done', 'task_failed', 'error',
+    'interaction_required', 'interaction_resolved', 'task_done', 'task_failed',
+    'probe_result', 'error',
   ]);
   assert.deepEqual(CORE_FRAME_TYPES, [
     'config', 'dispatch', 'inject', 'cancel', 'pause', 'resume',
-  'interaction_response', 'interaction_cancel', 'ping', 'ack', 'error',
+  'interaction_response', 'interaction_cancel', 'probe_request', 'ping', 'ack', 'error',
 ]);
   assert.ok(isWorkerFrame(frame('task_done', {})));
   assert.ok(isCoreFrame(frame('cancel', {})));

@@ -69,12 +69,12 @@ export function createProbeService({ probeRepository, knowledgeRepository = null
     return { probe, created: true };
   }
 
-  // Delivery happens on the executor's own pull, so a probe reaches a node
-  // behind NAT exactly like a task claim does.
-  function claimForBridge({ bridgeId, projectIds }) {
+  // Delivery happens on the executor's own pull (Bridge) or dispatch (Worker),
+  // so a probe reaches a node behind NAT exactly like a task claim does.
+  function claimForExecutor({ executorId, projectIds }) {
     const claimed = [];
     for (const probe of probeRepository.pendingForProjects(projectIds)) {
-      const taken = probeRepository.claim(probe.probeId, bridgeId);
+      const taken = probeRepository.claim(probe.probeId, executorId);
       if (taken) claimed.push(taken);
     }
     return claimed;
@@ -103,7 +103,8 @@ export function createProbeService({ probeRepository, knowledgeRepository = null
 
   return {
     request,
-    claimForBridge,
+    claimForExecutor,
+    release: (probeId) => probeRepository.release(probeId) > 0,
     answer,
     get: (probeId) => probeRepository.get(probeId),
     list: (options) => probeRepository.list(options),

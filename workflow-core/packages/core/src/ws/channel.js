@@ -26,7 +26,7 @@ function scopedProjects(principal, requested) {
 
 export function createWorkerChannel({
   authRepository, taskRepository, interactionRepository, workersRegistry,
-  feishuService = null, credentialCipher = null, nodeId = null, log = () => {},
+  feishuService = null, credentialCipher = null, probeService = null, nodeId = null, log = () => {},
 } = {}) {
   const wss = new WebSocketServer({ noServer: true });
   const sessions = new Map();
@@ -100,7 +100,36 @@ export function createWorkerChannel({
       resumed += 1;
     }
     for (const interaction of interactionRepository.pendingDelivery(workerId)) deliverInteraction(interaction);
+    deliverProbes(workerId);
     return resumed;
+  }
+
+  // Probes ride the same channel as dispatch but never enter the task claim
+  // path: they are scoped to the worker's projects and answered read-only.
+  function deliverProbes(workerId) {
+    if (!probeService) return 0;
+    const session = sessions.get(workerId);
+    const worker = workersRegistry.get(workerId);
+    if (!session || session.ws.readyState !== OPEN || !worker?.connected) return 0;
+    let delivered = 0;
+    for (const probe of probeService.claimForExecutor({ executorId: workerId, projectIds: worker.projects })) {
+      const sent = sendTo(workerId, frame('probe_request', {
+        probe_id: probe.probeId,
+        project_id: probe.projectId,
+        question: probe.question,
+        refs: probe.refs,
+        budget_ms: probe.budgetMs,
+        deadline_at: probe.deadlineAt,
+      }));
+      if (!sent) {
+        // Hand the claim back so another attempt can deliver it rather than
+        // letting it rot until the deadline.
+        probeService.release(probe.probeId);
+        break;
+      }
+      delivered += 1;
+    }
+    return delivered;
   }
 
   function dispatchToWorker(workerId) {
@@ -129,7 +158,10 @@ export function createWorkerChannel({
 
   function tryDispatch() {
     let total = 0;
-    for (const workerId of sessions.keys()) total += dispatchToWorker(workerId);
+    for (const workerId of sessions.keys()) {
+      total += dispatchToWorker(workerId);
+      deliverProbes(workerId);
+    }
     return total;
   }
 
@@ -271,6 +303,16 @@ export function createWorkerChannel({
       case 'session_event': {
         requireOwnership(session, payload);
         return taskRepository.appendSessionEvent(payload.task_id, payload.event ?? {}, session.workerId);
+      }
+      case 'probe_result': {
+        if (!probeService) throw new Error('probe service is not configured');
+        return probeService.answer({
+          probeId: payload.probe_id,
+          verdict: payload.verdict,
+          confidence: payload.confidence ?? null,
+          evidence: payload.evidence ?? [],
+          suggested_reply: payload.suggested_reply ?? null,
+        });
       }
       case 'interaction_required': {
         const task = requireOwnership(session, payload);

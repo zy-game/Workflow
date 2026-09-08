@@ -13,6 +13,10 @@ export class BackendContract {
   async inject() { return false; }
   async cancel() { return false; }
   async resolveInteraction() { return false; }
+  // Read-only status investigation for a probe. Implementations must not
+  // mutate the workspace: a probe answers with evidence, never with changes.
+  // A backend that cannot investigate reports "unknown" rather than guessing.
+  async investigate() { return { verdict: 'unknown', confidence: null, evidence: [] }; }
   async dispose() {}
 }
 

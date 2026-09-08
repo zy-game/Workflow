@@ -105,6 +105,16 @@ export class ProbeRepository {
     return changed ? this.get(probeId) : null;
   }
 
+  // Return an undelivered claim so another executor can pick it up instead of
+  // letting the probe rot until its deadline.
+  release(probeId) {
+    this.#requireDb();
+    return this.db.prepare(`
+      UPDATE probes SET state = 'queued', claimed_by = NULL, claimed_at = NULL
+      WHERE probe_id = ? AND state = 'claimed'
+    `).run(probeId).changes;
+  }
+
   answer(probeId, { verdict, confidence = null, evidence = [], suggestedReply = null } = {}) {
     this.#requireDb();
     const changed = this.db.prepare(`

@@ -13,6 +13,7 @@ import { EnvironmentStore } from './environment-store.js';
 import { ProcessSupervisor } from './process-supervisor.js';
 import { InteractionBridge } from './interaction-bridge.js';
 import { TaskRunner } from './runner.js';
+import { ProbeRunner } from './probe-runner.js';
 import { JsonlCliAdapter } from './adapters/jsonl.js';
 import { OmpRpcBackend } from './backends/omp-rpc.js';
 import { CredentialStore } from './credential-store.js';
@@ -159,6 +160,7 @@ export async function startWorker(config, { log = () => {}, WebSocketImpl, state
     register: { machine: os.hostname(), capabilities, projects: projectRegistry.list().map((p) => p.projectId), backends: registeredBackends, max_concurrency: config.maxConcurrency, version: config.version }, log });
   const interactions = new InteractionBridge({ core, backendRegistry, log });
   const runner = new TaskRunner({ core, backendRegistry, runStore, projectRegistry, interactionBridge: interactions, log, maxSlots: config.maxConcurrency });
+  const probes = new ProbeRunner({ core, backendRegistry, projectRegistry, log, backendKind: config.probeBackend ?? null });
   const credentialStore = new CredentialStore({ dataDir: config.stateDir });
   const knowledgeBridge = new KnowledgeBridgeServer({ coreUrl: config.coreUrl, coreToken: config.token, stateDir: config.stateDir, port: Number(config.knowledgePort || 0), log });
   await knowledgeBridge.start();
@@ -190,6 +192,7 @@ export async function startWorker(config, { log = () => {}, WebSocketImpl, state
     runner.handleDispatch(payload.task ?? payload, { resumed: payload.resumed === true }).catch((error) => log(`[worker] dispatch failed: ${error.message}`));
   });
   core.on('inject', (payload) => runner.handleInject(payload.task_id, payload.content));
+  core.on('probe_request', (payload) => probes.handle(payload).catch((error) => log(`[worker] probe failed: ${error.message}`)));
   core.on('cancel', (payload) => runner.handleCancel(payload.task_id));
   core.on('interaction_response', (payload) => runner.handleInteractionResponse(payload));
   core.on('interaction_cancel', (payload) => runner.handleInteractionCancel(payload));
