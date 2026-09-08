@@ -771,10 +771,10 @@ Electron（`powerMonitor` 与原生通知都是现成能力）。preload 只暴�
 
 工作项：
 
-1. **Commitment 存储**：新表 + repository，追加式事件。
-2. **记忆仓库**：初始化 `<workflow-memory>` git 仓库与目录布局（见 2.6）。
-3. **`workflow-memory` 技能**：写清读写约定、禁止项、清理规则。
-4. **记忆维护循环（keeper）**：定时 / 每批信号后运行，有界，只写记忆仓库。
+1. [x] **Commitment 存储**：`commitments` + 追加式 `commitment_events`（状态是事件日志的投影，不是覆盖写）；`trigger_policy` 与 `attention_policy` **两个独立时钟**，周期触发在自身周期内不重复打扰；`dueForAttention()` 无副作用，只报告不动作。7 个测试覆盖策略语法、阈值语义与去噪。
+2. [x] **记忆仓库**：`memory/store.js` 提供布局初始化、原子写、追加、git 提交、历史与按版本读取；**所有路径限定在仓库内**，逃逸路径直接拒绝。Core 每次启动都会建好布局。
+3. [x] **`workflow-memory` 技能**：`workflow-core/skills/workflow-memory/SKILL.md`，规定读哪个文件、只追加不覆盖、禁止写入的内容（凭据/绝对路径/环境变量/原始消息全文）与输出格式。
+4. [x] **记忆维护循环（keeper）**：有界运行——固定大小的摘要输入、只应用 `append`/`write`、单次写入上限、逃逸路径丢弃并记录、失败不阻塞（下一轮用上一版记忆）。**默认关闭**（`WFC_MEMORY_KEEPER_ENABLED`），因为每次运行都调用模型。
 5. **判断循环**：定时 tick + `ServerLlm` 判断调用，先只支持 `every:` 与 `threshold:`。
 6. **信号挂载**：飞书消息挂到已有 Commitment，挂不上则低置信度新建。
 7. **摘要合批**：非紧急提案合并为每日摘要。
