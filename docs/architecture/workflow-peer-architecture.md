@@ -1,6 +1,6 @@
 # Workflow 对等多节点架构方案
 
-状态：已确定，作为后续重构与实现的基线。
+状态：**产品定位部分已被 [Workflow 智能助理架构设计](./workflow-assistant-architecture.md) 取代。** 本文档保留其中对等同步、执行归属、事件模型、冲突处理的内容，它们作为新方案"执行权威层"继续有效；"DSH 是每个节点的 Agent Runtime"的表述在新方案中改为"DSH 是执行节点上的 Agent Runtime"。
 
 ## 1. 目标与范围
 
