@@ -750,9 +750,9 @@ Electron（`powerMonitor` 与原生通知都是现成能力）。preload 只暴�
 1. [x] **Probe 协议**：`packages/core/src/probe/`（repository + service），HTTP 路由 `POST /api/v1/probe`、`GET /api/v1/probe/:id`、`POST /api/v1/probe/:id/result`；探询随 Bridge `pull` 送达执行器。5 个测试覆盖"不建任务/不占 lease、probe_id 幂等、无证据拒绝、超时降级为 expired"。已部署到生产。
 2. [x] **执行器侧只读调查**：`BackendContract.investigate()` 默认返回 `unknown`（不会猜）；`ProbeRunner` 按 `budget_ms` 中止并回 `unknown`、并发超限立即回 `unknown`、非法 verdict 归一为 `unknown`；探询经 Worker 控制通道（`probe_request` / `probe_result`）投递，未送达的 claim 会归还给其他执行器。端到端测试覆盖"Worker 经 WebSocket 收到探询、回传证据、任务与 claim 路径不受影响"。已部署。
 3. [x] **提案闸门**：独立 `proposals` 表（**不并入 `ai_suggestions`**，避免体检把"要不要回复群里"当成系统缺陷来评估）；`POST/GET /api/v1/proposals`、`approve`、`reject`；`proposal_id` 幂等；已决议不可重复决议。
-4. [~] **否决窗口**：**已完成**超时语义与两条路径——`veto_ms` 生成截止时间，Core 每 5 秒扫描，过期即"按时限批准"（`decision=timeout`），显式否决优先；**待完成**：飞书私聊卡片（随第 5 项回复发送一并落地）。
-5. **T1/T2 回复**：飞书群回复，带受众过滤占位。
-6. **审计**：`reply_log` 落库，同时写入 `feedback`。
+4. [x] **否决窗口**：`veto_ms` 生成截止时间，Core 每 5 秒扫描，过期即"按时限批准"（`decision=timeout`），显式否决优先且记为 `feedback(signal=veto)`；已决议不可重复决议。飞书私聊卡片仍待做（随桌面端或通知通道一并落地）。
+5. [x] **T1/T2 回复**：`replies/` 服务把已批准的提案发出去。**tier 是提案自身的属性且不可被调用方上调**——否则能把"估计"升级成"可自动发送的事实"；T3 永不自动发送。发送前做**受众过滤**（绝对路径、凭据形态字符串一律隐藏，群消息截断）。一条提案只发一次。已部署。
+6. [x] **审计**：`reply_log` 记录每次发送（tier、autonomy、证据、最终文本、消息 ID），**先落库再发网络请求**，所以发送失败也留痕；`feedback` 记录否决信号。`GET /api/v1/replies` 可回看。已部署。
 7. **最小 Web 控制台**：提案列表 + 完整证据 + 否决操作；浏览器内可完成授权。深色主题 + 设计变量先落地。
 
 **验收**：
