@@ -796,9 +796,9 @@ Electron（`powerMonitor` 与原生通知都是现成能力）。preload 只暴�
 工作项：
 
 1. [x] **项目语义字段**：存在现有 `metadata` 里（`aliases[]`、`keywords[]`、`description`），**不动同步 schema**；可通过 `PATCH /api/v1/workflow/projects/:id` 设置。
-2. **渠道短期上下文**：`channels/<id>/recent.md` + TTL 清理。
+2. [x] **渠道短期上下文**：`signals/channel-context.js` 把渠道近期观察写进 `channels/<id>/recent.md`，**双重有界**（3 天 + 行数上限）；chat 引用会被净化为安全文件名，无法逃逸仓库。消解路由在给了 `channel_ref` 时自动读取该上下文。已部署。
 3. [x] **三级置信度**：`resolve/` 先做**字面归一化匹配**（单个命中直接 high，不调用模型）；多个命中交给模型，按置信度分档：high 行动 / medium 私聊回问 / low 不打扰。**模型点名了不在候选里的项目直接丢弃**；无法解析或空回答一律降为 low，绝不猜。已部署。
-4. **消解留档**：记录每次消解结果与置信度，写入 `feedback`。
+4. [x] **消解留档**：每次消解（含拒绝决策的）都写入 `feedback`（`subject_type=resolution`，`source=tier`，明细含置信度与原因），供自我优化调参。已部署。
 
 **验收**：
 
