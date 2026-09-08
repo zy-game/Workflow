@@ -26,6 +26,8 @@ import { createReplyService } from './replies/service.js';
 import { CommitmentRepository } from './commitments/repository.js';
 import { createCommitmentService } from './commitments/service.js';
 import { createJudgmentLoop } from './judgment/loop.js';
+import { SignalRepository } from './signals/repository.js';
+import { createSignalService } from './signals/service.js';
 import { createMemoryStore } from './memory/store.js';
 import { createMemoryKeeper } from './memory/keeper.js';
 import { createMemoryDigest } from './memory/digest.js';
@@ -232,6 +234,18 @@ export async function startCore(env = process.env, dependencies = {}) {
     });
     const taskCreationFacade = new TaskCreationFacade({ taskRepository, knowledgeRepository, nodeId: nodeIdentity.nodeId });
     workflowAgent = new WorkflowAgent({ taskRepository, taskCreationFacade, projectAgentsRegistry, knowledgeRepository, log });
+    // Commitments and signals are created before the channels so a message can
+    // update the model of the world the moment it arrives.
+    const commitmentRepository = new CommitmentRepository({ coreDb: coreDatabase });
+    const commitmentService = createCommitmentService({ commitmentRepository });
+    const signalService = createSignalService({
+      signalRepository: new SignalRepository({ coreDb: coreDatabase }),
+      commitmentService,
+      log,
+    });
+    const judgmentLoop = createJudgmentLoop({
+      commitmentService, proposalService, serverLlm, log,
+    });
     const feishuClient = config.feishu.enabled
       ? new FeishuClient({ appId: config.feishu.appId, appSecret: config.feishu.appSecret })
       : null;
@@ -242,6 +256,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       interactionRepository,
       workerChannel: null,
       coreDb: coreDatabase,
+      signalService,
       log,
     }) : null;
     const replyService = createReplyService({
@@ -252,11 +267,6 @@ export async function startCore(env = process.env, dependencies = {}) {
     });
     // Memory is files, so the layout is created on every start and the keeper
     // is opt-in: it calls the model on each run.
-    const commitmentRepository = new CommitmentRepository({ coreDb: coreDatabase });
-    const commitmentService = createCommitmentService({ commitmentRepository });
-    const judgmentLoop = createJudgmentLoop({
-      commitmentService, proposalService, serverLlm, log,
-    });
     const memoryStore = createMemoryStore({ root: config.memoryDir, log });
     try {
       memoryStore.ensureLayout();

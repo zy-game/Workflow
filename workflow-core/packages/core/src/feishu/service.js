@@ -13,13 +13,14 @@ const APPROVE_REPLY = /^(?:批准|同意|允许|approve|allow)[!。.!，,\s]*$/i
 const DENY_REPLY = /^(?:拒绝|不同意|deny|reject)[!。.!，,\s]*$/i;
 
 export class FeishuService {
-  constructor({ client, taskRepository, taskCreationFacade = null, interactionRepository, workerChannel, coreDb, db = null, log = () => {} } = {}) {
+  constructor({ client, taskRepository, taskCreationFacade = null, interactionRepository, workerChannel, coreDb, db = null, signalService = null, log = () => {} } = {}) {
     this.client = client;
     this.tasks = taskRepository;
     this.creation = taskCreationFacade;
     this.interactions = interactionRepository;
     this.channel = workerChannel;
     this.db = db || coreDb.db;
+    this.signals = signalService;
     this.log = log;
     this.connection = null;
     this.timers = new Map(); // task_id -> pending flush timer
@@ -53,7 +54,7 @@ export class FeishuService {
     return changes > 0;
   }
 
-  async handleInboundMessage({ messageId, chatId, text, senderId = null, projectId = null, project_id = null }) {
+  async handleInboundMessage({ messageId, chatId, text, senderId = null, projectId = null, project_id = null, kind = 'ambient' }) {
     if (!messageId || !chatId || typeof text !== 'string' || !text.trim()) return { ok: false, error: 'invalid_message' };
     if (!this.#deduped(messageId, chatId)) return { ok: true, duplicate: true };
 
@@ -62,6 +63,19 @@ export class FeishuService {
     const watched = this.#activeWatchForChat(chatId);
     const watchedTask = watched?.task_id ? this.tasks.get(watched.task_id) : null;
     const requestedProjectId = projectId || project_id || watchedTask?.project_id || null;
+
+    // Every message is evidence. Recording it here means the model of the world
+    // stays current even when the message creates no work at all.
+    if (this.signals) {
+      try {
+        this.signals.record({
+          channel: 'feishu', sourceRef: messageId, kind,
+          chatRef: chatId, projectId: requestedProjectId, senderRef: senderId, text,
+        });
+      } catch (error) {
+        this.log(`[feishu] signal record failed: ${error.message}`);
+      }
+    }
     if (watched?.task_id) {
       const pending = this.#pendingRemoteInteraction(watched.task_id);
       const operator = `feishu:${senderId ?? 'user'}`;
@@ -337,10 +351,17 @@ export class FeishuConnection {
           let text = message.content ?? '';
           try { text = JSON.parse(text).text ?? text; } catch { /* plain text */ }
           if (!text) return;
+          // How the message reached the bot decides whether it may open a
+          // responsibility: only messages aimed at the user may.
+          const mentions = Array.isArray(message.mentions) && message.mentions.length > 0;
+          const isReply = Boolean(message.parent_id || message.root_id);
+          const kind = message.chat_type === 'p2p' ? 'direct'
+            : mentions ? 'mention' : isReply ? 'reply' : 'ambient';
           await this.service.handleInboundMessage({
             messageId: message.message_id,
             chatId: message.chat_id ?? data?.chat_id,
             text: String(text).replace(/@_user_\d+/g, '').trim(),
+            kind,
             senderId: data?.event?.sender?.sender_id?.open_id
               ?? data?.sender?.sender_id?.open_id
               ?? data?.sender?.open_id

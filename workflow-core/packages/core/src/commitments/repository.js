@@ -149,4 +149,16 @@ export class CommitmentRepository {
     return this.db.prepare('SELECT * FROM commitment_events WHERE commitment_id = ? ORDER BY created_at ASC, rowid ASC')
       .all(String(commitmentId)).map(eventFromRow);
   }
+
+  // Attach a signal without duplicating it; returns null when the commitment
+  // does not exist.
+  addSourceSignal(commitmentId, signalId) {
+    this.#requireDb();
+    const commitment = this.get(commitmentId);
+    if (!commitment) return null;
+    if (commitment.sourceSignalIds.includes(signalId)) return commitment;
+    this.db.prepare('UPDATE commitments SET source_signal_ids_json = ? WHERE commitment_id = ?')
+      .run(JSON.stringify([...commitment.sourceSignalIds, signalId]), commitmentId);
+    return this.get(commitmentId);
+  }
 }

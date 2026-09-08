@@ -112,6 +112,17 @@ export function createCommitmentService({ commitmentRepository, now = () => new 
     return commitmentRepository.touch(commitmentId, { lastActivityAt: at });
   }
 
+  // A signal touched this responsibility: remember where it came from and when
+  // it last moved. The activity timestamp is what staleness thresholds read.
+  function attachSignal(commitmentId, signalId, at = now().toISOString()) {
+    const commitment = commitmentRepository.addSourceSignal(commitmentId, signalId);
+    if (!commitment) throw new CommitmentServiceError('commitment_not_found', 'commitment does not exist');
+    commitmentRepository.applyEvent({
+      commitmentId, type: 'signal_attached', payload: { signal_id: signalId }, actor: 'signal',
+    });
+    return commitmentRepository.touch(commitmentId, { lastActivityAt: at });
+  }
+
   return {
     open,
     transition,
@@ -119,6 +130,7 @@ export function createCommitmentService({ commitmentRepository, now = () => new 
     markEvaluated,
     markAttention,
     markActivity,
+    attachSignal,
     get: (commitmentId) => commitmentRepository.get(commitmentId),
     list: (options) => commitmentRepository.list(options),
     events: (commitmentId) => commitmentRepository.events(commitmentId),

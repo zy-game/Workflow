@@ -367,6 +367,20 @@ function createCurrentSchema(db) {
     );
     CREATE INDEX commitment_events_commitment_idx ON commitment_events(commitment_id, created_at);
 
+    CREATE TABLE signals (
+      signal_id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      chat_ref TEXT,
+      project_id TEXT,
+      sender_ref TEXT,
+      excerpt TEXT,
+      received_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX signals_source_idx ON signals(channel, source_ref);
+    CREATE INDEX signals_received_idx ON signals(received_at);
+
     CREATE TABLE peer_nodes (
       node_id TEXT PRIMARY KEY,
       display_name TEXT,
@@ -625,6 +639,19 @@ export function createSchema(db) {
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS commitment_events_commitment_idx ON commitment_events(commitment_id, created_at);
+        CREATE TABLE IF NOT EXISTS signals (
+          signal_id TEXT PRIMARY KEY,
+          channel TEXT NOT NULL,
+          source_ref TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          chat_ref TEXT,
+          project_id TEXT,
+          sender_ref TEXT,
+          excerpt TEXT,
+          received_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS signals_source_idx ON signals(channel, source_ref);
+        CREATE INDEX IF NOT EXISTS signals_received_idx ON signals(received_at);
       `);
       try { db.exec("ALTER TABLE proposals ADD COLUMN tier TEXT NOT NULL DEFAULT 'T2'"); } catch { /* exists */ }
       if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
