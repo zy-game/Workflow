@@ -288,6 +288,27 @@ function createCurrentSchema(db) {
     );
     CREATE INDEX probes_dispatch_idx ON probes(state, project_id, requested_at);
 
+    CREATE TABLE proposals (
+      proposal_id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_ref TEXT,
+      project_id TEXT,
+      channel_target TEXT,
+      title TEXT NOT NULL,
+      ask TEXT NOT NULL,
+      options_json TEXT NOT NULL DEFAULT '[]',
+      draft_text TEXT,
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      urgency TEXT NOT NULL DEFAULT 'normal',
+      confidence REAL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      decision TEXT,
+      veto_deadline TEXT,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+    CREATE INDEX proposals_state_idx ON proposals(state, created_at);
+
     CREATE TABLE peer_nodes (
       node_id TEXT PRIMARY KEY,
       display_name TEXT,
@@ -472,6 +493,26 @@ export function createSchema(db) {
           answered_at TEXT
         );
         CREATE INDEX IF NOT EXISTS probes_dispatch_idx ON probes(state, project_id, requested_at);
+        CREATE TABLE IF NOT EXISTS proposals (
+          proposal_id TEXT PRIMARY KEY,
+          source_type TEXT NOT NULL,
+          source_ref TEXT,
+          project_id TEXT,
+          channel_target TEXT,
+          title TEXT NOT NULL,
+          ask TEXT NOT NULL,
+          options_json TEXT NOT NULL DEFAULT '[]',
+          draft_text TEXT,
+          evidence_json TEXT NOT NULL DEFAULT '[]',
+          urgency TEXT NOT NULL DEFAULT 'normal',
+          confidence REAL,
+          state TEXT NOT NULL DEFAULT 'pending',
+          decision TEXT,
+          veto_deadline TEXT,
+          created_at TEXT NOT NULL,
+          resolved_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS proposals_state_idx ON proposals(state, created_at);
       `);
       if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
         try { db.exec("ALTER TABLE tasks ADD COLUMN origin_node_id TEXT"); } catch { /* exists */ }

@@ -14,6 +14,7 @@ import { frame } from '@workflow-core/shared';
 import { ADMIN_HTML } from '../admin/console.js';
 import { TaskRoutingError } from '../tasks/creation-facade.js';
 import { ProbeServiceError } from '../probe/service.js';
+import { ProposalServiceError } from '../proposals/service.js';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_BRIDGE_BODY_BYTES = 1024 * 1024;
@@ -102,7 +103,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -631,6 +632,59 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
       return { ok: true, probe };
     } catch (error) {
       throw probeHttpError(error);
+    }
+  });
+
+  // --- proposals: decisions waiting on the user ---
+  function proposalHttpError(error) {
+    if (!(error instanceof ProposalServiceError)) throw error;
+    const status = error.code === 'PROPOSAL_NOT_OPEN' ? 409 : 400;
+    return new HttpError(status, error.code, error.message);
+  }
+
+  router.add('GET', '/api/v1/proposals', (req) => {
+    if (!proposalService) throw new HttpError(503, 'proposal_unavailable', 'proposal service is not configured');
+    requireAdmin(req);
+    const url = new URL(req.url, 'http://local');
+    return { ok: true, proposals: proposalService.list({ state: url.searchParams.get('state') || null }) };
+  });
+
+  router.add('GET', '/api/v1/proposals/:id', (req, res, body, params) => {
+    if (!proposalService) throw new HttpError(503, 'proposal_unavailable', 'proposal service is not configured');
+    requireAdmin(req);
+    const proposal = proposalService.get(params.id);
+    if (!proposal) throw new HttpError(404, 'proposal_not_found', 'proposal does not exist');
+    return { ok: true, proposal };
+  });
+
+  router.add('POST', '/api/v1/proposals', (req, res, body) => {
+    if (!proposalService) throw new HttpError(503, 'proposal_unavailable', 'proposal service is not configured');
+    requireAdmin(req);
+    try {
+      const result = proposalService.open(body ?? {});
+      return { ok: true, created: result.created, proposal: result.proposal };
+    } catch (error) {
+      throw proposalHttpError(error);
+    }
+  });
+
+  router.add('POST', '/api/v1/proposals/:id/approve', (req, res, body, params) => {
+    if (!proposalService) throw new HttpError(503, 'proposal_unavailable', 'proposal service is not configured');
+    requireAdmin(req);
+    try {
+      return { ok: true, proposal: proposalService.decide({ proposalId: params.id, action: 'approve', option: body?.option ?? null }) };
+    } catch (error) {
+      throw proposalHttpError(error);
+    }
+  });
+
+  router.add('POST', '/api/v1/proposals/:id/reject', (req, res, body, params) => {
+    if (!proposalService) throw new HttpError(503, 'proposal_unavailable', 'proposal service is not configured');
+    requireAdmin(req);
+    try {
+      return { ok: true, proposal: proposalService.decide({ proposalId: params.id, action: 'reject' }) };
+    } catch (error) {
+      throw proposalHttpError(error);
     }
   });
 

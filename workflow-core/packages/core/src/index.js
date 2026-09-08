@@ -19,6 +19,8 @@ import { createPeerSyncClient } from './sync/client.js';
 import { loadSyncKeyPair } from './sync/sync-key.js';
 import { ProbeRepository } from './probe/repository.js';
 import { createProbeService } from './probe/service.js';
+import { ProposalRepository } from './proposals/repository.js';
+import { createProposalService } from './proposals/service.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -114,12 +116,14 @@ export async function startCore(env = process.env, dependencies = {}) {
   let peerSyncClient;
   let internal;
   let publicServer;
+  let proposalTimer = null;
   let shutdownPromise = null;
 
   const shutdown = () => {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
       const listenerClosures = [closeServer(publicServer), closeServer(internal)];
+      if (proposalTimer) { clearInterval(proposalTimer); proposalTimer = null; }
       feishuService?.stop();
       workerChannel?.stop();
       forceCloseConnections(publicServer);
@@ -193,6 +197,9 @@ export async function startCore(env = process.env, dependencies = {}) {
     knowledgeRepository = new WorkflowRepository({ filename: config.knowledgeDb, readOnly: false });
     const probeRepository = new ProbeRepository({ coreDb: coreDatabase });
     const probeService = createProbeService({ probeRepository, knowledgeRepository });
+    const proposalService = createProposalService({
+      proposalRepository: new ProposalRepository({ coreDb: coreDatabase }),
+    });
     const bridgeService = createBridgeService({
       bridgeRequestsRepository,
       workersRegistry,
@@ -305,6 +312,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       serverLlm,
       suggestionsRepository,
       probeService,
+      proposalService,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });
@@ -322,6 +330,19 @@ export async function startCore(env = process.env, dependencies = {}) {
       peerSyncClient.start();
       log(`[workflow-core] peer sync: pulling from ${config.peers.map((peer) => peer.node_id).join(', ')}`);
     }
+    // Veto window: a pending proposal past its deadline is approved by
+    // timeout, not dropped. Phase 1 item 5 replaces this log with the reply
+    // sender that consumes the approved proposals.
+    proposalTimer = setInterval(() => {
+      try {
+        for (const proposal of proposalService.expireDue()) {
+          log(`[proposals] ${proposal.proposalId} approved by veto timeout (no reply sender configured yet)`);
+        }
+      } catch (error) {
+        log(`[proposals] veto sweep failed: ${error.message}`);
+      }
+    }, 5_000);
+    proposalTimer.unref?.();
     if (feishuService) {
       await connectFeishu(feishuService, {
         appId: config.feishu.appId,
