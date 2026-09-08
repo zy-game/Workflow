@@ -143,25 +143,32 @@ export function createPeerSyncClient({ peerSyncService, peers = [], nodeId = nul
     }
   }
 
-  // A concurrent caller joins the in-flight round instead of skipping it, so
-  // an awaited tick() always reflects events published before it was called.
-  function tick() {
-    if (current) return current;
-    current = (async () => {
+  async function runRound() {
+    for (const peer of peers) {
       try {
-        for (const peer of peers) {
-          try {
-            await syncPeer(peer);
-          } catch (error) {
-            log(`[peer-sync] ${peer.node_id}: ${error.message}${error.cause ? `: ${error.cause}` : ''}`);
-          }
-        }
-        peerSyncService.pruneAcked();
-      } finally {
-        current = null;
+        await syncPeer(peer);
+      } catch (error) {
+        log(`[peer-sync] ${peer.node_id}: ${error.message}${error.cause ? `: ${error.cause}` : ''}`);
       }
+    }
+    peerSyncService.pruneAcked();
+  }
+
+  // Every call runs a round. A caller that arrives while a round is in flight
+  // waits for it and then runs a fresh one, so the returned promise reflects
+  // events published before the call. Rounds never overlap.
+  function tick() {
+    const previous = current;
+    const round = (async () => {
+      if (previous) {
+        try { await previous; } catch { /* the previous round reported its own errors */ }
+      }
+      await runRound();
     })();
-    return current;
+    current = round;
+    const release = () => { if (current === round) current = null; };
+    round.then(release, release);
+    return round;
   }
 
   return {
