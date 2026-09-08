@@ -17,6 +17,7 @@ import { TaskRoutingError } from '../tasks/creation-facade.js';
 import { ProbeServiceError } from '../probe/service.js';
 import { ProposalServiceError } from '../proposals/service.js';
 import { CommitmentServiceError } from '../commitments/service.js';
+import { metricsDelta } from '../ai/applications.js';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_BRIDGE_BODY_BYTES = 1024 * 1024;
@@ -105,7 +106,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, signalService = null, presenceService = null, runCheckup = null, applySuggestion = null, checkupMetrics = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, signalService = null, presenceService = null, runCheckup = null, applySuggestion = null, checkupMetrics = null, applicationRepository = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -1276,6 +1277,45 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
       const url = new URL(req.url, 'http://local');
       return { ok: true, suggestions: suggestionsRepository.list({ status: url.searchParams.get('status') || null }) };
     });
+    // What each applied change did: the snapshot it replaced and how the
+    // assistant metrics moved since.
+    router.add('GET', '/api/v1/ai/applications', (req) => {
+      requireAdmin(req);
+      if (!applicationRepository) throw new HttpError(503, 'applications_unavailable', 'application log is not configured');
+      const current = checkupMetrics?.() ?? null;
+      return {
+        ok: true,
+        applications: applicationRepository.list({ limit: 50 }).map((application) => ({
+          ...application,
+          metricsAfter: current,
+          delta: metricsDelta(application.metricsBefore, current),
+        })),
+      };
+    });
+
+    router.add('POST', '/api/v1/ai/applications/:id/revert', (req, res, body, params) => {
+      requireAdmin(req);
+      if (!applicationRepository) throw new HttpError(503, 'applications_unavailable', 'application log is not configured');
+      const application = applicationRepository.get(params.id);
+      if (!application) throw new HttpError(404, 'application_not_found', 'application does not exist');
+      if (application.revertedAt) throw new HttpError(409, 'already_reverted', 'application was already reverted');
+      const previous = application.before?.value;
+      try {
+        if (application.targetType === 'settings' || application.targetType === 'rule') {
+          if (application.before?.value === undefined) throw new Error('this change has no snapshot to restore');
+          settingsRepository.set(application.targetKey, previous);
+        } else if (application.targetType === 'skill') {
+          if (typeof application.before?.content !== 'string') throw new Error('this change has no snapshot to restore');
+          workersRegistry.upsertSkill(application.targetKey, application.before.content);
+        } else {
+          throw new Error(`target type ${application.targetType} cannot be reverted`);
+        }
+      } catch (error) {
+        throw new HttpError(400, 'revert_failed', error.message);
+      }
+      return { ok: true, application: applicationRepository.markReverted(params.id) };
+    });
+
     router.add('GET', '/api/v1/ai/metrics', (req) => {
       requireAdmin(req);
       if (!checkupMetrics) throw new HttpError(503, 'metrics_unavailable', 'checkup metrics are not configured');

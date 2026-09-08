@@ -12,6 +12,7 @@ import { CredentialCipher } from './workers/credential-key.js';
 import { ServerLlm } from './ai/server-llm.js';
 import { SettingsRepository } from './settings/repository.js';
 import { SuggestionsRepository } from './ai/suggestions-repository.js';
+import { SuggestionApplicationRepository } from './ai/applications.js';
 import { BridgeRequestsRepository } from './bridge/requests-repository.js';
 import { createBridgeService } from './bridge/service.js';
 import { createPeerSyncService } from './sync/service.js';
@@ -126,10 +127,22 @@ function systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepo
 
 function applySuggestion(ctx, suggestion) {
   const payload = suggestion.payload ?? {};
+  // Every change to the assistant's own configuration is snapshotted first, so
+  // it can be rolled back and its effect measured.
+  const snapshot = (targetKey, before, after) => {
+    try {
+      ctx.applicationRepository?.record({
+        suggestionId: suggestion.suggestionId, targetType: suggestion.targetType,
+        targetKey, before, after, metricsBefore: ctx.checkupMetrics?.() ?? {},
+      });
+    } catch { /* recording must never block the change */ }
+  };
   if (suggestion.targetType === 'skill') {
     if (!payload.name || !payload.content) throw new Error('suggestion payload requires name and content');
+    const previous = ctx.workersRegistry.listSkills().find((skill) => skill.name === payload.name) ?? null;
     const skill = ctx.workersRegistry.upsertSkill(payload.name, payload.content);
     for (const workerId of ctx.workerChannel?.connectedWorkers?.() ?? []) ctx.workerChannel.pushConfig(workerId);
+    snapshot(skill.name, previous ? { content: previous.content } : {}, { content: skill.content });
     return { applied: 'skill', name: skill.name, version: skill.version };
   }
   if (suggestion.targetType === 'knowledge') {
@@ -141,12 +154,16 @@ function applySuggestion(ctx, suggestion) {
   }
   if (suggestion.targetType === 'settings') {
     const key = payload.key; if (!key) throw new Error('suggestion payload requires key');
+    const before = ctx.settingsRepository.get(key) ?? null;
     ctx.settingsRepository.set(key, payload.value);
+    snapshot(key, { value: before }, { value: payload.value });
     return { applied: 'settings', key };
   }
   if (suggestion.targetType === 'rule') {
     const key = payload.key ?? 'rules.custom'; if (typeof payload.rules !== 'object') throw new Error('suggestion payload requires rules object');
+    const before = ctx.settingsRepository.get(key) ?? null;
     ctx.settingsRepository.set(key, payload.rules);
+    snapshot(key, { value: before }, { value: payload.rules });
     return { applied: 'rules', key };
   }
   throw new Error(`unsupported target type: ${suggestion.targetType}`);
@@ -358,7 +375,14 @@ export async function startCore(env = process.env, dependencies = {}) {
     });
     if (feishuService) feishuService.channel = workerChannel;
     const suggestionsRepository = new SuggestionsRepository({ coreDb: coreDatabase });
-    const applySuggestionBound = (suggestion) => applySuggestion({ workersRegistry, knowledgeRepository, settingsRepository, workerChannel }, suggestion);
+    const applicationRepository = new SuggestionApplicationRepository({ coreDb: coreDatabase });
+    const checkupMetrics = () => systemCheckupMetrics({
+      taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService, coreDb: coreDatabase,
+    });
+    const applySuggestionBound = (suggestion) => applySuggestion({
+      workersRegistry, knowledgeRepository, settingsRepository, workerChannel,
+      applicationRepository, checkupMetrics,
+    }, suggestion);
     const runCheckup = async () => {
       // Role-session pool: carry the previous round summary as context
       const role = 'checkup';
@@ -370,7 +394,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       const context = stat.baseline
         ? 'Previous round summary (use as context, do not repeat it):\n' + String(stat.baseline).slice(0, 2000)
         : 'This is the first round for this role.';
-      const metrics = systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService, coreDb: coreDatabase });
+      const metrics = checkupMetrics();
       const recent = suggestionsRepository.list({});
       const metrics2 = {
         ...metrics,
@@ -428,9 +452,8 @@ export async function startCore(env = process.env, dependencies = {}) {
       proposalService,
       replyService,
       // The console shows the same numbers the checkup reasons over.
-      checkupMetrics: () => systemCheckupMetrics({
-        taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService, coreDb: coreDatabase,
-      }),
+      checkupMetrics,
+      applicationRepository,
       commitmentService,
       judgmentLoop,
       digestService,

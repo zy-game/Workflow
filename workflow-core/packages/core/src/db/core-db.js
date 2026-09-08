@@ -336,6 +336,19 @@ function createCurrentSchema(db) {
     );
     CREATE INDEX feedback_subject_idx ON feedback(subject_type, subject_ref);
 
+    CREATE TABLE suggestion_applications (
+      application_id TEXT PRIMARY KEY,
+      suggestion_id TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_key TEXT,
+      before_json TEXT NOT NULL DEFAULT '{}',
+      after_json TEXT NOT NULL DEFAULT '{}',
+      metrics_before_json TEXT NOT NULL DEFAULT '{}',
+      applied_at TEXT NOT NULL,
+      reverted_at TEXT
+    );
+    CREATE INDEX suggestion_applications_suggestion_idx ON suggestion_applications(suggestion_id);
+
     CREATE TABLE commitments (
       commitment_id TEXT PRIMARY KEY,
       owner_id TEXT,
@@ -627,6 +640,18 @@ export function createSchema(db) {
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS feedback_subject_idx ON feedback(subject_type, subject_ref);
+        CREATE TABLE IF NOT EXISTS suggestion_applications (
+          application_id TEXT PRIMARY KEY,
+          suggestion_id TEXT NOT NULL,
+          target_type TEXT NOT NULL,
+          target_key TEXT,
+          before_json TEXT NOT NULL DEFAULT '{}',
+          after_json TEXT NOT NULL DEFAULT '{}',
+          metrics_before_json TEXT NOT NULL DEFAULT '{}',
+          applied_at TEXT NOT NULL,
+          reverted_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS suggestion_applications_suggestion_idx ON suggestion_applications(suggestion_id);
         CREATE TABLE IF NOT EXISTS commitments (
           commitment_id TEXT PRIMARY KEY,
           owner_id TEXT,
