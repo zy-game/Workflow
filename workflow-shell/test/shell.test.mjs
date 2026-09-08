@@ -25,6 +25,8 @@ test('the shell loads the server-hosted console instead of its own UI', () => {
   assert.match(main, /WORKFLOW_SERVER_URL/);
   // Packaged builds ship the Worker as a resource, so the base path differs.
   assert.match(main, /app\.isPackaged \? process\.resourcesPath/);
+  // The default target is the deployment this machine's worker points at.
+  assert.match(main, /WORKFLOW_SERVER_URL \|\| 'https:\/\/139\.155\.78\.241:8710'/);
   // No local HTML to drift out of sync with the console.
   assert.ok(!fs.existsSync(path.join(root, '../index.html')), 'the shell must not ship its own page');
 });
@@ -125,4 +127,12 @@ test('a packaged build ships the worker it supervises', () => {
   assert.ok(shipped.includes('workflow-core/packages'), 'the worker source must ship with the shell');
   assert.ok(shipped.includes('workflow-core/node_modules'), 'the worker dependencies must ship too');
   assert.match(pkg.scripts.build, /electron-builder/);
+});
+
+test('the shell has no menu bar and explains a failed load', () => {
+  assert.match(main, /Menu\.setApplicationMenu\(null\)/, 'the default Electron menu is noise here');
+  assert.match(main, /function fallbackHtml/, 'a blank window must explain itself');
+  assert.match(main, /did-fail-load/, 'load failures must be reported');
+  // The fallback must not reload itself forever.
+  assert.match(main, /startsWith\('data:'\)/);
 });

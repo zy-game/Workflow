@@ -6,11 +6,13 @@
 // reach the user on this machine.
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, Notification, ipcMain, powerMonitor, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, Menu, Notification, ipcMain, powerMonitor, safeStorage, shell } = require('electron');
 const { createConfigStore } = require('./lib/config.js');
 const { createExecutor } = require('./lib/executor.js');
 
-const SERVER_URL = (process.env.WORKFLOW_SERVER_URL || 'http://127.0.0.1:8710').replace(/\/+$/, '');
+// The server this shell talks to. Override with WORKFLOW_SERVER_URL; the
+// default is the deployment this machine's worker already points at.
+const SERVER_URL = (process.env.WORKFLOW_SERVER_URL || 'https://139.155.78.241:8710').replace(/\/+$/, '');
 const IDLE_ACTIVE_SECONDS = 60;
 const IDLE_RECENT_SECONDS = 300;
 
@@ -25,6 +27,24 @@ function idleBucket() {
 }
 
 let mainWindow = null;
+
+// A blank window explains nothing. If the console cannot load, say why and
+// what to change - the server URL is the one thing the user can act on.
+function fallbackHtml(url, description) {
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>Workflow</title>
+<style>body{margin:0;height:100vh;display:grid;place-items:center;background:#0b0d12;color:#e7e9ee;
+font-family:system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif;line-height:1.6}
+.card{max-width:520px;padding:32px;background:#14171e;border:1px solid #262b35;border-radius:8px}
+h1{font-size:16px;margin:0 0 12px}p{margin:0 0 12px;color:#9aa1ad;font-size:14px}
+code{font-family:ui-monospace,Consolas,monospace;color:#6c8cff;word-break:break-all}
+.hint{color:#6b7280;font-size:13px}</style></head><body><div class="card">
+<h1>连不上 Workflow 服务器</h1>
+<p>当前配置：<code>${url}</code></p>
+<p>${description}</p>
+<p class="hint">用环境变量 <code>WORKFLOW_SERVER_URL</code> 指定服务器地址后重新启动，例如<br>
+<code>WORKFLOW_SERVER_URL=https://139.155.78.241:8710</code></p>
+</div></body></html>`;
+}
 let configStore = null;
 let executor = null;
 
@@ -61,6 +81,9 @@ function createWindow() {
   });
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[renderer] load failed ${errorCode} ${errorDescription} ${validatedURL}`);
+    // Ignore the fallback page itself, or this would reload forever.
+    if (String(validatedURL).startsWith('data:')) return;
+    mainWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fallbackHtml(validatedURL, `${errorCode} ${errorDescription}`))}`);
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error(`[renderer] process gone ${details.reason}`);
@@ -74,6 +97,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // The console carries its own navigation; the default Electron menu is noise.
+  Menu.setApplicationMenu(null);
   configStore = createConfigStore({
     dir: app.getPath('userData'), serverUrl: SERVER_URL, safeStorage, log: console.log,
   });
