@@ -14,6 +14,12 @@
 # requires a loopback host), and the host's nginx terminates TLS in front of it.
 FROM node:24-bookworm-slim
 
+# git is required for the memory repository: memory is versioned files, and the
+# keeper commits every update so the user can roll back.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # The monorepo root owns the lockfile, so one workspace install covers Core,
