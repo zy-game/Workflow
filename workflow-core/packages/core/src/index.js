@@ -29,6 +29,7 @@ import { createJudgmentLoop } from './judgment/loop.js';
 import { SignalRepository } from './signals/repository.js';
 import { createSignalService } from './signals/service.js';
 import { createDigestService } from './digest/service.js';
+import { createResolverService } from './resolve/service.js';
 import { createMemoryStore } from './memory/store.js';
 import { createMemoryKeeper } from './memory/keeper.js';
 import { createMemoryDigest } from './memory/digest.js';
@@ -250,6 +251,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       commitmentService, proposalService, serverLlm, log,
     });
     const digestService = createDigestService({ commitmentService, proposalService, log });
+    const resolverService = createResolverService({ knowledgeRepository, serverLlm, log });
     const feishuClient = config.feishu.enabled
       ? new FeishuClient({ appId: config.feishu.appId, appSecret: config.feishu.appSecret })
       : null;
@@ -376,6 +378,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       judgmentLoop,
       digestService,
       memoryStore,
+      resolverService,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });

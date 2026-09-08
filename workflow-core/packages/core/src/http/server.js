@@ -105,7 +105,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -796,6 +796,26 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     requireAdmin(req);
     const pending = digestService.pending();
     return { ok: true, count: pending.length, commitments: pending };
+  });
+
+  // Reference resolution. Exposed so an operator can see how a phrase would be
+  // read before it ever reaches a group.
+  router.add('POST', '/api/v1/resolve', async (req, res, body) => {
+    if (!resolverService) throw new HttpError(503, 'resolve_unavailable', 'resolver is not configured');
+    requireAdmin(req);
+    const result = await resolverService.resolve({
+      text: body?.text,
+      channelRef: body?.channel_ref ?? null,
+      context: body?.context ?? null,
+    });
+    return { ok: true, ...result };
+  });
+
+  router.add('GET', '/api/v1/resolve/candidates', (req) => {
+    if (!resolverService) throw new HttpError(503, 'resolve_unavailable', 'resolver is not configured');
+    requireAdmin(req);
+    const url = new URL(req.url, 'http://local');
+    return { ok: true, candidates: resolverService.match(url.searchParams.get('text') || '') };
   });
 
   // --- memory: the assistant's beliefs, as readable files ---
