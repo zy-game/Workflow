@@ -4,8 +4,11 @@
 // UI, and adds only what a browser cannot provide - OS-level idle detection,
 // native notifications, and a process that keeps running so the assistant can
 // reach the user on this machine.
+const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, Notification, ipcMain, powerMonitor, shell } = require('electron');
+const { app, BrowserWindow, Notification, ipcMain, powerMonitor, safeStorage, shell } = require('electron');
+const { createConfigStore } = require('./lib/config.js');
+const { createExecutor } = require('./lib/executor.js');
 
 const SERVER_URL = (process.env.WORKFLOW_SERVER_URL || 'http://127.0.0.1:8710').replace(/\/+$/, '');
 const IDLE_ACTIVE_SECONDS = 60;
@@ -22,6 +25,16 @@ function idleBucket() {
 }
 
 let mainWindow = null;
+let configStore = null;
+let executor = null;
+
+// The local Agent Runtime the shell supervises. It is the Worker, because the
+// Worker already owns the backend contract, leases and result reporting.
+const WORKER_ENTRY = process.env.WORKFLOW_WORKER_ENTRY
+  || path.join(__dirname, '..', 'workflow-core', 'packages', 'worker', 'src', 'index.js');
+// The token is issued by Core for a specific subject, so the shell tells the
+// user which worker id to request instead of inventing one silently.
+const DEFAULT_WORKER_ID = `worker-${os.hostname()}`;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -58,6 +71,17 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  configStore = createConfigStore({
+    dir: app.getPath('userData'), serverUrl: SERVER_URL, safeStorage, log: console.log,
+  });
+  // A token provisioned out of band is sealed into the OS credential store; it
+  // never travels through the page. An explicit environment value wins, so
+  // re-provisioning a machine does not silently keep the old credential.
+  if (process.env.WORKFLOW_WORKER_TOKEN) {
+    configStore.setToken(process.env.WORKFLOW_WORKER_TOKEN);
+  }
+  executor = createExecutor({ entry: WORKER_ENTRY, log: console.log });
+
   ipcMain.handle('workflow:idle-bucket', () => idleBucket());
   ipcMain.handle('workflow:notify', (_event, payload) => {
     const title = String(payload?.title ?? 'Workflow').slice(0, 120);
@@ -67,12 +91,43 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('workflow:server-url', () => SERVER_URL);
+  ipcMain.handle('workflow:executor-status', () => ({
+    ...executor.snapshot(),
+    configured: Boolean(configStore.getToken()),
+    workerId: configStore.publicConfig().workerId || DEFAULT_WORKER_ID,
+    backendCommand: configStore.publicConfig().backendCommand,
+  }));
+  ipcMain.handle('workflow:executor-start', () => {
+    const config = configStore.read();
+    return executor.start({
+      serverUrl: config.serverUrl || SERVER_URL,
+      token: configStore.getToken(),
+      workerId: config.workerId || DEFAULT_WORKER_ID,
+      backendCommand: config.backendCommand,
+      backendArgs: config.backendArgs,
+    });
+  });
+  ipcMain.handle('workflow:executor-stop', () => executor.stop());
+  // A provisioned token makes this machine an executor node without further
+  // action: the point of the shell is to be reachable.
+  if (configStore.getToken()) {
+    const config = configStore.read();
+    executor.start({
+      serverUrl: config.serverUrl || SERVER_URL,
+      token: configStore.getToken(),
+      workerId: config.workerId || DEFAULT_WORKER_ID,
+      backendCommand: config.backendCommand,
+      backendArgs: config.backendArgs,
+    });
+  }
   createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+app.on('before-quit', () => { executor?.stop(); });
 
 app.on('window-all-closed', () => {
   // The shell exists to stay reachable, so it keeps running on every platform.

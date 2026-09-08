@@ -5,9 +5,15 @@
 // Electron, so they guard the shape of the app rather than its pixels.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { createConfigStore } = require('../lib/config.js');
+const { createExecutor } = require('../lib/executor.js');
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const main = fs.readFileSync(path.join(root, '../main.js'), 'utf8');
@@ -23,7 +29,9 @@ test('the shell loads the server-hosted console instead of its own UI', () => {
 
 test('the preload exposes capabilities, not privileges', () => {
   const exposed = [...preload.matchAll(/^\s{2}([a-zA-Z]+):/gm)].map((match) => match[1]).sort();
-  assert.deepEqual(exposed, ['idleBucket', 'notify', 'platform', 'serverUrl']);
+  assert.deepEqual(exposed, ['executor', 'idleBucket', 'notify', 'platform', 'serverUrl']);
+  // The worker token must never cross the bridge (comments aside).
+  assert.ok(!/token/i.test(preload.replace(/\/\/.*$/gm, '')), 'the preload must not carry the worker token');
   assert.match(preload, /contextBridge\.exposeInMainWorld\('workflowDesktop'/);
   // The bridge must not carry files, processes, or credentials.
   for (const forbidden of ['fs', 'exec', 'spawn', 'credential', 'token', 'env']) {
@@ -58,4 +66,51 @@ test('the console prefers the shell and falls back to the browser', () => {
   // Without the shell it must still work as an ordinary web page.
   assert.match(console_, /document\.visibilityState/);
   assert.match(console_, /document\.hasFocus\(\)/);
+});
+
+test('the worker token is sealed and never returned as plaintext', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-shell-config-'));
+  const sealed = [];
+  const fakeSafeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => { sealed.push(value); return Buffer.from(`sealed:${value}`); },
+    decryptString: (buffer) => buffer.toString().replace(/^sealed:/, ''),
+  };
+  try {
+    const store = createConfigStore({ dir, serverUrl: 'http://127.0.0.1:8710', safeStorage: fakeSafeStorage });
+    store.setToken('wfc-secret-token');
+    assert.equal(store.getToken(), 'wfc-secret-token');
+    assert.equal(store.publicConfig().hasToken, true);
+    assert.ok(!JSON.stringify(store.publicConfig()).includes('wfc-secret-token'), 'publicConfig must not leak the token');
+    assert.ok(!fs.readFileSync(store.file, 'utf8').includes('wfc-secret-token'), 'the token must not sit in a readable file');
+    store.setToken(null);
+    assert.equal(store.getToken(), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the executor supervises exactly one worker process', async () => {
+  const entry = path.join(root, 'fixtures/stay-alive.cjs');
+  const executor = createExecutor({ entry, log: () => {} });
+  try {
+    const started = executor.start({ serverUrl: 'http://127.0.0.1:8710', token: 'wfc-x' });
+    assert.equal(started.running, true);
+    assert.ok(started.pid, 'a started executor must have a pid');
+    // Starting again must not spawn a second process.
+    assert.equal(executor.start({ serverUrl: 'http://127.0.0.1:8710', token: 'wfc-x' }).pid, started.pid);
+    assert.equal(executor.isRunning(), true);
+
+    // The child must run on a real Node, not Electron's older bundled runtime.
+    const source = fs.readFileSync(path.join(root, '../lib/executor.js'), 'utf8');
+    assert.match(source, /WORKFLOW_NODE_BIN/);
+    assert.ok(!/spawn\(process\.execPath/.test(source), 'the executor must not spawn the Electron binary');
+
+    const stopped = executor.stop();
+    assert.equal(stopped.running, false);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(executor.isRunning(), false);
+  } finally {
+    executor.stop();
+  }
 });
