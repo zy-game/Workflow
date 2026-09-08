@@ -252,6 +252,9 @@ export async function startCore(env = process.env, dependencies = {}) {
     const memoryStore = createMemoryStore({ root: config.memoryDir, log });
     try {
       memoryStore.ensureLayout();
+      // Give the repository a baseline commit so history is meaningful from
+      // the very first day, even before the keeper runs.
+      memoryStore.commit('memory: initialize layout');
       log(`[memory] repository ready at ${config.memoryDir}`);
     } catch (error) {
       log(`[memory] repository unavailable: ${error.message}`);
