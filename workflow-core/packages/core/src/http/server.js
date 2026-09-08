@@ -105,7 +105,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, signalService = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -803,12 +803,17 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
   router.add('POST', '/api/v1/resolve', async (req, res, body) => {
     if (!resolverService) throw new HttpError(503, 'resolve_unavailable', 'resolver is not configured');
     requireAdmin(req);
-    const result = await resolverService.resolve({
-      text: body?.text,
-      channelRef: body?.channel_ref ?? null,
-      context: body?.context ?? null,
-    });
+    const channelRef = body?.channel_ref ?? null;
+    // The channel's recent past is what makes "那个 xxxx" mean anything.
+    const context = body?.context ?? (channelRef && signalService ? signalService.context(channelRef) : null);
+    const result = await resolverService.resolve({ text: body?.text, channelRef, context });
     return { ok: true, ...result };
+  });
+
+  router.add('GET', '/api/v1/channels/:id/context', (req, res, body, params) => {
+    if (!signalService) throw new HttpError(503, 'signals_unavailable', 'signal service is not configured');
+    requireAdmin(req);
+    return { ok: true, channel: params.id, context: signalService.context(params.id) };
   });
 
   router.add('GET', '/api/v1/resolve/candidates', (req) => {

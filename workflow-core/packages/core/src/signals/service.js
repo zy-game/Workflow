@@ -11,7 +11,9 @@ const MAX_EXCERPT = 200;
 const MAX_STATEMENT = 120;
 const UNCLASSIFIED_PREFIX = '待确认：';
 
-export function createSignalService({ signalRepository, commitmentService, log = () => {} } = {}) {
+export function createSignalService({
+  signalRepository, commitmentService, channelContext = null, log = () => {},
+} = {}) {
   if (!signalRepository) throw new TypeError('signalRepository is required');
   if (!commitmentService) throw new TypeError('commitmentService is required');
 
@@ -56,6 +58,16 @@ export function createSignalService({ signalRepository, commitmentService, log =
     });
     // A redelivered event is already recorded; do not attach it twice.
     if (!created) return { signal, created: false, attached: null, opened: null, reason: 'duplicate' };
+
+    // Keep the channel's recent past in a bounded file so a later "那个 xxxx"
+    // can be read against what the group was actually discussing.
+    if (channelContext && signal.chatRef) {
+      try {
+        channelContext.append(signal.chatRef, { at: signal.receivedAt, kind: signal.kind, text: signal.excerpt ?? '' });
+      } catch (error) {
+        log(`[signals] channel context failed for ${signal.chatRef}: ${error.message}`);
+      }
+    }
     let outcome;
     try {
       outcome = attach(signal);
@@ -71,5 +83,6 @@ export function createSignalService({ signalRepository, commitmentService, log =
     record,
     get: (signalId) => signalRepository.get(signalId),
     list: (options) => signalRepository.list(options),
+    context: (chatRef, options) => (channelContext ? channelContext.read(chatRef, options) : []),
   };
 }

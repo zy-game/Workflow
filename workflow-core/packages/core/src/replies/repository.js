@@ -6,7 +6,7 @@
 // the self-optimization loop reads later.
 import crypto from 'node:crypto';
 
-export const FEEDBACK_SIGNALS = ['approve', 'veto', 'ignore', 'drop', 'correct'];
+export const FEEDBACK_SIGNALS = ['approve', 'veto', 'ignore', 'drop', 'correct', 'resolved'];
 
 function replyFromRow(row) {
   return {
@@ -82,15 +82,15 @@ export class ReplyRepository {
     return this.get(replyId);
   }
 
-  addFeedback({ subjectType, subjectRef, signal, source = null }) {
+  addFeedback({ subjectType, subjectRef, signal, source = null, detail = {} }) {
     this.#requireDb();
     if (!FEEDBACK_SIGNALS.includes(signal)) throw new TypeError(`unsupported feedback signal: ${signal}`);
     const id = `fb-${crypto.randomUUID()}`;
     this.db.prepare(`
-      INSERT INTO feedback (feedback_id, subject_type, subject_ref, signal, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, String(subjectType), String(subjectRef), String(signal), source, new Date().toISOString());
-    return { feedbackId: id, subjectType, subjectRef, signal, source };
+      INSERT INTO feedback (feedback_id, subject_type, subject_ref, signal, source, detail_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, String(subjectType), String(subjectRef), String(signal), source, JSON.stringify(detail ?? {}), new Date().toISOString());
+    return { feedbackId: id, subjectType, subjectRef, signal, source, detail };
   }
 
   feedbackFor(subjectRef) {

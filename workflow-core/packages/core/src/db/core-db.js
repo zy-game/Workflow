@@ -331,6 +331,7 @@ function createCurrentSchema(db) {
       subject_ref TEXT NOT NULL,
       signal TEXT NOT NULL,
       source TEXT,
+      detail_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
     );
     CREATE INDEX feedback_subject_idx ON feedback(subject_type, subject_ref);
@@ -606,6 +607,7 @@ export function createSchema(db) {
           subject_ref TEXT NOT NULL,
           signal TEXT NOT NULL,
           source TEXT,
+          detail_json TEXT NOT NULL DEFAULT '{}',
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS feedback_subject_idx ON feedback(subject_type, subject_ref);
@@ -654,6 +656,7 @@ export function createSchema(db) {
         CREATE INDEX IF NOT EXISTS signals_received_idx ON signals(received_at);
       `);
       try { db.exec("ALTER TABLE proposals ADD COLUMN tier TEXT NOT NULL DEFAULT 'T2'"); } catch { /* exists */ }
+      try { db.exec("ALTER TABLE feedback ADD COLUMN detail_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* exists */ }
       if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
         try { db.exec("ALTER TABLE tasks ADD COLUMN origin_node_id TEXT"); } catch { /* exists */ }
         try { db.exec("ALTER TABLE tasks ADD COLUMN executor_node_id TEXT"); } catch { /* exists */ }

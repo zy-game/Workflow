@@ -28,6 +28,7 @@ import { createCommitmentService } from './commitments/service.js';
 import { createJudgmentLoop } from './judgment/loop.js';
 import { SignalRepository } from './signals/repository.js';
 import { createSignalService } from './signals/service.js';
+import { createChannelContext } from './signals/channel-context.js';
 import { createDigestService } from './digest/service.js';
 import { createResolverService } from './resolve/service.js';
 import { createMemoryStore } from './memory/store.js';
@@ -238,6 +239,18 @@ export async function startCore(env = process.env, dependencies = {}) {
     });
     const taskCreationFacade = new TaskCreationFacade({ taskRepository, knowledgeRepository, nodeId: nodeIdentity.nodeId });
     workflowAgent = new WorkflowAgent({ taskRepository, taskCreationFacade, projectAgentsRegistry, knowledgeRepository, log });
+    // Memory is files, so the layout is created on every start. It is created
+    // first because the channels and the keeper both write into it.
+    const memoryStore = createMemoryStore({ root: config.memoryDir, log });
+    try {
+      memoryStore.ensureLayout();
+      // Give the repository a baseline commit so history is meaningful from
+      // the very first day, even before the keeper runs.
+      memoryStore.commit('memory: initialize layout');
+      log(`[memory] repository ready at ${config.memoryDir}`);
+    } catch (error) {
+      log(`[memory] repository unavailable: ${error.message}`);
+    }
     // Commitments and signals are created before the channels so a message can
     // update the model of the world the moment it arrives.
     const commitmentRepository = new CommitmentRepository({ coreDb: coreDatabase });
@@ -245,13 +258,13 @@ export async function startCore(env = process.env, dependencies = {}) {
     const signalService = createSignalService({
       signalRepository: new SignalRepository({ coreDb: coreDatabase }),
       commitmentService,
+      channelContext: createChannelContext({ memoryStore }),
       log,
     });
     const judgmentLoop = createJudgmentLoop({
       commitmentService, proposalService, serverLlm, log,
     });
     const digestService = createDigestService({ commitmentService, proposalService, log });
-    const resolverService = createResolverService({ knowledgeRepository, serverLlm, log });
     const feishuClient = config.feishu.enabled
       ? new FeishuClient({ appId: config.feishu.appId, appSecret: config.feishu.appSecret })
       : null;
@@ -265,24 +278,20 @@ export async function startCore(env = process.env, dependencies = {}) {
       signalService,
       log,
     }) : null;
+    const replyRepository = new ReplyRepository({ coreDb: coreDatabase });
     const replyService = createReplyService({
-      replyRepository: new ReplyRepository({ coreDb: coreDatabase }),
+      replyRepository,
       proposalService,
       feishuClient,
       log,
     });
-    // Memory is files, so the layout is created on every start and the keeper
-    // is opt-in: it calls the model on each run.
-    const memoryStore = createMemoryStore({ root: config.memoryDir, log });
-    try {
-      memoryStore.ensureLayout();
-      // Give the repository a baseline commit so history is meaningful from
-      // the very first day, even before the keeper runs.
-      memoryStore.commit('memory: initialize layout');
-      log(`[memory] repository ready at ${config.memoryDir}`);
-    } catch (error) {
-      log(`[memory] repository unavailable: ${error.message}`);
-    }
+    const resolverService = createResolverService({
+      knowledgeRepository,
+      serverLlm,
+      recordFeedback: (entry) => replyRepository.addFeedback(entry),
+      log,
+    });
+    // The keeper is opt-in: it calls the model on each run.
     const memoryKeeper = createMemoryKeeper({
       memoryStore,
       serverLlm,
@@ -379,6 +388,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       digestService,
       memoryStore,
       resolverService,
+      signalService,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });

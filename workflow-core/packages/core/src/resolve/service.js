@@ -26,7 +26,9 @@ function tierFor(confidence) {
   return 'low';
 }
 
-export function createResolverService({ knowledgeRepository, serverLlm = null, log = () => {} } = {}) {
+export function createResolverService({
+  knowledgeRepository, serverLlm = null, recordFeedback = null, log = () => {},
+} = {}) {
   if (!knowledgeRepository) throw new TypeError('knowledgeRepository is required');
 
   function projects() {
@@ -40,7 +42,35 @@ export function createResolverService({ knowledgeRepository, serverLlm = null, l
     }));
   }
 
-  async function resolve({ text, channelRef = null, context = null } = {}) {
+  // Every resolution is recorded, including the ones that declined to decide:
+  // the tier distribution is what the self-optimization loop tunes against.
+  function note(result, { text, channelRef }) {
+    if (!recordFeedback) return;
+    try {
+      recordFeedback({
+        subjectType: 'resolution',
+        subjectRef: result.projectId ?? '',
+        signal: 'resolved',
+        source: result.tier,
+        detail: {
+          confidence: result.confidence,
+          reason: result.reason ?? null,
+          channel: channelRef ?? null,
+          text: String(text ?? '').slice(0, 200),
+        },
+      });
+    } catch (error) {
+      log(`[resolve] feedback failed: ${error.message}`);
+    }
+  }
+
+  async function resolve(input = {}) {
+    const result = await resolveOne(input);
+    note(result, input);
+    return result;
+  }
+
+  async function resolveOne({ text, channelRef = null, context = null } = {}) {
     const statement = String(text ?? '').trim();
     if (!statement) return { tier: 'low', projectId: null, confidence: 0, reason: 'empty_text' };
 
@@ -90,7 +120,7 @@ export function createResolverService({ knowledgeRepository, serverLlm = null, l
     };
   }
 
-  return { resolve, match: (text) => matchProjects({ text, projects: projects() }), projects };
+  return { resolve, resolveOne, match: (text) => matchProjects({ text, projects: projects() }), projects };
 }
 
 function extractFirstObject(text) {
