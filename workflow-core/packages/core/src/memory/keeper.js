@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extractJsonArray } from '../ai/json-array.js';
 
 const SKILL_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -28,22 +29,12 @@ export function loadMemorySkill() {
 // The model is told to emit a JSON array; tolerate prose or a fenced block
 // around it, but never invent writes that are not in the reply.
 export function parseWritePlan(text) {
-  const raw = String(text ?? '').trim();
-  const start = raw.indexOf('[');
-  const end = raw.lastIndexOf(']');
-  if (start < 0 || end <= start) return [];
-  let parsed;
-  try {
-    parsed = JSON.parse(raw.slice(start, end + 1));
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((entry) => (
-    entry && typeof entry === 'object'
-    && (entry.op === 'append' || entry.op === 'write')
-    && typeof entry.path === 'string' && entry.path.trim()
-  )).slice(0, MAX_WRITES_PER_RUN);
+  return extractJsonArray(text)
+    .filter((entry) => (
+      (entry.op === 'append' || entry.op === 'write')
+      && typeof entry.path === 'string' && entry.path.trim()
+    ))
+    .slice(0, MAX_WRITES_PER_RUN);
 }
 
 export function createMemoryKeeper({ memoryStore, serverLlm, digest = async () => null, log = () => {} } = {}) {

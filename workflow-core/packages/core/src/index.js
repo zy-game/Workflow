@@ -24,6 +24,8 @@ import { createProposalService } from './proposals/service.js';
 import { ReplyRepository } from './replies/repository.js';
 import { createReplyService } from './replies/service.js';
 import { CommitmentRepository } from './commitments/repository.js';
+import { createCommitmentService } from './commitments/service.js';
+import { createJudgmentLoop } from './judgment/loop.js';
 import { createMemoryStore } from './memory/store.js';
 import { createMemoryKeeper } from './memory/keeper.js';
 import { createMemoryDigest } from './memory/digest.js';
@@ -124,6 +126,7 @@ export async function startCore(env = process.env, dependencies = {}) {
   let publicServer;
   let proposalTimer = null;
   let keeperTimer = null;
+  let judgmentTimer = null;
   let shutdownPromise = null;
 
   const shutdown = () => {
@@ -132,6 +135,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       const listenerClosures = [closeServer(publicServer), closeServer(internal)];
       if (proposalTimer) { clearInterval(proposalTimer); proposalTimer = null; }
       if (keeperTimer) { clearInterval(keeperTimer); keeperTimer = null; }
+      if (judgmentTimer) { clearInterval(judgmentTimer); judgmentTimer = null; }
       feishuService?.stop();
       workerChannel?.stop();
       forceCloseConnections(publicServer);
@@ -249,6 +253,10 @@ export async function startCore(env = process.env, dependencies = {}) {
     // Memory is files, so the layout is created on every start and the keeper
     // is opt-in: it calls the model on each run.
     const commitmentRepository = new CommitmentRepository({ coreDb: coreDatabase });
+    const commitmentService = createCommitmentService({ commitmentRepository });
+    const judgmentLoop = createJudgmentLoop({
+      commitmentService, proposalService, serverLlm, log,
+    });
     const memoryStore = createMemoryStore({ root: config.memoryDir, log });
     try {
       memoryStore.ensureLayout();
@@ -350,6 +358,8 @@ export async function startCore(env = process.env, dependencies = {}) {
       probeService,
       proposalService,
       replyService,
+      commitmentService,
+      judgmentLoop,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });
@@ -389,6 +399,15 @@ export async function startCore(env = process.env, dependencies = {}) {
       }, config.memoryKeeper.intervalMs);
       keeperTimer.unref?.();
       log(`[memory] keeper enabled every ${Math.round(config.memoryKeeper.intervalMs / 1000)}s`);
+    }
+    if (config.judgment.enabled) {
+      judgmentTimer = setInterval(() => {
+        judgmentLoop.tick()
+          .then((result) => { if (result.raised) log(`[judgment] ${result.due} due, ${result.raised} proposal(s) raised`); })
+          .catch((error) => log(`[judgment] tick failed: ${error.message}`));
+      }, config.judgment.intervalMs);
+      judgmentTimer.unref?.();
+      log(`[judgment] loop enabled every ${Math.round(config.judgment.intervalMs / 1000)}s`);
     }
     if (feishuService) {
       await connectFeishu(feishuService, {

@@ -186,6 +186,13 @@ export function loadConfig(env = process.env) {
       enabled: flag(env, 'WFC_MEMORY_KEEPER_ENABLED'),
       intervalMs: integer(env, 'WFC_MEMORY_KEEPER_INTERVAL_MS', 15 * 60 * 1000, { min: 60_000 }),
     },
+    // The judgment loop is what makes the assistant proactive, so it is on by
+    // default. It only calls the model when a commitment is actually due, so an
+    // idle system costs nothing.
+    judgment: {
+      enabled: flag(env, 'WFC_JUDGMENT_ENABLED', true),
+      intervalMs: integer(env, 'WFC_JUDGMENT_INTERVAL_MS', 5 * 60 * 1000, { min: 30_000 }),
+    },
     llm: {
       enabled: flag(env, 'WFC_LLM_ENABLED'),
       baseUrl: text(env, 'WFC_LLM_BASE_URL') || 'https://api.openai.com/v1',

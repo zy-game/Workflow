@@ -16,6 +16,7 @@ import { CONSOLE_HTML } from '../console/app.js';
 import { TaskRoutingError } from '../tasks/creation-facade.js';
 import { ProbeServiceError } from '../probe/service.js';
 import { ProposalServiceError } from '../proposals/service.js';
+import { CommitmentServiceError } from '../commitments/service.js';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_BRIDGE_BODY_BYTES = 1024 * 1024;
@@ -104,7 +105,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -720,6 +721,66 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     if (!replyService) throw new HttpError(503, 'reply_unavailable', 'reply service is not configured');
     requireAdmin(req);
     return { ok: true, replies: replyService.list({ limit: 100 }) };
+  });
+
+  // --- commitments: responsibilities the assistant holds ---
+  function commitmentHttpError(error) {
+    if (!(error instanceof CommitmentServiceError)) throw error;
+    const status = error.code === 'commitment_not_found' ? 404 : 400;
+    return new HttpError(status, error.code, error.message);
+  }
+
+  router.add('GET', '/api/v1/commitments', (req) => {
+    if (!commitmentService) throw new HttpError(503, 'commitment_unavailable', 'commitment service is not configured');
+    requireAdmin(req);
+    const url = new URL(req.url, 'http://local');
+    return {
+      ok: true,
+      commitments: commitmentService.list({
+        state: url.searchParams.get('state') || null,
+        projectId: url.searchParams.get('project_id') || null,
+      }),
+    };
+  });
+
+  router.add('GET', '/api/v1/commitments/:id', (req, res, body, params) => {
+    if (!commitmentService) throw new HttpError(503, 'commitment_unavailable', 'commitment service is not configured');
+    requireAdmin(req);
+    const commitment = commitmentService.get(params.id);
+    if (!commitment) throw new HttpError(404, 'commitment_not_found', 'commitment does not exist');
+    return { ok: true, commitment, events: commitmentService.events(params.id) };
+  });
+
+  router.add('POST', '/api/v1/commitments', (req, res, body) => {
+    if (!commitmentService) throw new HttpError(503, 'commitment_unavailable', 'commitment service is not configured');
+    requireAdmin(req);
+    try {
+      const result = commitmentService.open(body ?? {});
+      return { ok: true, created: result.created, commitment: result.commitment };
+    } catch (error) {
+      throw commitmentHttpError(error);
+    }
+  });
+
+  router.add('POST', '/api/v1/commitments/:id/:action', (req, res, body, params) => {
+    if (!commitmentService) throw new HttpError(503, 'commitment_unavailable', 'commitment service is not configured');
+    requireAdmin(req);
+    try {
+      const commitment = commitmentService.transition({
+        commitmentId: params.id, action: params.action, actor: 'user', payload: body ?? {},
+      });
+      return { ok: true, commitment };
+    } catch (error) {
+      throw commitmentHttpError(error);
+    }
+  });
+
+  // A manual judgment pass. The loop also runs on its own timer; this exists so
+  // an operator can ask "what would you raise right now?" without waiting.
+  router.add('POST', '/api/v1/judgment/tick', async (req) => {
+    if (!judgmentLoop) throw new HttpError(503, 'judgment_unavailable', 'judgment loop is not configured');
+    requireAdmin(req);
+    return { ok: true, ...(await judgmentLoop.tick()) };
   });
 
   // --- peer sync: handshake, pull, push, ack ---

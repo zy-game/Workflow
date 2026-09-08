@@ -69,8 +69,13 @@ export function evaluateTrigger(trigger, { commitment, now, signalAttached = fal
       const last = parseTime(commitment.lastEvaluatedAt) ?? parseTime(commitment.createdAt);
       return last == null || now - last >= trigger.everyMs;
     }
-    case 'at':
-      return now >= trigger.atMs;
+    case 'at': {
+      if (now < trigger.atMs) return false;
+      // A one-shot check fires once: once it has been evaluated at or after
+      // its time, it is spent.
+      const last = parseTime(commitment.lastEvaluatedAt);
+      return last == null || last < trigger.atMs;
+    }
     default:
       return false;
   }
