@@ -168,3 +168,38 @@ sudo systemctl start workflow-core.service
 Restoring a pre-import `workflow.db` discards knowledge changes made after that backup. Do it only after preserving the current database and only when the incident specifically requires repository rollback.
 
 Rollback restores the previous Core and Worker release together; never run duplicate Core or Feishu listeners.
+
+## Container deployment
+
+Core can run from the repository `Dockerfile` instead of the systemd unit. The
+image installs the workspace with the root lockfile and runs as uid/gid 1000, so
+the data volume must be owned by that uid.
+
+Host networking is required: Core binds loopback only (`WFC_ALLOW_PLAIN_HTTP`
+rejects a non-loopback host), and the host's nginx terminates TLS in front of
+it. `WFC_DATA_DIR` is overridden because the image mounts the volume at `/data`.
+
+```bash
+sudo docker build -t workflow-core:<release> /opt/workflow-core/releases/<release>
+sudo systemctl stop workflow-core.service
+sudo systemctl disable workflow-core.service
+sudo docker run -d --name workflow-core --restart unless-stopped \
+  --network host \
+  --env-file /etc/workflow-core/core.env \
+  -e WFC_DATA_DIR=/data \
+  -v /var/lib/workflow-core:/data \
+  workflow-core:<release>
+curl -s http://127.0.0.1:18710/api/v1/health
+```
+
+Keep the systemd unit installed but disabled while the container runs: exactly
+one process may own the databases and the Feishu long connection. To roll back
+to systemd, remove the container first, then re-enable the unit.
+
+```bash
+sudo docker rm -f workflow-core
+sudo systemctl enable --now workflow-core.service
+```
+
+The container and the unit share `/var/lib/workflow-core`; never run both at
+the same time.
