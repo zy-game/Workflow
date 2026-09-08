@@ -196,6 +196,10 @@ Keep the systemd unit installed but disabled while the container runs: exactly
 one process may own the databases and the Feishu long connection. To roll back
 to systemd, remove the container first, then re-enable the unit.
 
+Build and verify the image tag before removing the running container. Removing
+first leaves the service down if the build failed or targeted the wrong
+release directory.
+
 ```bash
 sudo docker rm -f workflow-core
 sudo systemctl enable --now workflow-core.service
