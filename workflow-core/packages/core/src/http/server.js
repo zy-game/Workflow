@@ -344,6 +344,23 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     return null;
   });
 
+  // First-run setup. Public by necessity - it is the only way into a fresh
+  // install - but it closes permanently once an active account exists, and it
+  // needs a one-time code the operator prints with `setup-code`.
+  router.add('GET', '/api/v1/auth/bootstrap', () => ({ ok: true, ...authRepository.bootstrapStatus() }));
+
+  router.add('POST', '/api/v1/auth/bootstrap', async (req, res, body) => {
+    try {
+      const account = await authRepository.completeBootstrap({
+        token: body?.code, email: body?.email, password: body?.password,
+      });
+      return { ok: true, account: { email: account.email, role: account.role } };
+    } catch (error) {
+      const status = error.code === 'BOOTSTRAP_UNAVAILABLE' ? 409 : 400;
+      throw new HttpError(status, error.code ?? 'bootstrap_failed', error.message);
+    }
+  });
+
   router.add('GET', '/api/v1/auth/client-session', (req) => {
     const header = req.headers.authorization;
     const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';

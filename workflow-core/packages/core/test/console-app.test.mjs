@@ -59,7 +59,7 @@ test('the console carries the design tokens and the real API calls', () => {
     'data-act="approve"', 'data-act="reject"', 'data-act="send"',
     '/api/v1/memory/tree', '/api/v1/memory/file?path=', '/api/v1/memory/history?path=', '/api/v1/memory/revert',
     'data-nav="memory"', 'data-nav="replies"', 'data-nav="checkup"', 'data-revert=', 'data-suggestion=',
-    '/api/v1/presence', '/api/v1/replies?limit=', '/api/v1/ai/metrics', '/api/v1/ai/checkup', 'visibilitychange',
+    '/api/v1/presence', '/api/v1/replies?limit=', '/api/v1/ai/metrics', '/api/v1/ai/checkup', '/api/v1/auth/bootstrap', 'visibilitychange',
   ]) {
     assert.ok(CONSOLE_HTML.includes(call), `missing API call: ${call}`);
   }

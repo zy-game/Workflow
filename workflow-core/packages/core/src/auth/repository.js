@@ -190,6 +190,68 @@ export class AuthRepository {
     return Number(this.db.prepare('SELECT count(*) AS count FROM accounts').get().count);
   }
 
+  // --- first-run setup ---------------------------------------------------
+  // A fresh install has no way in. Setup is open only while no active account
+  // exists, and it needs a one-time code that is printed to the server log, so
+  // a publicly reachable console cannot be claimed by a stranger.
+  bootstrapStatus() {
+    const row = this.db.prepare('SELECT * FROM bootstrap_state WHERE singleton = 1').get();
+    const activeAccounts = this.db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE status = 'active'").get().n;
+    const pending = Number(row?.completed ?? 0) === 0 && activeAccounts === 0;
+    const expired = row?.expires_at ? Date.parse(row.expires_at) <= Date.now() : false;
+    return {
+      needed: pending,
+      codeRequired: pending && Boolean(row?.token_digest) && !expired,
+      activeAccounts: Number(activeAccounts),
+    };
+  }
+
+  // Issues a one-time setup code. Returns the plaintext exactly once; only its
+  // digest is stored.
+  beginBootstrap({ ttlMs = 30 * 60 * 1000 } = {}) {
+    const status = this.bootstrapStatus();
+    if (!status.needed) {
+      const error = new Error('setup is not available');
+      error.code = 'BOOTSTRAP_UNAVAILABLE';
+      throw error;
+    }
+    const { token, digest } = createRandomToken(32);
+    const now = new Date();
+    this.db.prepare(`
+      UPDATE bootstrap_state SET token_digest = ?, created_at = ?, expires_at = ? WHERE singleton = 1
+    `).run(digest, now.toISOString(), new Date(now.getTime() + ttlMs).toISOString());
+    return { token, expiresAt: new Date(now.getTime() + ttlMs).toISOString() };
+  }
+
+  async completeBootstrap({ token, email, password }) {
+    const status = this.bootstrapStatus();
+    if (!status.needed) {
+      const error = new Error('setup is not available');
+      error.code = 'BOOTSTRAP_UNAVAILABLE';
+      throw error;
+    }
+    const row = this.db.prepare('SELECT * FROM bootstrap_state WHERE singleton = 1').get();
+    if (!row?.token_digest) {
+      const error = new Error('no setup code has been issued');
+      error.code = 'BOOTSTRAP_CODE_MISSING';
+      throw error;
+    }
+    if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) {
+      const error = new Error('the setup code has expired');
+      error.code = 'BOOTSTRAP_CODE_EXPIRED';
+      throw error;
+    }
+    if (digestToken(String(token ?? '')) !== row.token_digest) {
+      const error = new Error('the setup code is not valid');
+      error.code = 'BOOTSTRAP_CODE_INVALID';
+      throw error;
+    }
+    const account = await this.createAccount({ email, password, role: 'admin' });
+    this.db.prepare('UPDATE bootstrap_state SET completed = 1, completed_at = ? WHERE singleton = 1')
+      .run(new Date().toISOString());
+    return account;
+  }
+
   // Password reset. Bumping credential_version invalidates the sessions and
   // tokens that were issued against the old password.
   async setPassword(email, password) {
