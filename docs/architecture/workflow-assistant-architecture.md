@@ -814,7 +814,7 @@ Electron（`powerMonitor` 与原生通知都是现成能力）。preload 只暴�
 
 1. [x] **桌面壳**（Electron）：`workflow-shell/` 加载服务器托管的同一套控制台，**不另做界面**；preload 只暴露四项能力（`idleBucket` / `notify` / `serverUrl` / `platform`），沙箱 + 隔离，外链走系统浏览器。空闲状态来自 `powerMonitor`（操作系统实测，不是页面焦点）。**已端到端验证**：窗口渲染登录页，登录后上报 `kind=desktop` + OS 空闲桶。
 2. [x] **在场广播**：`presence/` 由触达点上报事实（`idle_bucket` + 活跃项目），服务端**推导**而非猜测；报告带 TTL，崩溃的客户端会自然过期；`active()` 取最响的桶、同桶按最近上报；通知用**确认制**——首个 ack 生效，后来的抢不走，其余触达点据此静默。已部署。
-3. **本地执行器接入**：把本机 Agent Runtime 注册为可执行后端（实现 `backends/contract.js`），凭据只存本地。
+3. [x] **本地执行器接入**：桌面壳监管本机 Worker 进程（不自己执行）——凭据用**操作系统凭据存储**封存，不经 preload 桥、不落可读文件；环境变量优先，重新配置不会悄悄沿用旧令牌；**执行器用真实 Node 而非 `process.execPath`**（Electron 内置 Node 无 `node:sqlite`）；有令牌即自动启动，崩溃重启上限 3 次。**已端到端验证**：壳封存令牌 → 拉起 Worker → 注册到 Core（`workers_online=1`）。
 4. [x] **Web 在场卡片**：控制台在加载、可见性/焦点变化、以及每 30 秒上报自己的空闲状态。已部署。
 
 **验收**：
