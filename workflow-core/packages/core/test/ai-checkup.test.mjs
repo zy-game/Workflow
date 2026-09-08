@@ -43,6 +43,7 @@ test('the checkup loop stores CLI-produced proposals as pending suggestions', as
   fs.writeFileSync(stub, [
     'const transcript = process.argv[process.argv.length - 1] ?? "";',
     'if (!transcript.includes(' + JSON.stringify('"counts"') + ')) process.exit(3);',
+    'if (!transcript.includes(' + JSON.stringify('"assistant"') + ')) process.exit(4);',
     'process.stdout.write(JSON.stringify([',
     '  { target_type: "settings", title: "调高停滞阈值", summary: "stub", payload: { key: "rules.stale", value: { days: 6 } } },',
     ']));',

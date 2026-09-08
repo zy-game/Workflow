@@ -87,7 +87,12 @@ input { font-family:inherit; }
 .history-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) 0; border-bottom: 1px solid var(--border); }
 .history-row:last-child { border-bottom: none; }
 .history-row .muted { flex: 1; }
-@media (max-width:640px) { .shell { padding:var(--s4); } .actions { flex-wrap:wrap; } .memory-grid { grid-template-columns: 1fr; } }
+.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s3); }
+.metric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: var(--s4); }
+.metric .k { font-size: 12px; color: var(--text-3); }
+.metric .v { font-size: 24px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.metric .d { font-size: 12px; margin-top: 2px; }
+@media (max-width:640px) { .shell { padding:var(--s4); } .actions { flex-wrap:wrap; } .memory-grid { grid-template-columns: 1fr; } .metrics { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
 <body>
@@ -100,6 +105,7 @@ input { font-family:inherit; }
     view: 'proposals', proposals: [], loading: false, error: '', busy: '', loginError: '', busyLogin: false,
     memory: { tree: [], path: null, content: '', history: [], error: '' },
     replies: { items: [], error: '' },
+    checkup: { metrics: null, suggestions: [], error: '', busy: '' },
     notifiedCount: 0,
   };
   var timer = null;
@@ -252,6 +258,7 @@ input { font-family:inherit; }
     return '<div class="shell"><div class="topbar"><h1>提案</h1><div class="spacer"></div>' +
       '<button class="btn btn-ghost" data-nav="memory">记忆</button>' +
       '<button class="btn btn-ghost" data-nav="replies">回复记录</button>' +
+      '<button class="btn btn-ghost" data-nav="checkup">体检</button>' +
       '<button class="btn btn-ghost" data-act="refresh">刷新</button>' +
       '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
       '<h2 class="section-title">待决策 · ' + state.proposals.length + '</h2>' + body + '</div>';
@@ -292,10 +299,78 @@ input { font-family:inherit; }
       '<h2 class="section-title">共 ' + items.length + ' 条</h2>' + body + '</div>';
   }
 
+  // --- checkup: how well the assistant judges when to interrupt ---
+  function loadCheckup() {
+    state.checkup.error = ''; render();
+    Promise.all([api('/api/v1/ai/metrics'), api('/api/v1/ai/suggestions?status=pending')])
+      .then(function (results) {
+        state.checkup.metrics = results[0].metrics || null;
+        state.checkup.suggestions = results[1].suggestions || [];
+        render();
+      })
+      .catch(function (err) { state.checkup.error = err.message || String(err); render(); });
+  }
+
+  function runCheckup() {
+    state.checkup.busy = 'checkup'; render();
+    api('/api/v1/ai/checkup', { method: 'POST', body: {} })
+      .catch(function (err) { state.checkup.error = err.message || String(err); })
+      .then(function () { state.checkup.busy = ''; loadCheckup(); });
+  }
+
+  function decideSuggestion(id, action) {
+    state.checkup.busy = id; render();
+    api('/api/v1/ai/suggestions/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: {} })
+      .catch(function (err) { state.checkup.error = err.message || String(err); })
+      .then(function () { state.checkup.busy = ''; loadCheckup(); });
+  }
+
+  function metricCard(label, value, hint) {
+    return '<div class="metric"><div class="k">' + esc(label) + '</div><div class="v">' +
+      esc(value == null ? '—' : value) + '</div>' + (hint ? '<div class="d muted">' + esc(hint) + '</div>' : '') + '</div>';
+  }
+
+  function checkupView() {
+    var checkup = state.checkup;
+    var assistant = checkup.metrics && checkup.metrics.assistant;
+    var pct = function (rate) { return rate == null ? null : Math.round(rate * 100) + '%'; };
+    var cards = assistant
+      ? metricCard('提案准确率', pct(assistant.proposals.approval_rate), '批准 ' + assistant.proposals.approved + ' / ' + assistant.proposals.total) +
+        metricCard('提案否决率', pct(assistant.proposals.rejection_rate), '否决 ' + assistant.proposals.rejected) +
+        metricCard('消解自动率', pct(assistant.resolution.auto_rate), '高置信 ' + assistant.resolution.high_confidence + ' / ' + assistant.resolution.total) +
+        metricCard('回复否决率', pct(assistant.replies.veto_rate), '否决 ' + assistant.replies.vetoed + ' / ' + assistant.replies.total) +
+        metricCard('自主发送', String(assistant.replies.auto_sent), '非人工批准') +
+        metricCard('责任丢弃', String(assistant.commitments.dropped), '最安静的负信号')
+      : '<div class="card muted">还没有可计算的指标。</div>';
+    var suggestions = checkup.suggestions.length
+      ? checkup.suggestions.map(function (suggestion) {
+        var busy = checkup.busy === suggestion.suggestionId;
+        return '<div class="card"><div class="head"><strong style="flex:1">' + esc(suggestion.title) + '</strong>' +
+          '<span class="badge badge-muted">' + esc(suggestion.targetType) + '</span></div>' +
+          '<div class="ask"><div class="label">依据</div><div>' + esc(suggestion.summary) + '</div></div>' +
+          '<div class="actions">' +
+          '<button class="btn btn-primary" data-suggestion="' + esc(suggestion.suggestionId) + '" data-decision="approve"' + (busy ? ' disabled' : '') + '>采纳并应用</button>' +
+          '<button class="btn btn-ghost" data-suggestion="' + esc(suggestion.suggestionId) + '" data-decision="ignore"' + (busy ? ' disabled' : '') + '>忽略</button>' +
+          '</div></div>';
+      }).join('')
+      : '<div class="card muted">没有待处理的建议。</div>';
+    return '<div class="shell"><div class="topbar"><h1>体检</h1><div class="spacer"></div>' +
+      '<button class="btn btn-ghost" data-nav="proposals">提案</button>' +
+      '<button class="btn btn-ghost" data-nav="memory">记忆</button>' +
+      '<button class="btn btn-ghost" data-nav="replies">回复记录</button>' +
+      '<button class="btn btn-ghost" data-act="checkup-refresh">刷新</button>' +
+      '<button class="btn btn-ghost" data-act="checkup-run"' + (checkup.busy === 'checkup' ? ' disabled' : '') + '>立即体检</button>' +
+      '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
+      (checkup.error ? '<div class="card error">' + esc(checkup.error) + '</div>' : '') +
+      '<h2 class="section-title">助理行为指标</h2><div class="metrics">' + cards + '</div>' +
+      '<h2 class="section-title" style="margin-top:24px">AI 改进建议 · ' + checkup.suggestions.length + '</h2>' + suggestions + '</div>';
+  }
+
   function render() {
     if (!token()) { root.innerHTML = loginView(); return; }
     if (state.view === 'memory') root.innerHTML = memoryView();
     else if (state.view === 'replies') root.innerHTML = repliesView();
+    else if (state.view === 'checkup') root.innerHTML = checkupView();
     else root.innerHTML = proposalsView();
   }
 
@@ -379,18 +454,23 @@ input { font-family:inherit; }
       render();
       if (state.view === 'memory' && !state.memory.tree.length) loadMemory();
       if (state.view === 'replies' && !state.replies.items.length) loadReplies();
+      if (state.view === 'checkup' && !state.checkup.metrics) loadCheckup();
       return;
     }
     var file = event.target.closest('[data-file]');
     if (file) return openFile(file.dataset.file);
     var revert = event.target.closest('[data-revert]');
     if (revert) return revertFile(revert.dataset.revert);
+    var suggestion = event.target.closest('[data-suggestion]');
+    if (suggestion) return decideSuggestion(suggestion.dataset.suggestion, suggestion.dataset.decision);
     var button = event.target.closest('[data-act]');
     if (!button) return;
     var action = button.dataset.act;
     if (action === 'refresh') return load();
     if (action === 'memory-refresh') return loadMemory();
     if (action === 'replies-refresh') return loadReplies();
+    if (action === 'checkup-refresh') return loadCheckup();
+    if (action === 'checkup-run') return runCheckup();
     if (action === 'logout') return setToken('');
     var id = button.dataset.id;
     state.busy = id; render();

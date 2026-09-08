@@ -143,3 +143,22 @@ test('malformed commitments are rejected', () => {
   assert.throws(() => service.transition({ commitmentId: 'cmt-1', action: 'nonsense' }), /action must be one of/);
   assert.throws(() => service.transition({ commitmentId: 'missing', action: 'fulfill' }), /does not exist/);
 });
+
+test('a state change is reported to the caller for feedback', () => {
+  const seen = [];
+  const observed = createCommitmentService({
+    commitmentRepository: new CommitmentRepository({ coreDb }),
+    onTransition: ({ commitment, action }) => seen.push({ id: commitment.commitmentId, action }),
+  });
+  observed.open({ commitment_id: 'cmt-observe', statement: 'x' });
+  observed.transition({ commitmentId: 'cmt-observe', action: 'drop' });
+  assert.deepEqual(seen, [{ id: 'cmt-observe', action: 'drop' }]);
+
+  // A throwing observer must not block the state change.
+  const resilient = createCommitmentService({
+    commitmentRepository: new CommitmentRepository({ coreDb }),
+    onTransition: () => { throw new Error('observer down'); },
+  });
+  resilient.open({ commitment_id: 'cmt-resilient', statement: 'x' });
+  assert.equal(resilient.transition({ commitmentId: 'cmt-resilient', action: 'fulfill' }).state, 'fulfilled');
+});

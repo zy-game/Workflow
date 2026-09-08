@@ -105,7 +105,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, signalService = null, presenceService = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, signalService = null, presenceService = null, runCheckup = null, applySuggestion = null, checkupMetrics = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -697,7 +697,7 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
       const proposal = proposalService.decide({ proposalId: params.id, action: 'reject' });
       // A rejection is the strongest signal the assistant can get: record it
       // so the self-optimization loop can learn from it.
-      replyService?.recordVeto(params.id);
+      replyService?.recordDecision(params.id, 'reject');
       return { ok: true, proposal };
     } catch (error) {
       throw proposalHttpError(error);
@@ -1276,6 +1276,12 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
       const url = new URL(req.url, 'http://local');
       return { ok: true, suggestions: suggestionsRepository.list({ status: url.searchParams.get('status') || null }) };
     });
+    router.add('GET', '/api/v1/ai/metrics', (req) => {
+      requireAdmin(req);
+      if (!checkupMetrics) throw new HttpError(503, 'metrics_unavailable', 'checkup metrics are not configured');
+      return { ok: true, metrics: checkupMetrics() };
+    });
+
     router.add('POST', '/api/v1/ai/checkup', async (req, res, body) => {
       requireAdmin(req);
       const result = await runCheckup();

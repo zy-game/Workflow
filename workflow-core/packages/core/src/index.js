@@ -72,7 +72,34 @@ function forceCloseConnections(server) {
   server?.closeAllConnections?.();
 }
 
-function systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService = null }) {
+// Assistant-behaviour metrics. These are what the self-optimization loop tunes
+// against: an assistant is judged by how often it is right to interrupt, not by
+// how much it says.
+function assistantMetrics({ coreDb }) {
+  const db = coreDb?.db;
+  if (!db) return null;
+  const one = (sql, ...args) => Number(db.prepare(sql).get(...args)?.n ?? 0);
+  const proposals = one('SELECT COUNT(*) AS n FROM proposals');
+  const approved = one("SELECT COUNT(*) AS n FROM proposals WHERE state = 'approved'");
+  const rejected = one("SELECT COUNT(*) AS n FROM proposals WHERE state = 'rejected'");
+  const resolutions = one("SELECT COUNT(*) AS n FROM feedback WHERE subject_type = 'resolution'");
+  const resolutionsHigh = one("SELECT COUNT(*) AS n FROM feedback WHERE subject_type = 'resolution' AND source = 'high'");
+  const replies = one('SELECT COUNT(*) AS n FROM reply_log');
+  const vetoed = one('SELECT COUNT(*) AS n FROM reply_log WHERE vetoed = 1');
+  const autoSent = one("SELECT COUNT(*) AS n FROM reply_log WHERE autonomy <> 'user'");
+  const dropped = one("SELECT COUNT(*) AS n FROM feedback WHERE signal = 'drop'");
+  const rate = (part, whole) => (whole > 0 ? Number((part / whole).toFixed(3)) : null);
+  return {
+    proposals: { total: proposals, approved, rejected, approval_rate: rate(approved, proposals), rejection_rate: rate(rejected, proposals) },
+    // How often the assistant understood which project was meant without asking.
+    resolution: { total: resolutions, high_confidence: resolutionsHigh, auto_rate: rate(resolutionsHigh, resolutions) },
+    replies: { total: replies, vetoed, auto_sent: autoSent, veto_rate: rate(vetoed, replies) },
+    // Dropped responsibilities are the quietest negative signal there is.
+    commitments: { dropped },
+  };
+}
+
+function systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService = null, coreDb = null }) {
   const counts = taskRepository.countsByStatus?.() ?? {};
   const recent = taskRepository.list?.({ limit: 200 }) ?? [];
   const failed = recent.filter((t) => t.status === 'failed').slice(0, 15);
@@ -86,7 +113,15 @@ function systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepo
     peers: sync.peers.map((peer) => ({ node_id: peer.node_id, status: peer.status, lastSeenAt: peer.last_seen_at })),
     inbox: sync.inbox,
   } : null;
-  return { counts, failed: failed.map((t) => ({ id: t.task_id, type: t.type, project: t.project_id, error: t.result?.error ?? null, attempts: t.attempts })), workers: workers.map((w) => ({ id: w.worker_id, connected: w.connected, revoked: w.revoked, projects: (w.projects ?? []).length })), pendingSuggestions: suggestionsRepository?.stats?.().pending ?? 0, knowledge, peerSync };
+  return {
+    counts,
+    failed: failed.map((t) => ({ id: t.task_id, type: t.type, project: t.project_id, error: t.result?.error ?? null, attempts: t.attempts })),
+    workers: workers.map((w) => ({ id: w.worker_id, connected: w.connected, revoked: w.revoked, projects: (w.projects ?? []).length })),
+    pendingSuggestions: suggestionsRepository?.stats?.().pending ?? 0,
+    knowledge,
+    peerSync,
+    assistant: assistantMetrics({ coreDb }),
+  };
 }
 
 function applySuggestion(ctx, suggestion) {
@@ -255,7 +290,13 @@ export async function startCore(env = process.env, dependencies = {}) {
     // Commitments and signals are created before the channels so a message can
     // update the model of the world the moment it arrives.
     const commitmentRepository = new CommitmentRepository({ coreDb: coreDatabase });
-    const commitmentService = createCommitmentService({ commitmentRepository });
+    const commitmentService = createCommitmentService({
+      commitmentRepository,
+      onTransition: ({ commitment, action }) => {
+        if (action === 'drop') replyRepository?.addFeedback({ subjectType: 'commitment', subjectRef: commitment.commitmentId, signal: 'drop', source: 'user' });
+        if (action === 'fulfill') replyRepository?.addFeedback({ subjectType: 'commitment', subjectRef: commitment.commitmentId, signal: 'approve', source: 'user' });
+      },
+    });
     const signalService = createSignalService({
       signalRepository: new SignalRepository({ coreDb: coreDatabase }),
       commitmentService,
@@ -329,7 +370,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       const context = stat.baseline
         ? 'Previous round summary (use as context, do not repeat it):\n' + String(stat.baseline).slice(0, 2000)
         : 'This is the first round for this role.';
-      const metrics = systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService });
+      const metrics = systemCheckupMetrics({ taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService, coreDb: coreDatabase });
       const recent = suggestionsRepository.list({});
       const metrics2 = {
         ...metrics,
@@ -340,7 +381,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       };
       if (!serverLlm?.status?.enabled) return { ok: false, reason: 'server LLM is not enabled (configure it in Server Settings)' };
       const text = await serverLlm.ask([
-        { role: 'system', content: 'You are the Workflow system intelligence agent. Look at the system checkup metrics, find where the workflow is not intelligent, and propose actionable improvements. Output ONLY a JSON array; each item: {target_type,title,summary,payload}; target_type is one of skill|knowledge|settings|rule. skill payload: {name,content (Markdown)}; knowledge: {projectId,title,type,content}; settings: {key,value}; rule: {key,rules}. No suggestions -> []. No explanations.' },
+        { role: 'system', content: 'You are the Workflow system intelligence agent. Look at the system checkup metrics, find where the workflow is not intelligent, and propose actionable improvements. Output ONLY a JSON array; each item: {target_type,title,summary,payload}; target_type is one of skill|knowledge|settings|rule. skill payload: {name,content (Markdown)}; knowledge: {projectId,title,type,content}; settings: {key,value}; rule: {key,rules}. The assistant metrics describe how well the assistant judges when to interrupt: a high rejection_rate or veto_rate means it is interrupting too eagerly, and a low auto_rate means it fails to understand plain references. Tunable settings keys: assistant.attention (threshold policy overrides), assistant.confidence (resolution and reply thresholds). No suggestions -> []. No explanations.' },
         { role: 'system', content: 'recentDecisions feedback: previously approved suggestions were applied to the system and ignored ones were rejected by the admin. Consider this feedback - do not re-propose ignored suggestions; build on approved ones; use appliedAs to see what an approval actually changed.' },
         { role: 'system', content: context },
         { role: 'user', content: JSON.stringify(metrics2) },
@@ -386,6 +427,10 @@ export async function startCore(env = process.env, dependencies = {}) {
       probeService,
       proposalService,
       replyService,
+      // The console shows the same numbers the checkup reasons over.
+      checkupMetrics: () => systemCheckupMetrics({
+        taskRepository, workersRegistry, suggestionsRepository, knowledgeRepository, peerSyncService, coreDb: coreDatabase,
+      }),
       commitmentService,
       judgmentLoop,
       digestService,

@@ -140,10 +140,10 @@ test('sendApproved sends an approved draft once and skips the rest', async () =>
   assert.equal((await service.sendApproved()).length, 0);
 });
 
-test('a rejection is recorded as feedback', () => {
+test('a decision is recorded as feedback', () => {
   const proposal = open({ proposal_id: 'prop-veto' });
   proposals.decide({ proposalId: proposal.proposalId, action: 'reject' });
-  service.recordVeto(proposal.proposalId);
+  service.recordDecision(proposal.proposalId, 'reject');
   const feedback = replies.feedbackFor(proposal.proposalId);
   assert.equal(feedback.length, 1);
   assert.equal(feedback[0].signal, 'veto');

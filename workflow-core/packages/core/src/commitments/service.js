@@ -25,7 +25,7 @@ export class CommitmentServiceError extends Error {
   }
 }
 
-export function createCommitmentService({ commitmentRepository, now = () => new Date() } = {}) {
+export function createCommitmentService({ commitmentRepository, now = () => new Date(), onTransition = null } = {}) {
   if (!commitmentRepository) throw new TypeError('commitmentRepository is required');
 
   function open({
@@ -75,6 +75,11 @@ export function createCommitmentService({ commitmentRepository, now = () => new 
     }
     const commitment = commitmentRepository.applyEvent({ commitmentId, type, actor, payload });
     if (!commitment) throw new CommitmentServiceError('commitment_not_found', 'commitment does not exist');
+    // A drop is the quietest negative signal a user gives: they never saw a
+    // notification, they simply decided the responsibility was not real.
+    try {
+      onTransition?.({ commitment, action });
+    } catch { /* feedback must never block a state change */ }
     return commitment;
   }
 

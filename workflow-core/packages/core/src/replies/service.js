@@ -157,16 +157,20 @@ export function createReplyService({
     return sent;
   }
 
-  function recordVeto(proposalId) {
+  // Every decision the user makes about a proposal is a training signal: a
+  // rejection says "too eager", an approval says "right to ask".
+  function recordDecision(proposalId, action) {
     return replyRepository.addFeedback({
-      subjectType: 'proposal', subjectRef: proposalId, signal: 'veto', source: 'user',
+      subjectType: 'proposal', subjectRef: proposalId,
+      signal: action === 'approve' ? 'approve' : 'veto',
+      source: 'user',
     });
   }
 
   return {
     send,
     sendApproved,
-    recordVeto,
+    recordDecision,
     policy,
     setPolicy,
     list: (options) => replyRepository.list(options),
