@@ -84,6 +84,28 @@ function flag(env, name, fallback = false) {
   throw new Error(`${name} must be 0 or 1`);
 }
 
+function stringArray(env, name) {
+  const raw = text(env, name);
+  if (raw === null) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${name} must be a JSON array of strings`);
+  }
+  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== 'string')) {
+    throw new Error(`${name} must be a JSON array of strings`);
+  }
+  return parsed;
+}
+
+function oneOf(env, name, allowed, fallback) {
+  const raw = text(env, name);
+  if (raw === null) return fallback;
+  if (!allowed.includes(raw)) throw new Error(`${name} must be one of ${allowed.join(', ')}`);
+  return raw;
+}
+
 function loopbackHost(host) {
   return host === '127.0.0.1' || host === '::1' || host === 'localhost';
 }
@@ -126,6 +148,14 @@ export function loadConfig(env = process.env) {
     throw new Error('WFC_FEISHU_CALLBACKS_ENABLED=1 requires WFC_FEISHU_VERIFICATION_TOKEN');
   }
 
+  // Server LLM backend: 'auto' prefers a configured CLI and falls back to the
+  // direct API; 'cli' requires an explicit command; 'direct' ignores any CLI.
+  const llmBackend = oneOf(env, 'WFC_LLM_BACKEND', ['auto', 'cli', 'direct'], 'auto');
+  const llmCliCommand = text(env, 'WFC_LLM_CLI_COMMAND');
+  if (llmBackend === 'cli' && !llmCliCommand) {
+    throw new Error('WFC_LLM_BACKEND=cli requires WFC_LLM_CLI_COMMAND');
+  }
+
   return {
     dataDir,
     nodeId: text(env, 'WFC_NODE_ID'),
@@ -145,11 +175,27 @@ export function loadConfig(env = process.env) {
     knowledgeDb: text(env, 'WFC_KNOWLEDGE_DB')
       ? path.resolve(text(env, 'WFC_KNOWLEDGE_DB'))
       : path.join(dataDir, 'workflow.db'),
+    // Git-backed memory repository. Core only resolves the location; the
+    // memory keeper owns writing and committing it.
+    memoryDir: text(env, 'WFC_MEMORY_DIR')
+      ? path.resolve(text(env, 'WFC_MEMORY_DIR'))
+      : path.join(dataDir, 'memory'),
     llm: {
       enabled: flag(env, 'WFC_LLM_ENABLED'),
       baseUrl: text(env, 'WFC_LLM_BASE_URL') || 'https://api.openai.com/v1',
       apiKey: text(env, 'WFC_LLM_API_KEY'),
       model: text(env, 'WFC_LLM_MODEL') || 'gpt-4o-mini',
+      backend: llmBackend,
+      // The CLI is an opaque external command: Core passes the transcript on
+      // stdin-equivalent argv and reads the model reply from stdout. No
+      // product-specific path is assumed.
+      cli: llmCliCommand
+        ? {
+          command: llmCliCommand,
+          args: stringArray(env, 'WFC_LLM_CLI_ARGS') ?? [],
+          timeoutMs: integer(env, 'WFC_LLM_CLI_TIMEOUT_MS', 240_000, { min: 1_000 }),
+        }
+        : null,
     },
     feishu: {
       enabled: feishuEnabled,

@@ -944,7 +944,7 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
       const keyCred = workersRegistry.listCredentials(null).find((c) => c.credentialId === 'server-llm-key');
       const llmRuntime = serverLlm?.status ?? { enabled: false };
       return { ok: true, settings: { llm: {
-        backend: serverLlm?.cli ? 'dsh-cli' : 'direct',
+        backend: serverLlm?.cli ? 'cli' : 'direct',
         runtimeEnabled: llmRuntime.enabled,
         enabled: Boolean(saved.enabled ?? config.llm?.enabled ?? false),
         baseUrl: saved.baseUrl ?? config.llm?.baseUrl ?? null,

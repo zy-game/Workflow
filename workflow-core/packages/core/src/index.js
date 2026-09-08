@@ -1,7 +1,6 @@
 // index.js - Workflow Core entrypoint.
 import readline from 'node:readline/promises';
 import path from 'node:path';
-import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { AuthRepository } from './auth/repository.js';
 import { CoreDatabase } from './db/core-db.js';
@@ -152,7 +151,6 @@ export async function startCore(env = process.env, dependencies = {}) {
     const projectAgentsRegistry = new ProjectAgentRegistry({ coreDb: coreDatabase });
     const credentialCipher = new CredentialCipher({ dataDir: config.dataDir });
     const settingsRepository = new SettingsRepository({ coreDb: coreDatabase });
-    const LLM_CLI_AVAILABLE = fs.existsSync("/opt/dsh8/lib/node_modules/@deepseek-ai/dsh/lib/bin.js");
     const llmCfg = (() => {
       const saved = settingsRepository.get('llm') ?? {};
       let apiKey = config.llm?.apiKey ?? null;
@@ -160,18 +158,22 @@ export async function startCore(env = process.env, dependencies = {}) {
         const cred = workersRegistry.listCredentials(null).find((c) => c.credentialId === 'server-llm-key');
         if (cred?.secretEncrypted) apiKey = credentialCipher.decrypt(cred.secretEncrypted);
       } catch { /* keep env fallback */ }
-      const backend = saved.backend ?? 'auto';
-      const useCli = backend === 'dsh-cli' || (backend === 'auto' && LLM_CLI_AVAILABLE);
+      const cliConfig = config.llm?.cli ?? null;
+      const backend = saved.backend ?? config.llm?.backend ?? 'auto';
+      if (backend === 'cli' && !cliConfig) {
+        throw new Error('server LLM backend "cli" requires WFC_LLM_CLI_COMMAND');
+      }
+      const useCli = backend === 'cli' || (backend === 'auto' && Boolean(cliConfig));
       return {
         enabled: useCli || Boolean((saved.enabled ?? config.llm?.enabled ?? false) && apiKey),
         baseUrl: saved.baseUrl ?? config.llm?.baseUrl ?? null,
         model: saved.model ?? config.llm?.model ?? null,
         apiKey,
-        cli: useCli ? { command: '/opt/node24/bin/node', args: ['/opt/dsh8/lib/node_modules/@deepseek-ai/dsh/lib/bin.js', '--profile', 'headless'], timeoutMs: 240000 } : null,
-        backend: useCli ? 'dsh-cli' : 'direct',
+        cli: useCli ? { command: cliConfig.command, args: [...cliConfig.args], timeoutMs: cliConfig.timeoutMs } : null,
+        backend: useCli ? 'cli' : 'direct',
       };
     })();
-    log(`[core] server-llm: cli=${LLM_CLI_AVAILABLE} enabled=${llmCfg.enabled} backend=${llmCfg.backend}`);
+    log(`[core] server-llm: backend=${llmCfg.backend} enabled=${llmCfg.enabled}`);
     const serverLlm = new ServerLlm({
       enabled: llmCfg.enabled,
       baseUrl: llmCfg.baseUrl,
