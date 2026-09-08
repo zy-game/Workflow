@@ -12,6 +12,7 @@ import { parseCookies, serializeSessionCookie, serializeSessionCookieClear, SESS
 import { NODE_ID_PATTERN } from '../node-identity.js';
 import { frame } from '@workflow-core/shared';
 import { ADMIN_HTML } from '../admin/console.js';
+import { CONSOLE_HTML } from '../console/app.js';
 import { TaskRoutingError } from '../tasks/creation-facade.js';
 import { ProbeServiceError } from '../probe/service.js';
 import { ProposalServiceError } from '../proposals/service.js';
@@ -262,6 +263,16 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
   };
   router.add('GET', '/admin', serveAdmin);
   router.add('GET', '/admin/', serveAdmin);
+
+  // The console is public HTML like /admin; its API calls carry the user's
+  // own session, so an unauthenticated visitor only ever sees the login form.
+  const serveConsole = (req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(CONSOLE_HTML);
+    return null;
+  };
+  router.add('GET', '/console', serveConsole);
+  router.add('GET', '/console/', serveConsole);
 
   // --- health ---
   router.add('GET', '/api/v1/health', () => {
