@@ -17,6 +17,8 @@ import { createBridgeService } from './bridge/service.js';
 import { createPeerSyncService } from './sync/service.js';
 import { createPeerSyncClient } from './sync/client.js';
 import { loadSyncKeyPair } from './sync/sync-key.js';
+import { ProbeRepository } from './probe/repository.js';
+import { createProbeService } from './probe/service.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -140,14 +142,6 @@ export async function startCore(env = process.env, dependencies = {}) {
     const workersRegistry = new WorkersRegistry({ coreDb: coreDatabase });
     const bridgeRequestsRepository = new BridgeRequestsRepository({ coreDb: coreDatabase });
     bridgeRequestsRepository.pruneExpired();
-    const bridgeService = createBridgeService({
-      bridgeRequestsRepository,
-      workersRegistry,
-      taskRepository,
-      interactionRepository,
-      nodeId: nodeIdentity.nodeId,
-      log,
-    });
     const projectAgentsRegistry = new ProjectAgentRegistry({ coreDb: coreDatabase });
     const credentialCipher = new CredentialCipher({ dataDir: config.dataDir });
     const settingsRepository = new SettingsRepository({ coreDb: coreDatabase });
@@ -197,6 +191,17 @@ export async function startCore(env = process.env, dependencies = {}) {
       });
     };
     knowledgeRepository = new WorkflowRepository({ filename: config.knowledgeDb, readOnly: false });
+    const probeRepository = new ProbeRepository({ coreDb: coreDatabase });
+    const probeService = createProbeService({ probeRepository, knowledgeRepository });
+    const bridgeService = createBridgeService({
+      bridgeRequestsRepository,
+      workersRegistry,
+      taskRepository,
+      interactionRepository,
+      probeService,
+      nodeId: nodeIdentity.nodeId,
+      log,
+    });
     const syncKeyPair = loadSyncKeyPair({ dataDir: config.dataDir });
     peerSyncService = createPeerSyncService({
       coreDb: coreDatabase,
@@ -298,6 +303,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       settingsRepository,
       serverLlm,
       suggestionsRepository,
+      probeService,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });

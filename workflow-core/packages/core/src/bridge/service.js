@@ -132,6 +132,7 @@ export function createBridgeService({
   workersRegistry,
   taskRepository,
   interactionRepository,
+  probeService = null,
   nodeId = null,
   now = () => new Date(),
   log = () => {},
@@ -267,6 +268,11 @@ export function createBridgeService({
         fail('BRIDGE_NOT_REGISTERED', 'bridge is not registered');
       }
       const current = workersRegistry.get(bridgeId) ?? worker;
+      // Probes ride the same pull: they are scoped to the bridge's projects
+      // and never enter the claim/lease path.
+      const probes = probeService
+        ? probeService.claimForBridge({ bridgeId, projectIds: current.projects })
+        : [];
       const claims = taskRepository.activeForWorker(bridgeId, undefined, nodeId).map((task) => ({
         ...taskResponse(task),
         resumed: true,
@@ -285,7 +291,7 @@ export function createBridgeService({
           claims.push({ ...taskResponse(task), resumed: false });
         }
       }
-      return response({ claims });
+      return response({ claims, probes });
     });
   }
 

@@ -13,6 +13,7 @@ import { NODE_ID_PATTERN } from '../node-identity.js';
 import { frame } from '@workflow-core/shared';
 import { ADMIN_HTML } from '../admin/console.js';
 import { TaskRoutingError } from '../tasks/creation-facade.js';
+import { ProbeServiceError } from '../probe/service.js';
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_BRIDGE_BODY_BYTES = 1024 * 1024;
@@ -101,7 +102,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -515,6 +516,59 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
         ...context,
         payload: { state: body.state ?? null },
       }));
+    });
+
+    // Read-only status inquiries. A probe never creates a task or consumes a
+    // lease: it is delivered on the executor's own pull and answered with a
+    // verdict the caller can act on, "unknown" included.
+    function probeHttpError(error) {
+      if (!(error instanceof ProbeServiceError)) throw error;
+      const status = error.code === 'PROJECT_NOT_FOUND' ? 404
+        : error.code === 'PROBE_NOT_OPEN' ? 409 : 400;
+      return new HttpError(status, error.code, error.message);
+    }
+
+    router.add('POST', '/api/v1/probe', (req, res, body) => {
+      if (!probeService) throw new HttpError(503, 'probe_unavailable', 'probe service is not configured');
+      const principal = requireAction(req, 'task:create');
+      try {
+        const result = probeService.request({
+          probe_id: body?.probe_id ?? null,
+          project_id: body?.project_id,
+          question: body?.question,
+          refs: body?.refs ?? [],
+          budget_ms: body?.budget_ms,
+          requested_by: principal.subject_id ?? null,
+        });
+        return { ok: true, created: result.created, probe: result.probe };
+      } catch (error) {
+        throw probeHttpError(error);
+      }
+    });
+
+    router.add('GET', '/api/v1/probe/:id', (req, res, body, params) => {
+      if (!probeService) throw new HttpError(503, 'probe_unavailable', 'probe service is not configured');
+      requireAction(req, 'task:read');
+      const probe = probeService.get(params.id);
+      if (!probe) throw new HttpError(404, 'probe_not_found', 'probe does not exist');
+      return { ok: true, probe };
+    });
+
+    router.add('POST', '/api/v1/probe/:id/result', (req, res, body, params) => {
+      if (!probeService) throw new HttpError(503, 'probe_unavailable', 'probe service is not configured');
+      requireBridge(req, 'bridge:result');
+      try {
+        const probe = probeService.answer({
+          probeId: params.id,
+          verdict: body?.verdict,
+          confidence: body?.confidence ?? null,
+          evidence: body?.evidence ?? [],
+          suggested_reply: body?.suggested_reply ?? null,
+        });
+        return { ok: true, probe };
+      } catch (error) {
+        throw probeHttpError(error);
+      }
     });
 
     router.add('POST', '/api/v1/bridge/tasks/:id/heartbeat', (req, res, body, params) => {

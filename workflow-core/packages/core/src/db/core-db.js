@@ -268,6 +268,26 @@ function createCurrentSchema(db) {
     );
     CREATE INDEX ai_suggestions_status_idx ON ai_suggestions(status, created_at);
 
+    CREATE TABLE probes (
+      probe_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      refs_json TEXT NOT NULL DEFAULT '[]',
+      budget_ms INTEGER NOT NULL,
+      state TEXT NOT NULL DEFAULT 'queued',
+      verdict TEXT,
+      confidence REAL,
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      suggested_reply TEXT,
+      requested_by TEXT,
+      requested_at TEXT NOT NULL,
+      deadline_at TEXT NOT NULL,
+      claimed_by TEXT,
+      claimed_at TEXT,
+      answered_at TEXT
+    );
+    CREATE INDEX probes_dispatch_idx ON probes(state, project_id, requested_at);
+
     CREATE TABLE peer_nodes (
       node_id TEXT PRIMARY KEY,
       display_name TEXT,
@@ -433,6 +453,25 @@ export function createSchema(db) {
           resolved_at TEXT
         );
         CREATE INDEX IF NOT EXISTS ai_suggestions_status_idx ON ai_suggestions(status, created_at);
+        CREATE TABLE IF NOT EXISTS probes (
+          probe_id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          question TEXT NOT NULL,
+          refs_json TEXT NOT NULL DEFAULT '[]',
+          budget_ms INTEGER NOT NULL,
+          state TEXT NOT NULL DEFAULT 'queued',
+          verdict TEXT,
+          confidence REAL,
+          evidence_json TEXT NOT NULL DEFAULT '[]',
+          suggested_reply TEXT,
+          requested_by TEXT,
+          requested_at TEXT NOT NULL,
+          deadline_at TEXT NOT NULL,
+          claimed_by TEXT,
+          claimed_at TEXT,
+          answered_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS probes_dispatch_idx ON probes(state, project_id, requested_at);
       `);
       if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
         try { db.exec("ALTER TABLE tasks ADD COLUMN origin_node_id TEXT"); } catch { /* exists */ }
