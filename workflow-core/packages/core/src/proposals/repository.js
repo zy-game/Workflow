@@ -22,6 +22,7 @@ function proposalFromRow(row) {
     draftText: row.draft_text ?? null,
     evidence: JSON.parse(row.evidence_json || '[]'),
     urgency: row.urgency,
+    tier: row.tier ?? 'T2',
     confidence: row.confidence == null ? null : Number(row.confidence),
     state: row.state,
     decision: row.decision ?? null,
@@ -53,6 +54,7 @@ export class ProposalRepository {
     evidence = [],
     urgency = 'normal',
     confidence = null,
+    tier = 'T2',
     vetoDeadline = null,
   } = {}) {
     this.#requireDb();
@@ -60,13 +62,13 @@ export class ProposalRepository {
       INSERT INTO proposals (
         proposal_id, source_type, source_ref, project_id, channel_target,
         title, ask, options_json, draft_text, evidence_json, urgency,
-        confidence, state, veto_deadline, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        confidence, tier, state, veto_deadline, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
     `).run(
       proposalId, String(sourceType), sourceRef, projectId, channelTarget,
       String(title), String(ask), JSON.stringify(options ?? []), draftText,
       JSON.stringify(evidence ?? []), String(urgency),
-      confidence == null ? null : Number(confidence), vetoDeadline,
+      confidence == null ? null : Number(confidence), String(tier), vetoDeadline,
       new Date().toISOString(),
     );
     return this.get(proposalId);

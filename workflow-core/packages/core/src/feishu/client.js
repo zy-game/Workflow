@@ -49,9 +49,9 @@ export class FeishuClient {
     return body.data ?? {};
   }
 
-  async sendText(chatId, text) {
-    const data = await this.#post('/im/v1/messages?receive_id_type=chat_id', {
-      receive_id: chatId,
+  async sendText(receiveId, text, { receiveIdType = 'chat_id' } = {}) {
+    const data = await this.#post(`/im/v1/messages?receive_id_type=${receiveIdType}`, {
+      receive_id: receiveId,
       msg_type: 'text',
       content: JSON.stringify({ text }),
     });

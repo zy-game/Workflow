@@ -301,6 +301,7 @@ function createCurrentSchema(db) {
       evidence_json TEXT NOT NULL DEFAULT '[]',
       urgency TEXT NOT NULL DEFAULT 'normal',
       confidence REAL,
+      tier TEXT NOT NULL DEFAULT 'T2',
       state TEXT NOT NULL DEFAULT 'pending',
       decision TEXT,
       veto_deadline TEXT,
@@ -308,6 +309,31 @@ function createCurrentSchema(db) {
       resolved_at TEXT
     );
     CREATE INDEX proposals_state_idx ON proposals(state, created_at);
+
+    CREATE TABLE reply_log (
+      reply_id TEXT PRIMARY KEY,
+      proposal_id TEXT,
+      channel TEXT NOT NULL,
+      channel_target TEXT NOT NULL,
+      message_ref TEXT,
+      tier TEXT NOT NULL,
+      autonomy TEXT NOT NULL,
+      vetoed INTEGER NOT NULL DEFAULT 0,
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX reply_log_proposal_idx ON reply_log(proposal_id);
+
+    CREATE TABLE feedback (
+      feedback_id TEXT PRIMARY KEY,
+      subject_type TEXT NOT NULL,
+      subject_ref TEXT NOT NULL,
+      signal TEXT NOT NULL,
+      source TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX feedback_subject_idx ON feedback(subject_type, subject_ref);
 
     CREATE TABLE peer_nodes (
       node_id TEXT PRIMARY KEY,
@@ -506,6 +532,7 @@ export function createSchema(db) {
           evidence_json TEXT NOT NULL DEFAULT '[]',
           urgency TEXT NOT NULL DEFAULT 'normal',
           confidence REAL,
+          tier TEXT NOT NULL DEFAULT 'T2',
           state TEXT NOT NULL DEFAULT 'pending',
           decision TEXT,
           veto_deadline TEXT,
@@ -513,7 +540,31 @@ export function createSchema(db) {
           resolved_at TEXT
         );
         CREATE INDEX IF NOT EXISTS proposals_state_idx ON proposals(state, created_at);
+        CREATE TABLE IF NOT EXISTS reply_log (
+          reply_id TEXT PRIMARY KEY,
+          proposal_id TEXT,
+          channel TEXT NOT NULL,
+          channel_target TEXT NOT NULL,
+          message_ref TEXT,
+          tier TEXT NOT NULL,
+          autonomy TEXT NOT NULL,
+          vetoed INTEGER NOT NULL DEFAULT 0,
+          evidence_json TEXT NOT NULL DEFAULT '[]',
+          text TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS reply_log_proposal_idx ON reply_log(proposal_id);
+        CREATE TABLE IF NOT EXISTS feedback (
+          feedback_id TEXT PRIMARY KEY,
+          subject_type TEXT NOT NULL,
+          subject_ref TEXT NOT NULL,
+          signal TEXT NOT NULL,
+          source TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS feedback_subject_idx ON feedback(subject_type, subject_ref);
       `);
+      try { db.exec("ALTER TABLE proposals ADD COLUMN tier TEXT NOT NULL DEFAULT 'T2'"); } catch { /* exists */ }
       if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
         try { db.exec("ALTER TABLE tasks ADD COLUMN origin_node_id TEXT"); } catch { /* exists */ }
         try { db.exec("ALTER TABLE tasks ADD COLUMN executor_node_id TEXT"); } catch { /* exists */ }

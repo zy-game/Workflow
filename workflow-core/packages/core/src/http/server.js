@@ -103,7 +103,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -682,10 +682,33 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     if (!proposalService) throw new HttpError(503, 'proposal_unavailable', 'proposal service is not configured');
     requireAdmin(req);
     try {
-      return { ok: true, proposal: proposalService.decide({ proposalId: params.id, action: 'reject' }) };
+      const proposal = proposalService.decide({ proposalId: params.id, action: 'reject' });
+      // A rejection is the strongest signal the assistant can get: record it
+      // so the self-optimization loop can learn from it.
+      replyService?.recordVeto(params.id);
+      return { ok: true, proposal };
     } catch (error) {
       throw proposalHttpError(error);
     }
+  });
+
+  router.add('POST', '/api/v1/proposals/:id/send', async (req, res, body, params) => {
+    if (!replyService) throw new HttpError(503, 'reply_unavailable', 'reply service is not configured');
+    requireAdmin(req);
+    try {
+      const result = await replyService.send({ proposalId: params.id, autonomy: 'user' });
+      return { ok: true, sent: result.sent, reply: result.reply };
+    } catch (error) {
+      const status = error.code === 'proposal_not_found' ? 404
+        : error.code === 'PROPOSAL_NOT_APPROVED' ? 409 : 400;
+      throw new HttpError(status, error.code, error.message);
+    }
+  });
+
+  router.add('GET', '/api/v1/replies', (req) => {
+    if (!replyService) throw new HttpError(503, 'reply_unavailable', 'reply service is not configured');
+    requireAdmin(req);
+    return { ok: true, replies: replyService.list({ limit: 100 }) };
   });
 
   // --- peer sync: handshake, pull, push, ack ---

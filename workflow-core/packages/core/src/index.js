@@ -21,6 +21,8 @@ import { ProbeRepository } from './probe/repository.js';
 import { createProbeService } from './probe/service.js';
 import { ProposalRepository } from './proposals/repository.js';
 import { createProposalService } from './proposals/service.js';
+import { ReplyRepository } from './replies/repository.js';
+import { createReplyService } from './replies/service.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -220,8 +222,11 @@ export async function startCore(env = process.env, dependencies = {}) {
     });
     const taskCreationFacade = new TaskCreationFacade({ taskRepository, knowledgeRepository, nodeId: nodeIdentity.nodeId });
     workflowAgent = new WorkflowAgent({ taskRepository, taskCreationFacade, projectAgentsRegistry, knowledgeRepository, log });
-    feishuService = config.feishu.enabled ? new FeishuService({
-      client: new FeishuClient({ appId: config.feishu.appId, appSecret: config.feishu.appSecret }),
+    const feishuClient = config.feishu.enabled
+      ? new FeishuClient({ appId: config.feishu.appId, appSecret: config.feishu.appSecret })
+      : null;
+    feishuService = feishuClient ? new FeishuService({
+      client: feishuClient,
       taskRepository,
       taskCreationFacade,
       interactionRepository,
@@ -229,6 +234,12 @@ export async function startCore(env = process.env, dependencies = {}) {
       coreDb: coreDatabase,
       log,
     }) : null;
+    const replyService = createReplyService({
+      replyRepository: new ReplyRepository({ coreDb: coreDatabase }),
+      proposalService,
+      feishuClient,
+      log,
+    });
     workerChannel = createWorkerChannel({
       authRepository,
       taskRepository,
@@ -313,6 +324,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       suggestionsRepository,
       probeService,
       proposalService,
+      replyService,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });
@@ -333,11 +345,12 @@ export async function startCore(env = process.env, dependencies = {}) {
     // Veto window: a pending proposal past its deadline is approved by
     // timeout, not dropped. Phase 1 item 5 replaces this log with the reply
     // sender that consumes the approved proposals.
-    proposalTimer = setInterval(() => {
+    proposalTimer = setInterval(async () => {
       try {
-        for (const proposal of proposalService.expireDue()) {
-          log(`[proposals] ${proposal.proposalId} approved by veto timeout (no reply sender configured yet)`);
-        }
+        const due = proposalService.expireDue();
+        if (!due.length) return;
+        const sent = await replyService.sendApproved();
+        log(`[proposals] ${due.length} approved by veto timeout, ${sent.length} sent`);
       } catch (error) {
         log(`[proposals] veto sweep failed: ${error.message}`);
       }

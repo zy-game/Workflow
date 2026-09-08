@@ -3,6 +3,8 @@
 // The veto window means "act unless the user objects": a pending proposal
 // whose deadline passes is approved by timeout, not dropped. An explicit
 // rejection always wins.
+import { REPLY_TIERS } from '../replies/service.js';
+
 export const PROPOSAL_MAX_TITLE_LENGTH = 200;
 export const PROPOSAL_MAX_ASK_LENGTH = 1000;
 export const PROPOSAL_MAX_VETO_MS = 300_000;
@@ -31,6 +33,7 @@ export function createProposalService({ proposalRepository, now = () => new Date
     evidence = [],
     urgency = 'normal',
     confidence = null,
+    tier = 'T2',
     veto_ms: vetoMs = null,
   } = {}) {
     const heading = String(title ?? '').trim();
@@ -45,6 +48,11 @@ export function createProposalService({ proposalRepository, now = () => new Date
     }
     const optionList = Array.isArray(options) ? options : [];
     if (optionList.length > 8) throw new ProposalServiceError('options_too_many', 'options exceeds 8 entries');
+    // The reply tier is a property of the proposal, not something the sender
+    // guesses: T3 (estimates, promises, opinions) must never be auto-sent.
+    if (!REPLY_TIERS.includes(tier)) {
+      throw new ProposalServiceError('tier_invalid', `tier must be one of ${REPLY_TIERS.join(', ')}`);
+    }
     // Re-requesting a known proposal_id returns the existing record untouched,
     // so a retried request never opens a second decision.
     if (proposalId) {
@@ -64,7 +72,7 @@ export function createProposalService({ proposalRepository, now = () => new Date
       sourceType, sourceRef, projectId, channelTarget,
       title: heading, ask: question, options: optionList, draftText,
       evidence: Array.isArray(evidence) ? evidence : [],
-      urgency, confidence, vetoDeadline,
+      urgency, confidence, tier, vetoDeadline,
     });
     return { proposal, created: true };
   }
