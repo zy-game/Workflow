@@ -835,6 +835,27 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     return { ok: true, ...result };
   });
 
+  // Injecting a signal is how an operator or a test drives the perception path
+  // without a live channel. It records exactly what a real message would.
+  router.add('POST', '/api/v1/signals', (req, res, body) => {
+    if (!signalService) throw new HttpError(503, 'signals_unavailable', 'signal service is not configured');
+    requireAdmin(req);
+    try {
+      const result = signalService.record({
+        channel: body?.channel ?? 'manual',
+        sourceRef: body?.source_ref,
+        kind: body?.kind ?? 'ambient',
+        chatRef: body?.chat_ref ?? null,
+        projectId: body?.project_id ?? null,
+        senderRef: body?.sender_ref ?? null,
+        text: body?.text ?? '',
+      });
+      return { ok: true, created: result.created, signal: result.signal, attached: result.attached, opened: result.opened };
+    } catch (error) {
+      throw new HttpError(400, 'signal_invalid', error.message);
+    }
+  });
+
   router.add('GET', '/api/v1/channels/:id/context', (req, res, body, params) => {
     if (!signalService) throw new HttpError(503, 'signals_unavailable', 'signal service is not configured');
     requireAdmin(req);

@@ -12,7 +12,7 @@ const MAX_STATEMENT = 120;
 const UNCLASSIFIED_PREFIX = '待确认：';
 
 export function createSignalService({
-  signalRepository, commitmentService, channelContext = null, log = () => {},
+  signalRepository, commitmentService, channelContext = null, onDirected = null, log = () => {},
 } = {}) {
   if (!signalRepository) throw new TypeError('signalRepository is required');
   if (!commitmentService) throw new TypeError('commitmentService is required');
@@ -75,6 +75,16 @@ export function createSignalService({
       // Signal recording must never break the channel that produced it.
       log(`[signals] attach failed for ${signal.signalId}: ${error.message}`);
       outcome = { attached: null, opened: null, reason: 'attach_failed' };
+    }
+    // A message aimed at the user may be a question about a project. Hand it
+    // to the caller, which decides whether it becomes a probe; the signal
+    // service does not know what a project is.
+    if (DIRECTED_KINDS.has(signal.kind) && onDirected) {
+      try {
+        onDirected({ signal, attachment: outcome });
+      } catch (error) {
+        log(`[signals] onDirected failed for ${signal.signalId}: ${error.message}`);
+      }
     }
     return { signal, created: true, ...outcome };
   }

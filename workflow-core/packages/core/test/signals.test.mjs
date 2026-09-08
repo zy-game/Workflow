@@ -103,3 +103,16 @@ test('an unknown kind degrades to ambient instead of opening work', () => {
   assert.equal(result.signal.kind, 'ambient');
   assert.equal(result.reason, 'ambient');
 });
+
+test('only messages aimed at the user are reported to the caller', () => {
+  const seen = [];
+  const service = createSignalService({
+    signalRepository: new SignalRepository({ coreDb }),
+    commitmentService: commitments,
+    onDirected: ({ signal }) => seen.push(signal.kind),
+  });
+  service.record({ channel: 'feishu', sourceRef: 'msg-d1', kind: 'mention', chatRef: 'oc_d', text: 'x' });
+  service.record({ channel: 'feishu', sourceRef: 'msg-d2', kind: 'ambient', chatRef: 'oc_d', text: 'y' });
+  service.record({ channel: 'feishu', sourceRef: 'msg-d3', kind: 'reply', chatRef: 'oc_d', text: 'z' });
+  assert.deepEqual(seen, ['mention', 'reply']);
+});

@@ -330,6 +330,28 @@ export async function startCore(env = process.env, dependencies = {}) {
       commitmentService,
       channelContext: createChannelContext({ memoryStore }),
       log,
+      // A message aimed at the user may be asking about a project. When the
+      // reference resolves with confidence, ask that project's executor - the
+      // answer comes back with evidence and becomes a reply proposal.
+      onDirected: ({ signal }) => {
+        if (!resolverService || !probeService) return;
+        resolverService.resolve({ text: signal.excerpt, channelRef: signal.chatRef })
+          .then((resolved) => {
+            // Medium confidence asks the user; low stays quiet; only a
+            // confident match is allowed to speak to an executor.
+            if (resolved.tier !== 'high' || !resolved.projectId) return;
+            probeService.request({
+              // One probe per message: a redelivered event cannot ask twice.
+              probe_id: `probe-${signal.signalId}`,
+              project_id: resolved.projectId,
+              channel_target: `feishu:chat:${signal.chatRef}`,
+              question: signal.excerpt ?? '',
+              budget_ms: 60_000,
+            });
+            log(`[brain] ${signal.signalId} -> probe on ${resolved.projectId} (${resolved.reason})`);
+          })
+          .catch((error) => log(`[brain] resolve failed for ${signal.signalId}: ${error.message}`));
+      },
     });
     const judgmentLoop = createJudgmentLoop({
       commitmentService, proposalService, serverLlm, log,
