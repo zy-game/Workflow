@@ -53,6 +53,14 @@ export function createProposalService({ proposalRepository, now = () => new Date
     if (!REPLY_TIERS.includes(tier)) {
       throw new ProposalServiceError('tier_invalid', `tier must be one of ${REPLY_TIERS.join(', ')}`);
     }
+    // Each tier makes a claim, and the claim has to be true at creation time:
+    // T1 says "this is a verified fact", T2 says "this is on the books".
+    if (tier === 'T1' && !(Array.isArray(evidence) && evidence.length)) {
+      throw new ProposalServiceError('tier_evidence_required', 'a T1 proposal must carry evidence');
+    }
+    if (tier === 'T2' && !sourceRef) {
+      throw new ProposalServiceError('tier_source_required', 'a T2 proposal must reference the record it is about');
+    }
     // Re-requesting a known proposal_id returns the existing record untouched,
     // so a retried request never opens a second decision.
     if (proposalId) {

@@ -99,6 +99,7 @@ input { font-family:inherit; }
   var state = {
     view: 'proposals', proposals: [], loading: false, error: '', busy: '', loginError: '', busyLogin: false,
     memory: { tree: [], path: null, content: '', history: [], error: '' },
+    replies: { items: [], error: '' },
     notifiedCount: 0,
   };
   var timer = null;
@@ -250,14 +251,52 @@ input { font-family:inherit; }
       : '<div class="card muted">没有待决策的提案。</div>';
     return '<div class="shell"><div class="topbar"><h1>提案</h1><div class="spacer"></div>' +
       '<button class="btn btn-ghost" data-nav="memory">记忆</button>' +
+      '<button class="btn btn-ghost" data-nav="replies">回复记录</button>' +
       '<button class="btn btn-ghost" data-act="refresh">刷新</button>' +
       '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
       '<h2 class="section-title">待决策 · ' + state.proposals.length + '</h2>' + body + '</div>';
   }
 
+  // --- audit: every reply the assistant sent, with the tier that allowed it ---
+  function loadReplies() {
+    state.replies.error = ''; render();
+    api('/api/v1/replies?limit=100')
+      .then(function (result) { state.replies.items = result.replies || []; render(); })
+      .catch(function (err) { state.replies.error = err.message || String(err); render(); });
+  }
+
+  function repliesView() {
+    var items = state.replies.items;
+    var body = state.replies.error ? '<div class="card error">' + esc(state.replies.error) + '</div>'
+      : !items.length ? '<div class="card muted">还没有回复记录。</div>'
+      : items.map(function (reply) {
+        var evidence = (reply.evidence || []).map(function (item) {
+          return '<span class="mono">' + esc(item.kind || '—') + ':' + esc(item.ref || '') + '</span>';
+        }).join(' ');
+        return '<div class="card"><div class="head">' +
+          '<span class="badge badge-muted">' + esc(reply.tier) + '</span>' +
+          '<span class="badge ' + (reply.autonomy === 'timeout' ? 'badge-warn' : 'badge-ok') + '">' +
+            esc(reply.autonomy === 'timeout' ? '超时发出' : reply.autonomy === 'user' ? '你批准' : '自主') + '</span>' +
+          '<strong style="flex:1">' + esc(reply.channelTarget) + '</strong>' +
+          '<span class="muted mono">' + esc(reply.createdAt) + '</span></div>' +
+          '<div class="draft">' + esc(reply.text) + '</div>' +
+          (evidence ? '<div class="evidence" style="border-top:none;padding-top:8px">' + evidence + '</div>' : '') +
+          '</div>';
+      }).join('');
+    return '<div class="shell"><div class="topbar"><h1>回复记录</h1><div class="spacer"></div>' +
+      '<button class="btn btn-ghost" data-nav="proposals">提案</button>' +
+      '<button class="btn btn-ghost" data-nav="memory">记忆</button>' +
+      '<button class="btn btn-ghost" data-nav="replies">回复记录</button>' +
+      '<button class="btn btn-ghost" data-act="replies-refresh">刷新</button>' +
+      '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
+      '<h2 class="section-title">共 ' + items.length + ' 条</h2>' + body + '</div>';
+  }
+
   function render() {
     if (!token()) { root.innerHTML = loginView(); return; }
-    root.innerHTML = (state.view === 'memory' ? memoryView() : proposalsView());
+    if (state.view === 'memory') root.innerHTML = memoryView();
+    else if (state.view === 'replies') root.innerHTML = repliesView();
+    else root.innerHTML = proposalsView();
   }
 
   // --- memory: the assistant's beliefs, as readable files ---
@@ -339,6 +378,7 @@ input { font-family:inherit; }
       state.view = nav.dataset.nav;
       render();
       if (state.view === 'memory' && !state.memory.tree.length) loadMemory();
+      if (state.view === 'replies' && !state.replies.items.length) loadReplies();
       return;
     }
     var file = event.target.closest('[data-file]');
@@ -350,6 +390,7 @@ input { font-family:inherit; }
     var action = button.dataset.act;
     if (action === 'refresh') return load();
     if (action === 'memory-refresh') return loadMemory();
+    if (action === 'replies-refresh') return loadReplies();
     if (action === 'logout') return setToken('');
     var id = button.dataset.id;
     state.busy = id; render();

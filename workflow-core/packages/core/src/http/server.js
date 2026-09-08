@@ -720,7 +720,28 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
   router.add('GET', '/api/v1/replies', (req) => {
     if (!replyService) throw new HttpError(503, 'reply_unavailable', 'reply service is not configured');
     requireAdmin(req);
-    return { ok: true, replies: replyService.list({ limit: 100 }) };
+    const url = new URL(req.url, 'http://local');
+    return {
+      ok: true,
+      replies: replyService.list({
+        limit: url.searchParams.get('limit') || 100,
+        channel: url.searchParams.get('channel') || null,
+        tier: url.searchParams.get('tier') || null,
+      }),
+    };
+  });
+
+  // Kill switch: one switch for everything, or one per channel target.
+  router.add('GET', '/api/v1/reply-policy', (req) => {
+    if (!replyService) throw new HttpError(503, 'reply_unavailable', 'reply service is not configured');
+    requireAdmin(req);
+    return { ok: true, policy: replyService.policy() };
+  });
+
+  router.add('PUT', '/api/v1/reply-policy', (req, res, body) => {
+    if (!replyService) throw new HttpError(503, 'reply_unavailable', 'reply service is not configured');
+    requireAdmin(req);
+    return { ok: true, policy: replyService.setPolicy(body ?? {}) };
   });
 
   // --- commitments: responsibilities the assistant holds ---

@@ -283,6 +283,7 @@ export async function startCore(env = process.env, dependencies = {}) {
     const replyService = createReplyService({
       replyRepository,
       proposalService,
+      settingsRepository,
       feishuClient,
       log,
     });

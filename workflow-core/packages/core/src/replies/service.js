@@ -10,7 +10,12 @@
 // send is still on the record.
 export const REPLY_TIERS = ['T1', 'T2', 'T3'];
 export const AUTO_TIERS = ['T1', 'T2'];
+// A group is a wider audience than a private chat: the same sentence can be
+// fine in one and unacceptable in the other.
+export const AUDIENCES = ['private', 'group'];
 const DEFAULT_MAX_CHARS = 600;
+const INTERNAL_ID_PATTERN = /\b(?:prop|cmt|probe|sig|task|acc|cev|reply|fb)-[0-9a-f-]{8,}\b/gi;
+const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 export class ReplyServiceError extends Error {
   constructor(code, message) {
@@ -21,12 +26,19 @@ export class ReplyServiceError extends Error {
 
 // Audience filter. It is deliberately conservative: hiding a benign path costs
 // a little readability, leaking one costs the user's trust.
-export function filterForAudience(text, { maxChars = DEFAULT_MAX_CHARS } = {}) {
+export function filterForAudience(text, { audience = 'private', maxChars = DEFAULT_MAX_CHARS } = {}) {
+  if (!AUDIENCES.includes(audience)) {
+    throw new ReplyServiceError('audience_invalid', `audience must be one of ${AUDIENCES.join(', ')}`);
+  }
   let out = String(text ?? '');
   out = out.replace(/[A-Za-z]:\\[^\s"'`]+/g, '[路径已隐藏]');
   out = out.replace(/(?:\/[\w.@-]+){2,}/g, '[路径已隐藏]');
   out = out.replace(/\b(?:sk|ghp|xox[bp]|wfc)-[A-Za-z0-9_-]{10,}\b/g, '[凭据已隐藏]');
   out = out.replace(/\b(?:Bearer|token|secret|password)\s*[:=]\s*\S+/gi, '[凭据已隐藏]');
+  // Internal identifiers mean nothing outside Workflow and reveal structure.
+  if (audience === 'group') {
+    out = out.replace(INTERNAL_ID_PATTERN, '[内部标识已隐藏]').replace(UUID_PATTERN, '[内部标识已隐藏]');
+  }
   const compact = out.replace(/\s+/g, ' ').trim();
   return compact.length > maxChars ? `${compact.slice(0, maxChars)}…` : compact;
 }
@@ -38,14 +50,52 @@ function parseTarget(channelTarget) {
   if (channel !== 'feishu' || !id || !['chat', 'user'].includes(kind)) {
     throw new ReplyServiceError('channel_target_invalid', `unsupported channel target: ${text || '(empty)'}`);
   }
-  return { channel, kind, id, receiveIdType: kind === 'chat' ? 'chat_id' : 'open_id' };
+  return {
+    channel, kind, id,
+    receiveIdType: kind === 'chat' ? 'chat_id' : 'open_id',
+    audience: kind === 'chat' ? 'group' : 'private',
+  };
 }
 
+export const REPLY_POLICY_KEY = 'reply.policy';
+
 export function createReplyService({
-  replyRepository, proposalService, feishuClient = null, log = () => {},
+  replyRepository, proposalService, settingsRepository = null, feishuClient = null, log = () => {},
 } = {}) {
   if (!replyRepository) throw new TypeError('replyRepository is required');
   if (!proposalService) throw new TypeError('proposalService is required');
+
+  // Kill switch: a global off, or a per-target off. Missing configuration means
+  // "allowed", so a fresh install does not silently refuse to speak.
+  function policy() {
+    const saved = settingsRepository?.get(REPLY_POLICY_KEY) ?? {};
+    return {
+      global: saved.global !== false,
+      channels: saved.channels && typeof saved.channels === 'object' ? saved.channels : {},
+    };
+  }
+
+  // The kill switch is a setting, so it can be flipped without a redeploy.
+  function setPolicy(patch = {}) {
+    const current = policy();
+    const next = {
+      global: patch.global === undefined ? current.global : Boolean(patch.global),
+      channels: patch.channels && typeof patch.channels === 'object'
+        ? { ...current.channels, ...patch.channels }
+        : current.channels,
+    };
+    settingsRepository?.set(REPLY_POLICY_KEY, next);
+    return next;
+  }
+
+  function assertAllowed(channelTarget) {
+    const current = policy();
+    if (!current.global) throw new ReplyServiceError('reply_disabled', 'autonomous replies are disabled globally');
+    if (current.channels[channelTarget] === false) {
+      throw new ReplyServiceError('reply_disabled', `autonomous replies are disabled for ${channelTarget}`);
+    }
+    return current;
+  }
 
   async function send({ proposalId, autonomy = 'user' } = {}) {
     const proposal = proposalService.get(proposalId);
@@ -67,7 +117,8 @@ export function createReplyService({
     if (!proposal.draftText) throw new ReplyServiceError('draft_required', 'proposal has no draft text');
     if (!feishuClient) throw new ReplyServiceError('channel_unavailable', 'no channel client is configured');
     const target = parseTarget(proposal.channelTarget);
-    const text = filterForAudience(proposal.draftText);
+    assertAllowed(proposal.channelTarget);
+    const text = filterForAudience(proposal.draftText, { audience: target.audience });
     if (!text) throw new ReplyServiceError('draft_empty', 'draft text is empty after audience filtering');
 
     const reply = replyRepository.record({
@@ -116,6 +167,8 @@ export function createReplyService({
     send,
     sendApproved,
     recordVeto,
+    policy,
+    setPolicy,
     list: (options) => replyRepository.list(options),
     filterForAudience,
   };

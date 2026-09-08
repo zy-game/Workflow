@@ -64,10 +64,17 @@ export class ReplyRepository {
     return row ? replyFromRow(row) : null;
   }
 
-  list({ limit = 100 } = {}) {
+  list({ limit = 100, channel = null, tier = null } = {}) {
     this.#requireDb();
     const bounded = Math.min(500, Math.max(1, Number(limit) || 100));
-    return this.db.prepare('SELECT * FROM reply_log ORDER BY created_at DESC LIMIT ?').all(bounded).map(replyFromRow);
+    const clauses = [];
+    const args = [];
+    if (channel) { clauses.push('channel = ?'); args.push(String(channel)); }
+    if (tier) { clauses.push('tier = ?'); args.push(String(tier)); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    args.push(bounded);
+    return this.db.prepare(`SELECT * FROM reply_log ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...args).map(replyFromRow);
   }
 
   // A proposal is delivered once; this is the idempotency key for the sender.

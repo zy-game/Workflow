@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { CoreDatabase } from '../src/db/core-db.js';
+import { SettingsRepository } from '../src/settings/repository.js';
 import { ProposalRepository } from '../src/proposals/repository.js';
 import { createProposalService } from '../src/proposals/service.js';
 import { ReplyRepository } from '../src/replies/repository.js';
@@ -50,7 +51,10 @@ before(() => {
   proposals = createProposalService({ proposalRepository: new ProposalRepository({ coreDb }) });
   replies = new ReplyRepository({ coreDb });
   feishu = fakeFeishu();
-  service = createReplyService({ replyRepository: replies, proposalService: proposals, feishuClient: feishu });
+  service = createReplyService({
+    replyRepository: replies, proposalService: proposals,
+    settingsRepository: new SettingsRepository({ coreDb }), feishuClient: feishu,
+  });
 });
 
 after(() => {
@@ -143,4 +147,54 @@ test('a rejection is recorded as feedback', () => {
   const feedback = replies.feedbackFor(proposal.proposalId);
   assert.equal(feedback.length, 1);
   assert.equal(feedback[0].signal, 'veto');
+});
+
+test('the group audience also hides internal identifiers', () => {
+  const text = '任务 task-01927bf6-6158-4e1a-a401-02b6451bd31a 已完成';
+  assert.match(filterForAudience(text, { audience: 'private' }), /task-01927bf6/);
+  assert.doesNotMatch(filterForAudience(text, { audience: 'group' }), /task-01927bf6/);
+  assert.throws(() => filterForAudience(text, { audience: 'public' }), /audience must be one of/);
+});
+
+test('a group reply is filtered by its audience, not by the caller', async () => {
+  const proposal = open({
+    proposal_id: 'prop-group',
+    draft_text: '任务 task-01927bf6-6158-4e1a-a401-02b6451bd31a 已完成',
+  });
+  proposals.decide({ proposalId: proposal.proposalId, action: 'approve' });
+  await service.send({ proposalId: proposal.proposalId });
+  const sent = feishu.sent[feishu.sent.length - 1];
+  assert.doesNotMatch(sent.text, /task-01927bf6/, 'a group reply must not carry internal identifiers');
+});
+
+test('the kill switch stops autonomous replies, globally and per channel', async () => {
+  assert.deepEqual(service.policy(), { global: true, channels: {} });
+
+  service.setPolicy({ channels: { 'feishu:chat:oc_123': false } });
+  const blocked = open({ proposal_id: 'prop-blocked' });
+  proposals.decide({ proposalId: blocked.proposalId, action: 'approve' });
+  await assert.rejects(() => service.send({ proposalId: blocked.proposalId }), /disabled for feishu:chat:oc_123/);
+
+  service.setPolicy({ global: false });
+  const other = open({ proposal_id: 'prop-global-off', channel_target: 'feishu:user:ou_1' });
+  proposals.decide({ proposalId: other.proposalId, action: 'approve' });
+  await assert.rejects(() => service.send({ proposalId: other.proposalId }), /disabled globally/);
+
+  service.setPolicy({ global: true, channels: { 'feishu:chat:oc_123': true } });
+  const allowed = open({ proposal_id: 'prop-allowed' });
+  proposals.decide({ proposalId: allowed.proposalId, action: 'approve' });
+  assert.equal((await service.send({ proposalId: allowed.proposalId })).sent, true);
+});
+
+test('each tier has to be true at creation time', () => {
+  assert.throws(
+    () => proposals.open({ proposal_id: 't1-bare', tier: 'T1', title: 'x', ask: 'y' }),
+    /a T1 proposal must carry evidence/,
+  );
+  assert.throws(
+    () => proposals.open({ proposal_id: 't2-bare', tier: 'T2', title: 'x', ask: 'y' }),
+    /a T2 proposal must reference the record/,
+  );
+  // T3 makes no claim, so it needs neither.
+  assert.ok(proposals.open({ proposal_id: 't3-bare', tier: 'T3', title: 'x', ask: 'y' }).proposal);
 });
