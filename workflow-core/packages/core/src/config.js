@@ -84,19 +84,27 @@ function flag(env, name, fallback = false) {
   throw new Error(`${name} must be 0 or 1`);
 }
 
+// Accepts both the JSON form (Docker --env-file passes it through verbatim) and
+// the bare form a shell leaves behind after sourcing: bash strips the quotes,
+// so ["a","b"] arrives as [a,b].
 function stringArray(env, name) {
   const raw = text(env, name);
   if (raw === null) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`${name} must be a JSON array of strings`);
+  const fail = () => new Error(`${name} must be a JSON array of strings`);
+  const value = raw.trim();
+  if (value.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) return parsed;
+      throw fail();
+    } catch (error) {
+      if (error.message && error.message.includes('must be a JSON array')) throw error;
+      // Not JSON: only a bare, unquoted list is accepted.
+      if (!/^\[[^"']*\]$/.test(value)) throw fail();
+      return value.slice(1, -1).split(',').map((item) => item.trim()).filter(Boolean);
+    }
   }
-  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== 'string')) {
-    throw new Error(`${name} must be a JSON array of strings`);
-  }
-  return parsed;
+  throw fail();
 }
 
 function oneOf(env, name, allowed, fallback) {

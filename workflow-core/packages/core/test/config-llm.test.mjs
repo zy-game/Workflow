@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { loadConfig } from '../src/config.js';
 
 const base = { WFC_DATA_DIR: os.tmpdir(), WFC_ALLOW_PLAIN_HTTP: '1' };
+const arguments0 = base;
 
 test('server LLM defaults to the direct API with no CLI configured', () => {
   const { llm } = loadConfig({ ...base });
@@ -55,4 +56,13 @@ test('unknown backends, malformed args, and non-integer timeouts are rejected', 
     () => loadConfig({ ...base, WFC_LLM_CLI_COMMAND: 'node', WFC_LLM_CLI_TIMEOUT_MS: 'soon' }),
     /WFC_LLM_CLI_TIMEOUT_MS must be an integer/,
   );
+});
+
+test('CLI args are accepted in both the JSON and shell-sourced form', () => {
+  const base = { ...arguments0 };
+  const json = loadConfig({ ...base, WFC_LLM_CLI_COMMAND: 'node', WFC_LLM_CLI_ARGS: '["/a/b.js","--profile"]' });
+  const bare = loadConfig({ ...base, WFC_LLM_CLI_COMMAND: 'node', WFC_LLM_CLI_ARGS: '[/a/b.js,--profile]' });
+  // bash strips the quotes when sourcing an env file; both must mean the same.
+  assert.deepEqual(json.llm.cli.args, ['/a/b.js', '--profile']);
+  assert.deepEqual(bare.llm.cli.args, json.llm.cli.args);
 });
