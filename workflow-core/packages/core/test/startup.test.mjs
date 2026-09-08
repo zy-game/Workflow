@@ -203,6 +203,25 @@ test('Core terminates stalled HTTP and unregistered Worker sockets during shutdo
   }
 });
 
+test('Core initializes the git-backed memory repository on startup', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-start-memory-'));
+  const publicPort = await freePort();
+  const internalPort = await freePort();
+  let runtime;
+  try {
+    runtime = await startCore(runtimeEnv(dir, publicPort, internalPort), { log: () => {} });
+    const memoryDir = path.join(dir, 'memory');
+    assert.ok(fs.existsSync(path.join(memoryDir, 'MEMORY.md')), 'memory index must exist');
+    assert.ok(fs.existsSync(path.join(memoryDir, '.git')), 'memory repository must be initialized');
+    for (const sub of ['profile', 'projects', 'channels', 'journal']) {
+      assert.ok(fs.existsSync(path.join(memoryDir, sub)), `missing memory directory: ${sub}`);
+    }
+  } finally {
+    await runtime?.shutdown();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('Core releases listeners and databases when Feishu startup fails', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-start-fail-'));
   const publicPort = await freePort();

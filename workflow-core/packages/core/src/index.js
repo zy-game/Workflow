@@ -23,6 +23,10 @@ import { ProposalRepository } from './proposals/repository.js';
 import { createProposalService } from './proposals/service.js';
 import { ReplyRepository } from './replies/repository.js';
 import { createReplyService } from './replies/service.js';
+import { CommitmentRepository } from './commitments/repository.js';
+import { createMemoryStore } from './memory/store.js';
+import { createMemoryKeeper } from './memory/keeper.js';
+import { createMemoryDigest } from './memory/digest.js';
 import { ProjectAgentRegistry } from './agents/registry.js';
 import { WorkflowAgent } from './agents/workflow-agent.js';
 import { createWorkerChannel } from './ws/channel.js';
@@ -119,6 +123,7 @@ export async function startCore(env = process.env, dependencies = {}) {
   let internal;
   let publicServer;
   let proposalTimer = null;
+  let keeperTimer = null;
   let shutdownPromise = null;
 
   const shutdown = () => {
@@ -126,6 +131,7 @@ export async function startCore(env = process.env, dependencies = {}) {
     shutdownPromise = (async () => {
       const listenerClosures = [closeServer(publicServer), closeServer(internal)];
       if (proposalTimer) { clearInterval(proposalTimer); proposalTimer = null; }
+      if (keeperTimer) { clearInterval(keeperTimer); keeperTimer = null; }
       feishuService?.stop();
       workerChannel?.stop();
       forceCloseConnections(publicServer);
@@ -238,6 +244,22 @@ export async function startCore(env = process.env, dependencies = {}) {
       replyRepository: new ReplyRepository({ coreDb: coreDatabase }),
       proposalService,
       feishuClient,
+      log,
+    });
+    // Memory is files, so the layout is created on every start and the keeper
+    // is opt-in: it calls the model on each run.
+    const commitmentRepository = new CommitmentRepository({ coreDb: coreDatabase });
+    const memoryStore = createMemoryStore({ root: config.memoryDir, log });
+    try {
+      memoryStore.ensureLayout();
+      log(`[memory] repository ready at ${config.memoryDir}`);
+    } catch (error) {
+      log(`[memory] repository unavailable: ${error.message}`);
+    }
+    const memoryKeeper = createMemoryKeeper({
+      memoryStore,
+      serverLlm,
+      digest: createMemoryDigest({ commitmentRepository, taskRepository, proposalService }),
       log,
     });
     workerChannel = createWorkerChannel({
@@ -356,6 +378,15 @@ export async function startCore(env = process.env, dependencies = {}) {
       }
     }, 5_000);
     proposalTimer.unref?.();
+    if (config.memoryKeeper.enabled) {
+      keeperTimer = setInterval(() => {
+        memoryKeeper.runOnce()
+          .then((result) => { if (result.changed) log(`[keeper] recorded ${result.applied} update(s) (${result.commit})`); })
+          .catch((error) => log(`[keeper] run failed: ${error.message}`));
+      }, config.memoryKeeper.intervalMs);
+      keeperTimer.unref?.();
+      log(`[memory] keeper enabled every ${Math.round(config.memoryKeeper.intervalMs / 1000)}s`);
+    }
     if (feishuService) {
       await connectFeishu(feishuService, {
         appId: config.feishu.appId,

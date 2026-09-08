@@ -180,6 +180,12 @@ export function loadConfig(env = process.env) {
     memoryDir: text(env, 'WFC_MEMORY_DIR')
       ? path.resolve(text(env, 'WFC_MEMORY_DIR'))
       : path.join(dataDir, 'memory'),
+    // The keeper calls the model on every run, so it is opt-in rather than a
+    // surprise recurring cost on a fresh deployment.
+    memoryKeeper: {
+      enabled: flag(env, 'WFC_MEMORY_KEEPER_ENABLED'),
+      intervalMs: integer(env, 'WFC_MEMORY_KEEPER_INTERVAL_MS', 15 * 60 * 1000, { min: 60_000 }),
+    },
     llm: {
       enabled: flag(env, 'WFC_LLM_ENABLED'),
       baseUrl: text(env, 'WFC_LLM_BASE_URL') || 'https://api.openai.com/v1',
