@@ -612,6 +612,9 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
       const result = probeService.request({
         probe_id: body?.probe_id ?? null,
         project_id: body?.project_id,
+        // Without a channel there is nowhere to reply, so a probe that may
+        // become a reply must carry its target.
+        channel_target: body?.channel_target ?? null,
         question: body?.question,
         refs: body?.refs ?? [],
         budget_ms: body?.budget_ms,

@@ -10,6 +10,7 @@ function probeFromRow(row) {
   return {
     probeId: row.probe_id,
     projectId: row.project_id,
+    channelTarget: row.channel_target ?? null,
     question: row.question,
     refs: JSON.parse(row.refs_json || '[]'),
     budgetMs: Number(row.budget_ms),
@@ -39,6 +40,7 @@ export class ProbeRepository {
   create({
     probeId = `probe-${crypto.randomUUID()}`,
     projectId,
+    channelTarget = null,
     question,
     refs = [],
     budgetMs = 60_000,
@@ -49,11 +51,11 @@ export class ProbeRepository {
     const deadlineAt = new Date(requestedAt.getTime() + budgetMs);
     this.db.prepare(`
       INSERT INTO probes (
-        probe_id, project_id, question, refs_json, budget_ms, state,
+        probe_id, project_id, channel_target, question, refs_json, budget_ms, state,
         requested_by, requested_at, deadline_at
-      ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
     `).run(
-      probeId, String(projectId), String(question), JSON.stringify(refs ?? []),
+      probeId, String(projectId), channelTarget, String(question), JSON.stringify(refs ?? []),
       Number(budgetMs), requestedBy, requestedAt.toISOString(), deadlineAt.toISOString(),
     );
     return this.get(probeId);

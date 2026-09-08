@@ -20,6 +20,7 @@ import { createPeerSyncClient } from './sync/client.js';
 import { loadSyncKeyPair } from './sync/sync-key.js';
 import { ProbeRepository } from './probe/repository.js';
 import { createProbeService } from './probe/service.js';
+import { replyProposalFrom } from './probe/reply-proposal.js';
 import { ProposalRepository } from './proposals/repository.js';
 import { createProposalService } from './proposals/service.js';
 import { ReplyRepository } from './replies/repository.js';
@@ -268,9 +269,19 @@ export async function startCore(env = process.env, dependencies = {}) {
     };
     knowledgeRepository = new WorkflowRepository({ filename: config.knowledgeDb, readOnly: false });
     const probeRepository = new ProbeRepository({ coreDb: coreDatabase });
-    const probeService = createProbeService({ probeRepository, knowledgeRepository });
     const proposalService = createProposalService({
       proposalRepository: new ProposalRepository({ coreDb: coreDatabase }),
+    });
+    // A verified answer with a draft is a decision the user can make: this is
+    // the junction where a probe becomes a reply proposal.
+    const probeService = createProbeService({
+      probeRepository,
+      knowledgeRepository,
+      log,
+      onAnswered: (probe) => {
+        const input = replyProposalFrom(probe);
+        if (input) proposalService.open(input);
+      },
     });
     const bridgeService = createBridgeService({
       bridgeRequestsRepository,

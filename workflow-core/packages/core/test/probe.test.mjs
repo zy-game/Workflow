@@ -16,6 +16,7 @@ import { InteractionRepository } from '../src/interactions/repository.js';
 import { WorkflowRepository } from '../src/knowledge/repository.js';
 import { ProbeRepository } from '../src/probe/repository.js';
 import { createProbeService } from '../src/probe/service.js';
+import { replyProposalFrom } from '../src/probe/reply-proposal.js';
 import { TaskRepository } from '../src/tasks/repository.js';
 import { WorkersRegistry } from '../src/workers/registry.js';
 
@@ -196,4 +197,46 @@ test('probe routes reject an unknown project and a missing probe', async () => {
   const missingProbe = await call('/api/v1/probe/probe-does-not-exist', { method: 'GET' });
   assert.equal(missingProbe.status, 404);
   assert.equal(missingProbe.body.code, 'probe_not_found');
+});
+
+test('a verified answer becomes a reply proposal, and nothing else does', () => {
+  const base = {
+    probeId: 'probe-x', projectId: 'proj-a', question: '登录做好了吗',
+    verdict: 'done', suggestedReply: '已完成，版本 v1.4.2',
+    channelTarget: 'feishu:chat:oc_1',
+    evidence: [{ kind: 'commit', ref: 'a41f9c2' }],
+  };
+  const proposal = replyProposalFrom(base);
+  assert.equal(proposal.tier, 'T1', 'a verdict with evidence is a T1 fact');
+  assert.equal(proposal.source_type, 'probe');
+  assert.equal(proposal.source_ref, 'probe-x');
+  assert.equal(proposal.channel_target, 'feishu:chat:oc_1');
+  assert.equal(proposal.draft_text, '已完成，版本 v1.4.2');
+  assert.match(proposal.ask, /已完成/);
+  assert.equal(proposal.evidence[0].ref, 'a41f9c2');
+  assert.ok(proposal.veto_ms > 0, 'a reply proposal always has a veto window');
+
+  // Without evidence the proposal may only claim what is on the books.
+  assert.equal(replyProposalFrom({ ...base, evidence: [] }).tier, 'T2');
+  assert.match(replyProposalFrom({ ...base, verdict: 'not_done' }).ask, /未完成/);
+
+  // No draft, no destination, or an unknown verdict means no proposal at all.
+  assert.equal(replyProposalFrom({ ...base, suggestedReply: null }), null);
+  assert.equal(replyProposalFrom({ ...base, channelTarget: null }), null);
+  assert.equal(replyProposalFrom({ ...base, verdict: 'unknown' }), null, 'unknown is not a fact');
+  assert.equal(replyProposalFrom(null), null);
+});
+
+test('the probe service reports an answered probe to its caller', async () => {
+  const answered = [];
+  const service = createProbeService({
+    probeRepository: new ProbeRepository({ coreDb: coreDatabase }),
+    onAnswered: (probe) => answered.push(probe.probeId),
+  });
+  service.request({ probe_id: 'probe-hook', project_id: projectId, question: 'x', budget_ms: 60000 });
+  service.answer({ probeId: 'probe-hook', verdict: 'unknown' });
+  assert.deepEqual(answered, ['probe-hook']);
+  // A rejected answer must not report anything.
+  assert.throws(() => service.answer({ probeId: 'probe-hook', verdict: 'done' }));
+  assert.deepEqual(answered, ['probe-hook']);
 });

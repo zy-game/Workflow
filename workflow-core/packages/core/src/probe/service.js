@@ -19,12 +19,15 @@ export class ProbeServiceError extends Error {
   }
 }
 
-export function createProbeService({ probeRepository, knowledgeRepository = null } = {}) {
+export function createProbeService({
+  probeRepository, knowledgeRepository = null, onAnswered = null, log = () => {},
+} = {}) {
   if (!probeRepository) throw new TypeError('probeRepository is required');
 
   function request({
     probe_id: probeId = null,
     project_id: projectId,
+    channel_target: channelTarget = null,
     question,
     refs = [],
     budget_ms: budgetMs = PROBE_DEFAULT_BUDGET_MS,
@@ -61,6 +64,7 @@ export function createProbeService({ probeRepository, knowledgeRepository = null
     const probe = probeRepository.create({
       probeId: probeId ? String(probeId) : undefined,
       projectId,
+      channelTarget,
       question: text,
       refs: hintList,
       budgetMs: budget,
@@ -98,6 +102,13 @@ export function createProbeService({ probeRepository, knowledgeRepository = null
       verdict, confidence, evidence: evidenceList, suggestedReply,
     });
     if (!probe) throw new ProbeServiceError('PROBE_NOT_OPEN', 'probe does not exist or is already resolved');
+    // The answer is only useful once it can become a decision: hand it to the
+    // caller so a reply proposal can be raised where the question came from.
+    try {
+      onAnswered?.(probe);
+    } catch (error) {
+      log(`[probe] onAnswered failed for ${probe.probeId}: ${error.message}`);
+    }
     return probe;
   }
 

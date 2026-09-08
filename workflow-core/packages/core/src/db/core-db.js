@@ -271,6 +271,7 @@ function createCurrentSchema(db) {
     CREATE TABLE probes (
       probe_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
+      channel_target TEXT,
       question TEXT NOT NULL,
       refs_json TEXT NOT NULL DEFAULT '[]',
       budget_ms INTEGER NOT NULL,
@@ -579,6 +580,7 @@ export function createSchema(db) {
         CREATE TABLE IF NOT EXISTS probes (
           probe_id TEXT PRIMARY KEY,
           project_id TEXT NOT NULL,
+          channel_target TEXT,
           question TEXT NOT NULL,
           refs_json TEXT NOT NULL DEFAULT '[]',
           budget_ms INTEGER NOT NULL,
@@ -712,6 +714,7 @@ export function createSchema(db) {
       `);
       try { db.exec("ALTER TABLE proposals ADD COLUMN tier TEXT NOT NULL DEFAULT 'T2'"); } catch { /* exists */ }
       try { db.exec("ALTER TABLE feedback ADD COLUMN detail_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE probes ADD COLUMN channel_target TEXT'); } catch { /* exists */ }
       if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'tasks'").get()) {
         try { db.exec("ALTER TABLE tasks ADD COLUMN origin_node_id TEXT"); } catch { /* exists */ }
         try { db.exec("ALTER TABLE tasks ADD COLUMN executor_node_id TEXT"); } catch { /* exists */ }
