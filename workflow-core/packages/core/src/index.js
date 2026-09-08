@@ -28,6 +28,7 @@ import { createCommitmentService } from './commitments/service.js';
 import { createJudgmentLoop } from './judgment/loop.js';
 import { SignalRepository } from './signals/repository.js';
 import { createSignalService } from './signals/service.js';
+import { createDigestService } from './digest/service.js';
 import { createMemoryStore } from './memory/store.js';
 import { createMemoryKeeper } from './memory/keeper.js';
 import { createMemoryDigest } from './memory/digest.js';
@@ -129,6 +130,7 @@ export async function startCore(env = process.env, dependencies = {}) {
   let proposalTimer = null;
   let keeperTimer = null;
   let judgmentTimer = null;
+  let digestTimer = null;
   let shutdownPromise = null;
 
   const shutdown = () => {
@@ -138,6 +140,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       if (proposalTimer) { clearInterval(proposalTimer); proposalTimer = null; }
       if (keeperTimer) { clearInterval(keeperTimer); keeperTimer = null; }
       if (judgmentTimer) { clearInterval(judgmentTimer); judgmentTimer = null; }
+      if (digestTimer) { clearInterval(digestTimer); digestTimer = null; }
       feishuService?.stop();
       workerChannel?.stop();
       forceCloseConnections(publicServer);
@@ -246,6 +249,7 @@ export async function startCore(env = process.env, dependencies = {}) {
     const judgmentLoop = createJudgmentLoop({
       commitmentService, proposalService, serverLlm, log,
     });
+    const digestService = createDigestService({ commitmentService, proposalService, log });
     const feishuClient = config.feishu.enabled
       ? new FeishuClient({ appId: config.feishu.appId, appSecret: config.feishu.appSecret })
       : null;
@@ -370,6 +374,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       replyService,
       commitmentService,
       judgmentLoop,
+      digestService,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });
@@ -418,6 +423,18 @@ export async function startCore(env = process.env, dependencies = {}) {
       }, config.judgment.intervalMs);
       judgmentTimer.unref?.();
       log(`[judgment] loop enabled every ${Math.round(config.judgment.intervalMs / 1000)}s`);
+    }
+    if (config.digest.enabled) {
+      digestTimer = setInterval(() => {
+        try {
+          const result = digestService.build();
+          if (result.built) log(`[digest] ${result.items} item(s) summarised`);
+        } catch (error) {
+          log(`[digest] build failed: ${error.message}`);
+        }
+      }, config.digest.intervalMs);
+      digestTimer.unref?.();
+      log(`[digest] daily summary every ${Math.round(config.digest.intervalMs / 1000)}s`);
     }
     if (feishuService) {
       await connectFeishu(feishuService, {

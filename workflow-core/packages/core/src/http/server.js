@@ -105,7 +105,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -781,6 +781,21 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     if (!judgmentLoop) throw new HttpError(503, 'judgment_unavailable', 'judgment loop is not configured');
     requireAdmin(req);
     return { ok: true, ...(await judgmentLoop.tick()) };
+  });
+
+  // The daily summary also runs on its own timer; this lets an operator see
+  // what would be batched right now.
+  router.add('POST', '/api/v1/digest/build', (req) => {
+    if (!digestService) throw new HttpError(503, 'digest_unavailable', 'digest service is not configured');
+    requireAdmin(req);
+    return { ok: true, ...digestService.build() };
+  });
+
+  router.add('GET', '/api/v1/digest/pending', (req) => {
+    if (!digestService) throw new HttpError(503, 'digest_unavailable', 'digest service is not configured');
+    requireAdmin(req);
+    const pending = digestService.pending();
+    return { ok: true, count: pending.length, commitments: pending };
   });
 
   // --- peer sync: handshake, pull, push, ack ---

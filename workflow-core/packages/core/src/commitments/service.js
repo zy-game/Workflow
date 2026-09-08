@@ -104,6 +104,19 @@ export function createCommitmentService({ commitmentRepository, now = () => new 
     return commitmentRepository.touch(commitmentId, { lastEvaluatedAt: at });
   }
 
+  // Quiet responsibilities: allowed to accumulate, never to interrupt on their
+  // own. They are delivered in a digest, and an item already delivered is not
+  // repeated - the digest is a notice, not a recurring nag.
+  function pendingDigest({ limit = 50 } = {}) {
+    const bounded = Math.min(200, Math.max(1, Number(limit) || 50));
+    return commitmentRepository.list({ state: 'active', limit: 1000 })
+      .filter((commitment) => (
+        parseAttentionPolicy(commitment.attentionPolicy)?.kind === 'daily_digest'
+        && !commitment.lastAttentionAt
+      ))
+      .slice(0, bounded);
+  }
+
   function markAttention(commitmentId, at = now().toISOString()) {
     return commitmentRepository.touch(commitmentId, { lastAttentionAt: at });
   }
@@ -127,6 +140,7 @@ export function createCommitmentService({ commitmentRepository, now = () => new 
     open,
     transition,
     dueForAttention,
+    pendingDigest,
     markEvaluated,
     markAttention,
     markActivity,

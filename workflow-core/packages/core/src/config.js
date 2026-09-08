@@ -193,6 +193,11 @@ export function loadConfig(env = process.env) {
       enabled: flag(env, 'WFC_JUDGMENT_ENABLED', true),
       intervalMs: integer(env, 'WFC_JUDGMENT_INTERVAL_MS', 5 * 60 * 1000, { min: 30_000 }),
     },
+    // The digest costs nothing when there is nothing to summarise.
+    digest: {
+      enabled: flag(env, 'WFC_DIGEST_ENABLED', true),
+      intervalMs: integer(env, 'WFC_DIGEST_INTERVAL_MS', 24 * 60 * 60 * 1000, { min: 60_000 }),
+    },
     llm: {
       enabled: flag(env, 'WFC_LLM_ENABLED'),
       baseUrl: text(env, 'WFC_LLM_BASE_URL') || 'https://api.openai.com/v1',
