@@ -382,6 +382,22 @@ function createCurrentSchema(db) {
     CREATE UNIQUE INDEX signals_source_idx ON signals(channel, source_ref);
     CREATE INDEX signals_received_idx ON signals(received_at);
 
+    CREATE TABLE presence (
+      touchpoint_id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      idle_bucket TEXT NOT NULL DEFAULT 'unknown',
+      active_project TEXT,
+      last_seen TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE INDEX presence_expiry_idx ON presence(expires_at);
+
+    CREATE TABLE presence_acks (
+      notification_id TEXT PRIMARY KEY,
+      touchpoint_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE peer_nodes (
       node_id TEXT PRIMARY KEY,
       display_name TEXT,
@@ -654,6 +670,20 @@ export function createSchema(db) {
         );
         CREATE UNIQUE INDEX IF NOT EXISTS signals_source_idx ON signals(channel, source_ref);
         CREATE INDEX IF NOT EXISTS signals_received_idx ON signals(received_at);
+        CREATE TABLE IF NOT EXISTS presence (
+          touchpoint_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          idle_bucket TEXT NOT NULL DEFAULT 'unknown',
+          active_project TEXT,
+          last_seen TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS presence_expiry_idx ON presence(expires_at);
+        CREATE TABLE IF NOT EXISTS presence_acks (
+          notification_id TEXT PRIMARY KEY,
+          touchpoint_id TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
       `);
       try { db.exec("ALTER TABLE proposals ADD COLUMN tier TEXT NOT NULL DEFAULT 'T2'"); } catch { /* exists */ }
       try { db.exec("ALTER TABLE feedback ADD COLUMN detail_json TEXT NOT NULL DEFAULT '{}'"); } catch { /* exists */ }

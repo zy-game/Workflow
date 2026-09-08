@@ -31,6 +31,7 @@ import { createSignalService } from './signals/service.js';
 import { createChannelContext } from './signals/channel-context.js';
 import { createDigestService } from './digest/service.js';
 import { createResolverService } from './resolve/service.js';
+import { PresenceRepository, createPresenceService } from './presence/service.js';
 import { createMemoryStore } from './memory/store.js';
 import { createMemoryKeeper } from './memory/keeper.js';
 import { createMemoryDigest } from './memory/digest.js';
@@ -285,6 +286,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       feishuClient,
       log,
     });
+    const presenceService = createPresenceService({ presenceRepository: new PresenceRepository({ coreDb: coreDatabase }) });
     const resolverService = createResolverService({
       knowledgeRepository,
       serverLlm,
@@ -389,6 +391,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       memoryStore,
       resolverService,
       signalService,
+      presenceService,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });

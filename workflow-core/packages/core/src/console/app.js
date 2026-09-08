@@ -115,6 +115,28 @@ input { font-family:inherit; }
     if (value) load();
   }
 
+  // Presence: this tab reports its own facts; the server decides who is most
+  // likely in front of the user.
+  var TOUCHPOINT_KEY = 'workflow.console.touchpoint';
+  function touchpointId() {
+    try {
+      var id = sessionStorage.getItem(TOUCHPOINT_KEY);
+      if (!id) { id = 'tp-' + Math.random().toString(36).slice(2, 10); sessionStorage.setItem(TOUCHPOINT_KEY, id); }
+      return id;
+    } catch (e) { return 'tp-unknown'; }
+  }
+  function idleBucket() {
+    if (document.visibilityState !== 'visible') return 'idle';
+    return document.hasFocus() ? 'active' : 'recent';
+  }
+  function reportPresence() {
+    if (!token()) return;
+    api('/api/v1/presence', {
+      method: 'POST',
+      body: { touchpoint_id: touchpointId(), kind: 'browser', idle_bucket: idleBucket() },
+    }).catch(function () { /* presence is best effort */ });
+  }
+
   function api(path, options) {
     var opts = options || {};
     var headers = { 'content-type': 'application/json' };
@@ -314,8 +336,13 @@ input { font-family:inherit; }
   }, 1000);
   window.addEventListener('beforeunload', function () { if (timer) clearInterval(timer); });
 
+  document.addEventListener('visibilitychange', reportPresence);
+  window.addEventListener('focus', reportPresence);
+  window.addEventListener('blur', reportPresence);
+  setInterval(reportPresence, 30000).unref?.();
+
   render();
-  if (token()) load();
+  if (token()) { load(); reportPresence(); }
 })();
 </script>
 </body>

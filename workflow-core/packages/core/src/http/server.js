@@ -105,7 +105,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, signalService = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, resolverService = null, signalService = null, presenceService = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -814,6 +814,35 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     if (!signalService) throw new HttpError(503, 'signals_unavailable', 'signal service is not configured');
     requireAdmin(req);
     return { ok: true, channel: params.id, context: signalService.context(params.id) };
+  });
+
+  // --- presence: where the user is, as reported by the touchpoints ---
+  router.add('POST', '/api/v1/presence', (req, res, body) => {
+    if (!presenceService) throw new HttpError(503, 'presence_unavailable', 'presence service is not configured');
+    requireAdmin(req);
+    try {
+      return { ok: true, presence: presenceService.report(body ?? {}) };
+    } catch (error) {
+      throw new HttpError(400, 'presence_invalid', error.message);
+    }
+  });
+
+  router.add('GET', '/api/v1/presence', (req) => {
+    if (!presenceService) throw new HttpError(503, 'presence_unavailable', 'presence service is not configured');
+    requireAdmin(req);
+    return { ok: true, online: presenceService.online(), active: presenceService.active(), ttl_ms: presenceService.ttlMs };
+  });
+
+  router.add('POST', '/api/v1/presence/:notificationId/ack', (req, res, body, params) => {
+    if (!presenceService) throw new HttpError(503, 'presence_unavailable', 'presence service is not configured');
+    requireAdmin(req);
+    try {
+      const ack = presenceService.ack({ notificationId: params.notificationId, touchpointId: body?.touchpoint_id });
+      // ackedBy tells the other touchpoints to stay quiet.
+      return { ok: true, ack, acked_by: presenceService.ackedBy(params.notificationId) };
+    } catch (error) {
+      throw new HttpError(400, 'ack_invalid', error.message);
+    }
   });
 
   router.add('GET', '/api/v1/resolve/candidates', (req) => {
