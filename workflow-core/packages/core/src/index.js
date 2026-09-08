@@ -1,4 +1,5 @@
 // index.js - Workflow Core entrypoint.
+import fs from 'node:fs';
 import readline from 'node:readline/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -651,7 +652,19 @@ export async function main(argv = process.argv.slice(2), env = process.env, depe
   return runtime;
 }
 
-const isDirect = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+// Compare real paths: the documented layout invokes this file through the
+// /opt/workflow-core/current symlink, and a symlinked path never equals the
+// resolved module URL - which silently made every CLI command a no-op.
+function isDirectRun() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+const isDirect = isDirectRun();
 if (isDirect) {
   main().catch((error) => {
     console.error('[workflow-core] startup failed:', error);
