@@ -730,17 +730,16 @@ Electron（`powerMonitor` 与原生通知都是现成能力）。preload 只暴�
 
 **目标**：干净的仓库 + 全绿测试基线 + 确认体检闭环未被破坏。
 
-工作项：
+工作项（已完成）：
 
-- [x] 清仓：删除 `dsh-workflow`、`dsh-client`、`dsh-desktop`、`workflow-desktop`、顶层 tgz、`integration/`、`nul`、`.isolated-dsh-rc8`、`.rc8-work`。
-- [x] 确认 `workflow-core` 151 测试仍全绿。
+- [x] 清仓：删除 `dsh-workflow`、`dsh-client`、`dsh-desktop`、`workflow-desktop`、顶层 tgz、`integration/`、`nul`、`.isolated-dsh-rc8`、`.rc8-work`。已跟踪文件 90133 → 125。
 - [x] 更新顶层 `README.md` 指向本方案。
-- [ ] 确认 `POST /api/v1/ai/checkup` 体检闭环仍可运行（清仓未触及，需实测一次）。
-- [ ] 把 `index.js` 里硬编码的 DSH CLI 路径改为可配置，或改用直连 API 模式。
-- [ ] 定下记忆仓库位置与 git 初始化方式。
-- [ ] 记录恢复锚点：清仓前 HEAD `a295d0bd`。
+- [x] 实测体检闭环：**发现并修复真实缺陷**——`ai_suggestions` 表从未建表，体检在全新数据库上必然失败（`no such table: ai_suggestions`）。已补表并加端到端测试。
+- [x] 移除 `index.js` 硬编码 DSH 路径：改为 `WFC_LLM_BACKEND` / `WFC_LLM_CLI_COMMAND` / `WFC_LLM_CLI_ARGS` / `WFC_LLM_CLI_TIMEOUT_MS` 配置。
+- [x] 定下记忆仓库位置：`WFC_MEMORY_DIR`，默认 `<WFC_DATA_DIR>/memory`；git 初始化与提交由 keeper 负责（阶段 2）。
+- [x] 记录恢复锚点：清仓前 HEAD `a295d0bd`。
 
-**验收**：`git ls-files` 无 `node_modules`；`npm test` 全绿；体检接口返回可用结果；无硬编码的本机路径。
+**验收结果**：`git ls-files` 125 个文件、无 `node_modules`；`npm test` 157 个测试全绿；体检接口实测可产出 pending 建议；无硬编码本机路径。
 
 ## 阶段 1：验证闭环（最高优先级）
 
