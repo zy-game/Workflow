@@ -77,7 +77,17 @@ input { font-family:inherit; }
 .actions { display:flex; gap:var(--s2); margin-top:var(--s4); align-items:center; }
 .section-title { font-size:12px; font-weight:600; letter-spacing:.4px; color:var(--text-3);
   text-transform:uppercase; margin:0 0 var(--s3); }
-@media (max-width:640px) { .shell { padding:var(--s4); } .actions { flex-wrap:wrap; } }
+.btn-sm { padding: 2px var(--s2); font-size: 12px; }
+.tree-item { padding: 2px var(--s2); border-radius: 5px; color: var(--text-2); cursor: pointer; font-size: 13px; }
+.tree-item:hover { background: var(--surface-2); color: var(--text); }
+.tree-item.active { background: rgba(108,140,255,.12); color: var(--text); }
+.memory-grid { display: grid; grid-template-columns: 240px 1fr; gap: var(--s3); align-items: start; }
+.file-head { padding-bottom: var(--s3); border-bottom: 1px solid var(--border); margin-bottom: var(--s3); }
+.file-body { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.history-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) 0; border-bottom: 1px solid var(--border); }
+.history-row:last-child { border-bottom: none; }
+.history-row .muted { flex: 1; }
+@media (max-width:640px) { .shell { padding:var(--s4); } .actions { flex-wrap:wrap; } .memory-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -86,7 +96,10 @@ input { font-family:inherit; }
 (function () {
   var TOKEN_KEY = 'workflow.console.token';
   var root = document.getElementById('root');
-  var state = { view: 'proposals', proposals: [], loading: false, error: '', busy: '', loginError: '', busyLogin: false };
+  var state = {
+    view: 'proposals', proposals: [], loading: false, error: '', busy: '', loginError: '', busyLogin: false,
+    memory: { tree: [], path: null, content: '', history: [], error: '' },
+  };
   var timer = null;
 
   function esc(value) {
@@ -185,13 +198,76 @@ input { font-family:inherit; }
       : state.proposals.length ? state.proposals.map(proposalView).join('')
       : '<div class="card muted">没有待决策的提案。</div>';
     return '<div class="shell"><div class="topbar"><h1>提案</h1><div class="spacer"></div>' +
+      '<button class="btn btn-ghost" data-nav="memory">记忆</button>' +
       '<button class="btn btn-ghost" data-act="refresh">刷新</button>' +
       '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
       '<h2 class="section-title">待决策 · ' + state.proposals.length + '</h2>' + body + '</div>';
   }
 
   function render() {
-    root.innerHTML = token() ? proposalsView() : loginView();
+    if (!token()) { root.innerHTML = loginView(); return; }
+    root.innerHTML = (state.view === 'memory' ? memoryView() : proposalsView());
+  }
+
+  // --- memory: the assistant's beliefs, as readable files ---
+  function loadMemory() {
+    state.memory.error = ''; render();
+    api('/api/v1/memory/tree')
+      .then(function (result) { state.memory.tree = result.tree || []; render(); })
+      .catch(function (err) { state.memory.error = err.message || String(err); render(); });
+  }
+
+  function openFile(pathname) {
+    state.memory.path = pathname; state.memory.error = ''; render();
+    Promise.all([
+      api('/api/v1/memory/file?path=' + encodeURIComponent(pathname)),
+      api('/api/v1/memory/history?path=' + encodeURIComponent(pathname)),
+    ]).then(function (results) {
+      state.memory.content = results[0].content || '';
+      state.memory.history = results[1].history || [];
+      render();
+    }).catch(function (err) { state.memory.error = err.message || String(err); render(); });
+  }
+
+  function revertFile(commit) {
+    if (!state.memory.path) return;
+    state.memory.error = ''; render();
+    api('/api/v1/memory/revert', { method: 'POST', body: { commit: commit, path: state.memory.path } })
+      .then(function () { openFile(state.memory.path); })
+      .catch(function (err) { state.memory.error = err.message || String(err); render(); });
+  }
+
+  function treeHtml(nodes, depth) {
+    return (nodes || []).map(function (node) {
+      var pad = 'style="padding-left:' + (8 + depth * 14) + 'px"';
+      if (node.dir) {
+        return '<div class="tree-item" ' + pad + '>' + esc(node.name) + '</div>' + treeHtml(node.children, depth + 1);
+      }
+      var active = state.memory.path === node.path ? ' active' : '';
+      return '<div class="tree-item' + active + '" ' + pad + ' data-file="' + esc(node.path) + '">' + esc(node.name) + '</div>';
+    }).join('');
+  }
+
+  function memoryView() {
+    var memory = state.memory;
+    var body = memory.path
+      ? '<div class="file-head"><span class="muted mono">' + esc(memory.path) + '</span></div>' +
+        '<pre class="file-body">' + esc(memory.content) + '</pre>'
+      : '<div class="card muted">从左侧选一个文件。</div>';
+    var history = memory.history.length
+      ? '<h2 class="section-title">历史</h2>' + memory.history.map(function (entry) {
+        return '<div class="history-row"><span class="mono">' + esc(entry.commit.slice(0, 7)) + '</span>' +
+          '<span class="muted">' + esc(entry.subject) + '</span>' +
+          '<button class="btn btn-sm" data-revert="' + esc(entry.commit) + '">回滚</button></div>';
+      }).join('')
+      : '';
+    return '<div class="shell"><div class="topbar"><h1>记忆</h1><div class="spacer"></div>' +
+      '<button class="btn btn-ghost" data-nav="proposals">提案</button>' +
+      '<button class="btn btn-ghost" data-act="memory-refresh">刷新</button>' +
+      '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
+      (memory.error ? '<div class="card error">' + esc(memory.error) + '</div>' : '') +
+      '<div class="memory-grid"><div class="card tree">' + treeHtml(memory.tree, 0) + '</div>' +
+      '<div><div class="card">' + body + '</div>' + history + '</div></div></div>';
   }
 
   root.addEventListener('submit', function (event) {
@@ -207,10 +283,22 @@ input { font-family:inherit; }
   });
 
   root.addEventListener('click', function (event) {
+    var nav = event.target.closest('[data-nav]');
+    if (nav) {
+      state.view = nav.dataset.nav;
+      render();
+      if (state.view === 'memory' && !state.memory.tree.length) loadMemory();
+      return;
+    }
+    var file = event.target.closest('[data-file]');
+    if (file) return openFile(file.dataset.file);
+    var revert = event.target.closest('[data-revert]');
+    if (revert) return revertFile(revert.dataset.revert);
     var button = event.target.closest('[data-act]');
     if (!button) return;
     var action = button.dataset.act;
     if (action === 'refresh') return load();
+    if (action === 'memory-refresh') return loadMemory();
     if (action === 'logout') return setToken('');
     var id = button.dataset.id;
     state.busy = id; render();

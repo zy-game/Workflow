@@ -157,6 +157,17 @@ export function createMemoryStore({ root, log = () => {} } = {}) {
     return result.status === 0 ? String(result.stdout) : null;
   }
 
+  // Restore one file to a past version. The revert is itself a commit, so the
+  // rollback is reversible and the history stays linear.
+  function revert(commitId, relativePath) {
+    const content = readAt(commitId, relativePath);
+    if (content == null) {
+      throw new MemoryStoreError('version_not_found', `no version of ${relativePath} at ${commitId}`);
+    }
+    write(relativePath, content);
+    return commit(`revert ${relativePath} to ${String(commitId).slice(0, 7)}`);
+  }
+
   return {
     root: base,
     ensureLayout,
@@ -168,6 +179,7 @@ export function createMemoryStore({ root, log = () => {} } = {}) {
     commit,
     history,
     readAt,
+    revert,
     isRepo,
     log,
   };

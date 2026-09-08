@@ -105,7 +105,7 @@ function findFileByName(dir, name) {
   }
   return null;
 }
-export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, runCheckup = null, applySuggestion = null } = {}) {
+export function createCoreServer({ config = {}, nodeId = null, authRepository, taskRepository, taskCreationFacade = null, interactionRepository = null, workersRegistry = null, bridgeService = null, peerSyncService = null, projectAgentsRegistry = null, workflowAgent = null, workerChannel = null, knowledgeRepository = null, feishuService = null, credentialCipher = null, settingsRepository = null, serverLlm = null, suggestionsRepository = null, probeService = null, proposalService = null, replyService = null, commitmentService = null, judgmentLoop = null, digestService = null, memoryStore = null, runCheckup = null, applySuggestion = null } = {}) {
   const router = createRouter();
 
   function resolvePrincipal(req) {
@@ -796,6 +796,70 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     requireAdmin(req);
     const pending = digestService.pending();
     return { ok: true, count: pending.length, commitments: pending };
+  });
+
+  // --- memory: the assistant's beliefs, as readable files ---
+  // Memory is a git repository of plain text, so the console can show exactly
+  // what the assistant believes and let the user correct or roll it back.
+  function requireMemory() {
+    if (!memoryStore) throw new HttpError(503, 'memory_unavailable', 'memory repository is not configured');
+  }
+
+  function memoryTree(store, dir, depth) {
+    if (depth > 4) return [];
+    return store.list(dir).map((entry) => {
+      const childPath = dir === '.' ? entry.name : `${dir}/${entry.name}`;
+      return {
+        name: entry.name,
+        dir: entry.dir,
+        path: childPath,
+        children: entry.dir ? memoryTree(store, childPath, depth + 1) : undefined,
+      };
+    });
+  }
+
+  router.add('GET', '/api/v1/memory/tree', (req) => {
+    requireMemory();
+    requireAdmin(req);
+    return { ok: true, root: memoryStore.root, tree: memoryTree(memoryStore, '.', 0) };
+  });
+
+  router.add('GET', '/api/v1/memory/file', (req) => {
+    requireMemory();
+    requireAdmin(req);
+    const url = new URL(req.url, 'http://local');
+    const file = url.searchParams.get('path');
+    if (!file) throw new HttpError(400, 'path_required', 'path is required');
+    let content;
+    try {
+      content = memoryStore.read(file);
+    } catch (error) {
+      throw new HttpError(400, error.code ?? 'invalid_path', error.message);
+    }
+    if (content === null) throw new HttpError(404, 'file_not_found', 'memory file does not exist');
+    return { ok: true, path: file, content };
+  });
+
+  router.add('GET', '/api/v1/memory/history', (req) => {
+    requireMemory();
+    requireAdmin(req);
+    const url = new URL(req.url, 'http://local');
+    return { ok: true, history: memoryStore.history(url.searchParams.get('path') || null, { limit: 50 }) };
+  });
+
+  router.add('POST', '/api/v1/memory/revert', (req, res, body) => {
+    requireMemory();
+    requireAdmin(req);
+    const file = body?.path;
+    const commit = body?.commit;
+    if (!file || !commit) throw new HttpError(400, 'revert_input_required', 'path and commit are required');
+    try {
+      const reverted = memoryStore.revert(String(commit), String(file));
+      return { ok: true, commit: reverted, path: file, content: memoryStore.read(String(file)) };
+    } catch (error) {
+      const status = error.code === 'version_not_found' ? 404 : 400;
+      throw new HttpError(status, error.code ?? 'revert_failed', error.message);
+    }
   });
 
   // --- peer sync: handshake, pull, push, ack ---

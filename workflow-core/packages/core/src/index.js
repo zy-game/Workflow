@@ -375,6 +375,7 @@ export async function startCore(env = process.env, dependencies = {}) {
       commitmentService,
       judgmentLoop,
       digestService,
+      memoryStore,
       runCheckup,
       applySuggestion: applySuggestionBound,
     });

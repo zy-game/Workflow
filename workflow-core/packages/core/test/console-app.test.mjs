@@ -57,6 +57,8 @@ test('the console carries the design tokens and the real API calls', () => {
   for (const call of [
     '/api/v1/auth/client-login', '/api/v1/proposals?state=pending',
     'data-act="approve"', 'data-act="reject"', 'data-act="send"',
+    '/api/v1/memory/tree', '/api/v1/memory/file?path=', '/api/v1/memory/history?path=', '/api/v1/memory/revert',
+    'data-nav="memory"', 'data-revert=',
   ]) {
     assert.ok(CONSOLE_HTML.includes(call), `missing API call: ${call}`);
   }
