@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { AuthRepository } from '../src/auth/repository.js';
 import { hashPassword, verifyPassword } from '../src/auth/crypto.js';
+import { AuthRepository } from '../src/auth/repository.js';
 
 let dir;
 let repo;
@@ -106,5 +106,28 @@ test('fresh databases initialize cleanly and reopen as existing authority', () =
     second.close();
   } finally {
     fs.rmSync(reopenDir, { recursive: true, force: true });
+  }
+});
+
+test('a password reset replaces the credential and invalidates old sessions', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-auth-reset-'));
+  const repo = new AuthRepository({ dataDir: dir });
+  try {
+    await repo.createAccount({ email: 'reset@example.com', password: 'first-password-123' });
+    const verify = async (password) => {
+      const account = repo.getAccountByEmail('reset@example.com');
+      return verifyPassword(password, account.password_hash);
+    };
+    assert.equal(await verify('first-password-123'), true, 'the original password must work');
+
+    await repo.setPassword('reset@example.com', 'second-password-456');
+    assert.equal(await verify('first-password-123'), false, 'the old password must stop working');
+    assert.equal(await verify('second-password-456'), true);
+
+    await assert.rejects(() => repo.setPassword('nobody@example.com', 'whatever-123456'), /does not exist/);
+    await assert.rejects(() => repo.setPassword('reset@example.com', 'short'), /password/i);
+  } finally {
+    repo.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

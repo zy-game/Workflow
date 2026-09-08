@@ -47,6 +47,20 @@ import { FeishuService, connectFeishuWebSocket } from './feishu/service.js';
 import { loadConfig } from './config.js';
 import { loadNodeIdentity } from './node-identity.js';
 
+async function resetPasswordCli(authRepository, email) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const password = await rl.question('new password (hidden): ', { hideEchoBack: true });
+    const confirm = await rl.question('confirm (hidden): ', { hideEchoBack: true });
+    if (password !== confirm) throw new Error('passwords do not match');
+    await authRepository.setPassword(email, password);
+    process.stdout.write(`password reset: ${email}
+`);
+  } finally {
+    rl.close();
+  }
+}
+
 async function createAccountCli(authRepository, email, role) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
@@ -592,6 +606,19 @@ export async function startCore(env = process.env, dependencies = {}) {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, dependencies = {}) {
+  if (argv[0] === 'reset-password') {
+    const config = loadConfig(env);
+    const authRepository = new AuthRepository({ dataDir: config.dataDir });
+    try {
+      const email = argv[1];
+      if (!email) throw new Error('usage: reset-password <email>');
+      await resetPasswordCli(authRepository, email);
+      return null;
+    } finally {
+      authRepository.close();
+    }
+  }
+
   if (argv[0] === 'create-account') {
     const config = loadConfig(env);
     const authRepository = new AuthRepository({ dataDir: config.dataDir });

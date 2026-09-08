@@ -190,6 +190,26 @@ export class AuthRepository {
     return Number(this.db.prepare('SELECT count(*) AS count FROM accounts').get().count);
   }
 
+  // Password reset. Bumping credential_version invalidates the sessions and
+  // tokens that were issued against the old password.
+  async setPassword(email, password) {
+    const normalizedEmail = normalizeEmail(email);
+    validatePassword(password, normalizedEmail);
+    const account = this.getAccountByEmail(normalizedEmail);
+    if (!account) {
+      const error = new Error('account does not exist');
+      error.code = 'ACCOUNT_NOT_FOUND';
+      throw error;
+    }
+    const passwordHash = await hashPassword(password, normalizedEmail);
+    this.db.prepare(`
+      UPDATE accounts SET password_hash = ?, credential_version = credential_version + 1, updated_at = ?
+      WHERE account_id = ?
+    `).run(passwordHash, new Date().toISOString(), account.account_id);
+    insertAudit(this.db, { type: 'account.password_reset', account_id: account.account_id, email: normalizedEmail, actor: 'cli' });
+    return this.getAccountById(account.account_id);
+  }
+
   async createAccount({ email, password, role = 'admin', display_name = null }) {
     const normalizedEmail = normalizeEmail(email);
     validatePassword(password, normalizedEmail);
