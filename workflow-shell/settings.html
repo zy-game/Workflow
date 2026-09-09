@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Workflow 本机设置</title>
+<style>
+:root{--bg:#0b0d12;--surface:#14171e;--surface-2:#1b1f27;--surface-3:#222732;--border:#262b35;--border-strong:#333a47;
+--text:#e7e9ee;--text-2:#9aa1ad;--text-3:#6b7280;--accent:#6c8cff;
+--ok:#3fb950;--danger:#f85149;
+--font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;padding:24px;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.6}
+h1{font-size:16px;margin:0 0 4px}
+h2{font-size:13px;margin:0 0 4px}
+p{margin:0 0 12px}
+.muted{color:var(--text-3);font-size:13px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px}
+.field{display:block;margin-bottom:12px}
+.field span{display:block;font-size:12px;color:var(--text-3);margin-bottom:4px}
+input{width:100%;padding:8px 12px;border-radius:6px;border:1px solid var(--border-strong);
+background:var(--surface-2);color:var(--text);font-size:13px;font-family:inherit}
+input[readonly]{color:var(--text-2)}
+.row{display:flex;gap:8px;align-items:center}
+.row input{flex:1;min-width:0}
+button{padding:8px 16px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface-2);
+color:var(--text);font-size:13px;font-family:inherit;cursor:pointer}
+button:hover{background:var(--surface-3)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.5;cursor:not-allowed}
+.status{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--text-3);flex-shrink:0}
+.dot.on{background:var(--ok)}
+.hint{font-size:12px;color:var(--text-3);margin-top:12px}
+.warn{color:var(--danger);font-size:12px;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>本机设置</h1>
+<p class="muted">只影响这台电脑上的执行器，不会上传服务器。</p>
+
+<section class="card">
+  <h2>执行引擎</h2>
+  <p class="muted">本机跑任务用的 CLI。比如你在本机装了 Codex，就选它的可执行文件。</p>
+  <div class="row">
+    <input id="cli" readonly placeholder="还没有选择">
+    <button id="choose">选择…</button>
+  </div>
+  <label class="field" style="margin-top:12px"><span>参数（可选，用 | 分隔）</span>
+    <input id="args" placeholder="--flag value"></label>
+</section>
+
+<section class="card">
+  <h2>服务器</h2>
+  <label class="field"><span>地址</span><input id="serverUrl"></label>
+  <label class="field"><span>执行器 id</span><input id="workerId"></label>
+</section>
+
+<section class="card">
+  <h2>执行器</h2>
+  <div class="status"><span class="dot" id="dot"></span><span id="state">读取中…</span></div>
+  <div class="row">
+    <button id="start">启动</button>
+    <button id="stop">停止</button>
+  </div>
+  <div class="hint" id="access"></div>
+</section>
+
+<div class="row">
+  <button id="save" class="primary">保存</button>
+  <span class="muted" id="hint"></span>
+</div>
+<div class="warn" id="error"></div>
+
+<script>
+(function () {
+  var api = window.workflowDesktop;
+  function el(id) { return document.getElementById(id); }
+  var state = { backendCommand: '' };
+
+  function renderStatus(executor, hasToken) {
+    var running = Boolean(executor && executor.running);
+    el('dot').className = 'dot' + (running ? ' on' : '');
+    var parts = [running ? '运行中' : '已停止'];
+    if (running && executor.pid) parts.push('PID ' + executor.pid);
+    if (executor && executor.restarts) parts.push('重启 ' + executor.restarts + ' 次');
+    if (executor && executor.lastError) parts.push(executor.lastError);
+    el('state').textContent = parts.join(' · ');
+    el('access').textContent = hasToken
+      ? '凭据已配置，可以领取任务。'
+      : '还没有凭据：启动后会自动注册这台机器，等待在控制台批准。';
+    el('start').disabled = running;
+    el('stop').disabled = !running;
+  }
+
+  function refresh() {
+    return api.settings.get().then(function (settings) {
+      state.backendCommand = settings.backendCommand || '';
+      el('cli').value = state.backendCommand;
+      el('args').value = (settings.backendArgs || []).join(' | ');
+      el('serverUrl').value = settings.serverUrl || '';
+      el('workerId').value = settings.workerId || '';
+      renderStatus(settings.executor, settings.hasToken);
+    }).catch(function (error) { el('error').textContent = error.message; });
+  }
+
+  el('choose').addEventListener('click', function () {
+    api.settings.chooseCli().then(function (picked) {
+      if (!picked) return;
+      state.backendCommand = picked;
+      el('cli').value = picked;
+      el('hint').textContent = '已选择，点保存生效。';
+    });
+  });
+
+  el('save').addEventListener('click', function () {
+    el('error').textContent = '';
+    el('save').disabled = true;
+    api.settings.save({
+      serverUrl: el('serverUrl').value,
+      workerId: el('workerId').value,
+      backendCommand: state.backendCommand,
+      backendArgs: el('args').value.split('|').map(function (item) { return item.trim(); }).filter(Boolean),
+    }).then(function () {
+      el('hint').textContent = '已保存，执行器已按新配置重启。';
+      return refresh();
+    }).catch(function (error) { el('error').textContent = error.message; })
+      .then(function () { el('save').disabled = false; });
+  });
+
+  el('start').addEventListener('click', function () {
+    api.executor.start().then(function () { el('hint').textContent = '已启动。'; return refresh(); });
+  });
+  el('stop').addEventListener('click', function () {
+    api.executor.stop().then(function () { el('hint').textContent = '已停止。'; return refresh(); });
+  });
+
+  refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>

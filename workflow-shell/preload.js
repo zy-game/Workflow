@@ -11,8 +11,15 @@ contextBridge.exposeInMainWorld('workflowDesktop', {
   // Native notifications survive the window being closed or minimised.
   notify: (payload) => ipcRenderer.invoke('workflow:notify', payload),
   serverUrl: () => ipcRenderer.invoke('workflow:server-url'),
-  // The local executor: status only. The worker token never crosses this
-  // bridge in either direction.
+  // Local settings, used by the local settings window: the executor CLI, the
+  // server address, and the executor's own start/stop. The worker token never
+  // crosses this bridge in either direction.
+  settings: {
+    get: () => ipcRenderer.invoke('workflow:settings-get'),
+    save: (patch) => ipcRenderer.invoke('workflow:settings-save', patch),
+    chooseCli: () => ipcRenderer.invoke('workflow:choose-cli'),
+  },
+  // The local executor: status only.
   executor: {
     status: () => ipcRenderer.invoke('workflow:executor-status'),
     start: () => ipcRenderer.invoke('workflow:executor-start'),

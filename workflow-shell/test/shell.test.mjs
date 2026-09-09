@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 
 const require = createRequire(import.meta.url);
 const { createConfigStore } = require('../lib/config.js');
@@ -20,20 +21,98 @@ const main = fs.readFileSync(path.join(root, '../main.js'), 'utf8');
 const preload = fs.readFileSync(path.join(root, '../preload.js'), 'utf8');
 const console_ = fs.readFileSync(path.join(root, '../../workflow-core/packages/core/src/console/app.js'), 'utf8');
 
-test('the shell loads the server-hosted console instead of its own UI', () => {
+test('the console stays the main surface and local settings stay local', () => {
   assert.match(main, /loadURL\(`\$\{SERVER_URL\}\/console`\)/);
   assert.match(main, /WORKFLOW_SERVER_URL/);
   // Packaged builds ship the Worker as a resource, so the base path differs.
   assert.match(main, /app\.isPackaged \? process\.resourcesPath/);
   // The default target is the deployment this machine's worker points at.
   assert.match(main, /WORKFLOW_SERVER_URL \|\| 'https:\/\/139\.155\.78\.241:8710'/);
-  // No local HTML to drift out of sync with the console.
-  assert.ok(!fs.existsSync(path.join(root, '../index.html')), 'the shell must not ship its own page');
+  // The shell must not ship a second console.
+  assert.ok(!fs.existsSync(path.join(root, '../index.html')), 'the shell must not ship its own console page');
+  // The local settings page exists because picking a local executable is
+  // something a server-hosted page must never be able to do.
+  const settings = fs.readFileSync(path.join(root, '../settings.html'), 'utf8');
+  assert.match(settings, /id="cli"/, 'the settings page must offer the executor CLI');
+  assert.match(settings, /id="choose"/, 'the settings page must offer a picker');
+  assert.ok(!/console/i.test(settings), 'the settings page must not reimplement the console');
+});
+
+test('picking the executor CLI uses a native file dialog', () => {
+  assert.match(main, /dialog\.showOpenDialog/);
+  assert.match(main, /properties: \['openFile'\]/);
+  assert.match(main, /extensions: \['exe', 'cmd', 'bat'\]/);
+  // The chosen path is what the executor runs.
+  assert.match(main, /backendCommand: config\.backendCommand/);
+  assert.match(main, /workflow:choose-cli/);
+});
+
+test('the settings window never receives the credential', () => {
+  const start = main.indexOf("workflow:settings-get");
+  const end = main.indexOf("workflow:settings-save");
+  assert.ok(start > 0 && end > start, 'both settings handlers must exist');
+  const handler = main.slice(start, end);
+  assert.ok(!/getToken\(\)/.test(handler), 'the settings response must not read the token');
+  assert.match(handler, /publicConfig\(\)/, 'the response must come from the redacted view');
+});
+
+test('the settings page renders what the main process reports', async () => {
+  const html = fs.readFileSync(path.join(root, '../settings.html'), 'utf8');
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) {
+      elements.set(id, { id, value: '', textContent: '', className: '', disabled: false, addEventListener() {} });
+    }
+    return elements.get(id);
+  };
+  const sandbox = {
+    console,
+    setInterval: () => ({ unref() {} }),
+    document: { getElementById: element },
+    window: {
+      workflowDesktop: {
+        settings: {
+          get: async () => ({
+            serverUrl: 'https://core.example:8710',
+            workerId: 'worker-test',
+            backendCommand: 'C:/tools/codex.exe',
+            backendArgs: ['--flag'],
+            hasToken: true,
+            executor: { running: false, pid: null, restarts: 0, lastError: null },
+          }),
+          save: async () => ({ ok: true }),
+          chooseCli: async () => null,
+        },
+        executor: { start: async () => ({}), stop: async () => ({}) },
+      },
+    },
+  };
+  vm.runInNewContext(script, sandbox, { filename: 'settings-inline.js' });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(element('cli').value, 'C:/tools/codex.exe', 'the configured CLI must be shown');
+  assert.equal(element('args').value, '--flag', 'the configured args must be shown');
+  assert.equal(element('serverUrl').value, 'https://core.example:8710');
+  assert.equal(element('workerId').value, 'worker-test');
+  assert.match(element('state').textContent, /已停止/);
+  assert.match(element('access').textContent, /凭据已配置/);
+  assert.equal(element('start').disabled, false, 'a stopped executor can be started');
+  assert.equal(element('stop').disabled, true, 'a stopped executor cannot be stopped');
+});
+
+test('a background app has a way back in and a way out', () => {
+  assert.match(main, /new Tray\(/);
+  assert.match(main, /本机设置/);
+  assert.match(main, /退出 Workflow/);
+  // The settings window opens on first run, when no engine is configured yet.
+  assert.match(main, /if \(!configStore\.read\(\)\.backendCommand\) createSettingsWindow\(\)/);
 });
 
 test('the preload exposes capabilities, not privileges', () => {
   const exposed = [...preload.matchAll(/^\s{2}([a-zA-Z]+):/gm)].map((match) => match[1]).sort();
-  assert.deepEqual(exposed, ['executor', 'idleBucket', 'notify', 'platform', 'serverUrl']);
+  assert.deepEqual(exposed, ['executor', 'idleBucket', 'notify', 'platform', 'serverUrl', 'settings']);
   // The worker token must never cross the bridge (comments aside).
   assert.ok(!/token/i.test(preload.replace(/\/\/.*$/gm, '')), 'the preload must not carry the worker token');
   assert.match(preload, /contextBridge\.exposeInMainWorld\('workflowDesktop'/);

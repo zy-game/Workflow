@@ -24,6 +24,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "settings.html",
       "lib/**",
       "!**/test/**"
     ],

@@ -6,7 +6,7 @@
 // reach the user on this machine.
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, Notification, ipcMain, powerMonitor, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, powerMonitor, safeStorage, shell } = require('electron');
 const { createConfigStore } = require('./lib/config.js');
 const { createExecutor } = require('./lib/executor.js');
 
@@ -47,6 +47,75 @@ code{font-family:ui-monospace,Consolas,monospace;color:#6c8cff;word-break:break-
 }
 let configStore = null;
 let executor = null;
+let settingsWindow = null;
+let tray = null;
+
+// One place reads the config and starts the executor, so the settings window,
+// the tray and startup all launch it identically.
+function startExecutor() {
+  const config = configStore.read();
+  return executor.start({
+    serverUrl: config.serverUrl || SERVER_URL,
+    token: configStore.getToken(),
+    workerId: config.workerId || DEFAULT_WORKER_ID,
+    backendCommand: config.backendCommand,
+    backendArgs: config.backendArgs,
+  });
+}
+
+// Local settings live on this machine, so they are a local page rather than a
+// console route: choosing a CLI executable means reading this machine's disk,
+// which a server-hosted page must never be able to do.
+function createSettingsWindow() {
+  if (settingsWindow) { settingsWindow.show(); settingsWindow.focus(); return settingsWindow; }
+  settingsWindow = new BrowserWindow({
+    width: 640,
+    height: 760,
+    title: 'Workflow 本机设置',
+    backgroundColor: '#0b0d12',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  settingsWindow.setMenuBarVisibility(false);
+  settingsWindow.loadFile(path.join(__dirname, 'settings.html'));
+  settingsWindow.on('closed', () => { settingsWindow = null; });
+  return settingsWindow;
+}
+
+// A background app needs a way back in and a way out; the console window alone
+// cannot offer either once it is closed.
+function trayIcon() {
+  const size = 16;
+  const buffer = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const offset = (y * size + x) * 4;
+      const core = x > 4 && x < 11 && y > 4 && y < 11;
+      buffer[offset] = core ? 255 : 150;      // blue
+      buffer[offset + 1] = core ? 140 : 90;   // green
+      buffer[offset + 2] = core ? 108 : 60;   // red
+      buffer[offset + 3] = 255;               // alpha
+    }
+  }
+  return nativeImage.createFromBitmap(buffer, { width: size, height: size });
+}
+
+function createTray() {
+  tray = new Tray(trayIcon());
+  tray.setToolTip('Workflow');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '本机设置…', click: () => createSettingsWindow() },
+    { label: '打开控制台', click: () => { if (mainWindow) mainWindow.show(); else createWindow(); } },
+    { type: 'separator' },
+    { label: '退出 Workflow', click: () => { app.quit(); } },
+  ]));
+  tray.on('click', () => { if (mainWindow) mainWindow.show(); else createWindow(); });
+  return tray;
+}
 
 // The local Agent Runtime the shell supervises. It is the Worker, because the
 // Worker already owns the backend contract, leases and result reporting.
@@ -125,30 +194,51 @@ app.whenReady().then(() => {
     workerId: configStore.publicConfig().workerId || DEFAULT_WORKER_ID,
     backendCommand: configStore.publicConfig().backendCommand,
   }));
-  ipcMain.handle('workflow:executor-start', () => {
-    const config = configStore.read();
-    return executor.start({
-      serverUrl: config.serverUrl || SERVER_URL,
-      token: configStore.getToken(),
-      workerId: config.workerId || DEFAULT_WORKER_ID,
-      backendCommand: config.backendCommand,
-      backendArgs: config.backendArgs,
-    });
-  });
+  ipcMain.handle('workflow:executor-start', () => startExecutor());
   ipcMain.handle('workflow:executor-stop', () => executor.stop());
+
+  // Local settings. The token is deliberately absent: the window learns only
+  // whether one exists.
+  ipcMain.handle('workflow:settings-get', () => {
+    const publicConfig = configStore.publicConfig();
+    return {
+      ...publicConfig,
+      workerId: publicConfig.workerId || DEFAULT_WORKER_ID,
+      executor: { ...executor.snapshot(), configured: Boolean(publicConfig.hasToken) },
+    };
+  });
+  ipcMain.handle('workflow:settings-save', (_event, patch) => {
+    const next = {};
+    if (typeof patch?.serverUrl === 'string' && patch.serverUrl.trim()) next.serverUrl = patch.serverUrl.trim().replace(/\/+$/, '');
+    if (typeof patch?.workerId === 'string' && patch.workerId.trim()) next.workerId = patch.workerId.trim();
+    next.backendCommand = typeof patch?.backendCommand === 'string' && patch.backendCommand.trim() ? patch.backendCommand.trim() : null;
+    next.backendArgs = Array.isArray(patch?.backendArgs) ? patch.backendArgs.map(String).filter(Boolean) : [];
+    configStore.write(next);
+    // A running executor would otherwise keep the engine it started with.
+    const restarted = executor.isRunning();
+    if (restarted) { executor.stop(); startExecutor(); }
+    return { ok: true, restarted };
+  });
+  ipcMain.handle('workflow:choose-cli', async () => {
+    const options = {
+      title: '选择执行引擎 CLI',
+      properties: ['openFile'],
+      filters: process.platform === 'win32'
+        ? [{ name: '可执行文件', extensions: ['exe', 'cmd', 'bat'] }, { name: '所有文件', extensions: ['*'] }]
+        : [],
+    };
+    const parent = settingsWindow ?? mainWindow ?? null;
+    const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  createTray();
   // A provisioned token makes this machine an executor node without further
   // action: the point of the shell is to be reachable.
-  if (configStore.getToken()) {
-    const config = configStore.read();
-    executor.start({
-      serverUrl: config.serverUrl || SERVER_URL,
-      token: configStore.getToken(),
-      workerId: config.workerId || DEFAULT_WORKER_ID,
-      backendCommand: config.backendCommand,
-      backendArgs: config.backendArgs,
-    });
-  }
+  if (configStore.getToken()) startExecutor();
   createWindow();
+  // Without an engine the executor cannot claim anything, so say so up front.
+  if (!configStore.read().backendCommand) createSettingsWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
