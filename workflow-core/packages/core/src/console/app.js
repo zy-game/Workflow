@@ -443,6 +443,19 @@ input,textarea { font-family:inherit; }
   function splitList(value) {
     return String(value || '').split(',').map(function (item) { return item.trim(); }).filter(Boolean);
   }
+  // Paths arrive with either separator; fromCharCode keeps the backslash out of
+  // the template literal that wraps this whole script.
+  function basename(value) {
+    var text = String(value || '');
+    var index = Math.max(text.lastIndexOf('/'), text.lastIndexOf(String.fromCharCode(92)));
+    return index >= 0 ? text.slice(index + 1) : text;
+  }
+  function workerEngines(worker) {
+    var configured = worker.serverConfig && Array.isArray(worker.serverConfig.backends) && worker.serverConfig.backends.length
+      ? worker.serverConfig.backends
+      : (worker.backends || []);
+    return configured;
+  }
   function loadFleet() {
     state.fleet.error = '';
     return Promise.all([api('/api/v1/workers'), api('/api/v1/enrollments')])
@@ -465,7 +478,7 @@ input,textarea { font-family:inherit; }
   function openWorker(workerId) {
     var worker = state.fleet.workers.filter(function (item) { return item.worker_id === workerId; })[0];
     if (!worker) return;
-    var configured = (worker.serverConfig && worker.serverConfig.backends) || worker.backends || [];
+    var configured = workerEngines(worker);
     state.fleet.detail = worker;
     state.fleet.draft = {
       projects: (worker.projects || []).join(', '),
@@ -911,8 +924,8 @@ input,textarea { font-family:inherit; }
     return '<div class="card"><div class="detail-head">' +
       '<button class="btn btn-sm" data-act="worker-back">返回列表</button>' +
       '<h2>' + esc(worker.machine || worker.worker_id) + '</h2>' +
-      '<span class="badge ' + (worker.connected ? 'badge-ok' : 'badge-muted') + '">' +
-        (worker.connected ? '在线' : '离线') + '</span>' +
+      '<span class="badge ' + (worker.fresh ? 'badge-ok' : 'badge-muted') + '">' +
+        (worker.fresh ? '在线' : '离线') + '</span>' +
       (worker.revoked ? '<span class="badge badge-danger">已停用</span>' : '') + '</div>' +
       '<div class="kv">' +
         '<div class="k">执行器 id</div><div class="mono">' + esc(worker.worker_id) + '</div>' +
@@ -951,15 +964,20 @@ input,textarea { font-family:inherit; }
       '</div>';
     var workers = !fleet.workers.length ? empty('还没有执行器。')
       : fleet.workers.map(function (worker) {
-        var backends = (worker.backends || []).map(function (backend) { return backend.kind; })
-          .filter(Boolean).join(', ') || '无执行引擎';
+        // fresh is "seen recently"; the stored online flag can outlive a dead
+        // connection, which is why two test workers read as online for days.
+        var online = Boolean(worker.fresh);
+        var engines = workerEngines(worker).map(function (backend) {
+          var command = basename(backend.command);
+          return esc(backend.kind || '') + (command ? ' · ' + esc(command) : '');
+        }).filter(Boolean).join(', ') || '无执行引擎';
         return '<div class="list-row clickable" data-worker="' + esc(worker.worker_id) + '">' +
-          '<span class="badge ' + (worker.connected ? 'badge-ok' : 'badge-muted') + '">' +
-            (worker.connected ? '在线' : '离线') + '</span>' +
+          '<span class="badge ' + (online ? 'badge-ok' : 'badge-muted') + '">' + (online ? '在线' : '离线') + '</span>' +
           (worker.revoked ? '<span class="badge badge-danger">已停用</span>' : '') +
           '<div class="grow">' + esc(worker.machine || worker.worker_id) + '<div class="sub">' +
-            esc((worker.projects || []).join(', ') || '未绑定项目') + ' · ' + esc(backends) + '</div></div>' +
-          '<span class="muted mono">' + esc(when(worker.last_seen)) + '</span></div>';
+            esc((worker.projects || []).join(', ') || '未绑定项目') + ' · ' + engines + '</div></div>' +
+          '<span class="muted mono">' + esc(when(worker.last_seen)) + '</span>' +
+          '<span class="btn btn-sm">配置</span></div>';
       }).join('');
     var codes = pending.length
       ? '<h2 class="section-title">待认领的授权码 · ' + pending.length + '</h2><div class="card">' +

@@ -82,9 +82,12 @@ const PAYLOADS = {
   '/api/v1/workers': {
     workers: [{
       worker_id: 'windows-TEST', machine: 'TEST-PC', projects: ['wfc-demo'], capabilities: ['workflow-jsonl'],
-      backends: [{ kind: 'workflow-jsonl', command: 'node', args: ['omp-json-bridge.mjs'] }],
-      connected: true, revoked: false, config_revision: 2, version: '1.0.0', last_seen: now,
-      serverConfig: { backends: [{ kind: 'workflow-jsonl', command: 'node', args: ['omp-json-bridge.mjs'] }], revision: 2 },
+      backends: [{ kind: 'workflow-jsonl', command: 'C:/Program Files/nodejs/node.exe', args: ['omp-json-bridge.mjs'] }],
+      connected: true, fresh: true, revoked: false, config_revision: 2, version: '1.0.0', last_seen: now,
+      serverConfig: {
+        backends: [{ kind: 'workflow-jsonl', command: 'C:/Program Files/nodejs/node.exe', args: ['omp-json-bridge.mjs'] }],
+        revision: 2,
+      },
     }],
   },
   '/api/v1/enrollments': { enrollments: [{ code: 'ABCD2345', status: 'pending', createdAt: now }] },
@@ -217,13 +220,15 @@ test('opening an executor shows its command line configuration', async () => {
   clickOn(handlers, { '[data-nav]': { dataset: { nav: 'settings' } } });
   await tick(); await tick();
   assert.ok(root.innerHTML.includes('data-worker="windows-TEST"'), 'the executor list must offer a row');
+  assert.ok(root.innerHTML.includes('node.exe'), 'the configured CLI is visible in the list');
+  assert.ok(root.innerHTML.includes('>配置<'), 'the row shows how to reach the configuration');
   assert.ok(root.innerHTML.includes('ABCD2345'), 'a pending enrollment code is listed');
 
   clickOn(handlers, { '[data-worker]': { dataset: { worker: 'windows-TEST' } } });
   await tick();
   const html = root.innerHTML;
   assert.ok(html.includes('data-backend-field="command"'), 'the backend command is editable');
-  assert.ok(html.includes('value="node"'), 'the command field carries the configured value');
+  assert.ok(html.includes('value="C:/Program Files/nodejs/node.exe"'), 'the command field carries the configured value');
   assert.ok(html.includes('omp-json-bridge.mjs'), 'the args field carries the configured value');
   assert.ok(html.includes('data-act="worker-save"'), 'the configuration can be saved');
   assert.deepEqual(unmocked, []);
