@@ -159,6 +159,15 @@ input,textarea { font-family:inherit; }
   background:var(--surface-2); color:var(--text); resize:vertical; }
 .knowledge-body { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; color:var(--text-2); }
 .chips { display:flex; gap:var(--s2); flex-wrap:wrap; margin-top:var(--s3); }
+.input { width:100%; padding:var(--s2) var(--s3); border-radius:var(--r-btn);
+  border:1px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:13px; }
+.backend-row { display:grid; grid-template-columns:140px 1fr 1fr auto; gap:var(--s2);
+  margin-bottom:var(--s2); align-items:center; }
+.backend-row input { padding:var(--s2) var(--s3); border-radius:var(--r-btn); border:1px solid var(--border-strong);
+  background:var(--surface-2); color:var(--text); font-size:13px; min-width:0; }
+.code-block { background:var(--surface-2); border-radius:var(--r-btn); padding:var(--s3); margin-top:var(--s3);
+  font-family:var(--mono); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--text-2); }
+.enroll-code { font-family:var(--mono); font-size:20px; letter-spacing:2px; color:var(--accent); font-weight:600; }
 
 /* 记忆 */
 .tree-item { padding:2px var(--s2); border-radius:5px; color:var(--text-2); cursor:pointer; font-size:13px; }
@@ -212,6 +221,7 @@ input,textarea { font-family:inherit; }
     reply: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 015 5v6"/></svg>',
     book: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2V5z"/><path d="M4 19a2 2 0 012-2h12"/></svg>',
     skill: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 4h6a1 1 0 011 1v2H8V5a1 1 0 011-1z"/><path d="M8 6H5v14h14V6h-3"/><path d="M9 12l2 2 4-4"/></svg>',
+    gear: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4L7 17M17 7l1.4-1.4"/></svg>',
     checkup: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 12h4l2-6 3 12 2-6h7"/></svg>'
   };
 
@@ -227,6 +237,7 @@ input,textarea { font-family:inherit; }
     memory: { tree: [], path: null, content: '', history: [], error: '' },
     knowledge: { items: [], query: '', projectId: '', type: '', detail: null, error: '' },
     skills: { items: [], detail: null, draft: null, draftName: '', error: '', busy: '' },
+    fleet: { workers: [], enrollments: [], code: '', detail: null, draft: null, error: '', busy: '' },
     checkup: { metrics: null, suggestions: [], error: '', busy: '' },
     chat: { items: [], error: '', busy: false },
     notifiedCount: 0,
@@ -428,6 +439,82 @@ input,textarea { font-family:inherit; }
       .catch(function (err) { state.skills.busy = ''; state.skills.error = err.message || String(err); render(); });
   }
 
+  // --- 设置：执行器接入与配置 ---
+  function splitList(value) {
+    return String(value || '').split(',').map(function (item) { return item.trim(); }).filter(Boolean);
+  }
+  function loadFleet() {
+    state.fleet.error = '';
+    return Promise.all([api('/api/v1/workers'), api('/api/v1/enrollments')])
+      .then(function (results) {
+        state.fleet.workers = results[0].workers || [];
+        state.fleet.enrollments = results[1].enrollments || [];
+        render();
+      })
+      .catch(function (err) { state.fleet.error = err.message || String(err); render(); });
+  }
+  function createEnrollment() {
+    state.fleet.busy = 'enroll'; state.fleet.error = ''; render();
+    api('/api/v1/enrollments', { method: 'POST', body: {} })
+      .then(function (result) {
+        state.fleet.busy = ''; state.fleet.code = result.code;
+        return loadFleet();
+      })
+      .catch(function (err) { state.fleet.busy = ''; state.fleet.error = err.message || String(err); render(); });
+  }
+  function openWorker(workerId) {
+    var worker = state.fleet.workers.filter(function (item) { return item.worker_id === workerId; })[0];
+    if (!worker) return;
+    var configured = (worker.serverConfig && worker.serverConfig.backends) || worker.backends || [];
+    state.fleet.detail = worker;
+    state.fleet.draft = {
+      projects: (worker.projects || []).join(', '),
+      capabilities: (worker.capabilities || []).join(', '),
+      backends: configured.map(function (backend) {
+        return {
+          kind: backend.kind || '',
+          command: backend.command || '',
+          args: Array.isArray(backend.args) ? backend.args.join(' | ') : '',
+          raw: backend,
+        };
+      }),
+    };
+    render();
+  }
+  function saveWorker() {
+    var detail = state.fleet.detail;
+    var draft = state.fleet.draft;
+    if (!detail || !draft) return;
+    var backends = draft.backends.filter(function (backend) { return backend.kind || backend.command; })
+      .map(function (backend) {
+        // Keep the fields this form does not edit (enabled, capabilities, environment).
+        var next = {};
+        for (var key in backend.raw) if (Object.prototype.hasOwnProperty.call(backend.raw, key)) next[key] = backend.raw[key];
+        next.kind = String(backend.kind || '').trim();
+        next.command = String(backend.command || '').trim();
+        next.args = String(backend.args || '').split('|').map(function (item) { return item.trim(); }).filter(Boolean);
+        return next;
+      });
+    state.fleet.busy = 'save'; state.fleet.error = ''; render();
+    api('/api/v1/workers/' + encodeURIComponent(detail.worker_id) + '/config', {
+      method: 'PUT',
+      body: { projects: splitList(draft.projects), capabilities: splitList(draft.capabilities), backends: backends },
+    })
+      .then(function () { state.fleet.busy = ''; return loadFleet(); })
+      .catch(function (err) { state.fleet.busy = ''; state.fleet.error = err.message || String(err); render(); });
+  }
+  function installCommand(code) {
+    var origin = (typeof location !== 'undefined' && location && location.origin) ? location.origin : '<Core 地址>';
+    // The PowerShell continuation character is a backtick, and this whole
+    // script lives inside a template literal, so both it and the newline need
+    // a second level of escaping.
+    return 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File install-workflow-worker.ps1 \`\\n' +
+      '  -CoreUrl ' + origin + ' \`\\n' +
+      '  -EnrollCode ' + (code || '<授权码>') + ' \`\\n' +
+      '  -JsonlCommand "C:/Program Files/nodejs/node.exe" \`\\n' +
+      '  -JsonlArgs "<运行时目录>/packages/worker/bin/omp-json-bridge.mjs"';
+  }
+
   // --- 骨架 ---
   function navItem(view, label, icon, badge) {
     var active = state.view === view ? ' aria-current="page"' : '';
@@ -464,6 +551,7 @@ input,textarea { font-family:inherit; }
         navItem('skills', '技能', ICON.skill) +
         navItem('replies', '回复记录', ICON.reply) +
         navItem('checkup', '体检', ICON.checkup) +
+        navItem('settings', '设置', ICON.gear) +
       '</div>' +
       '<div class="sidebar-foot">' + presenceHtml() + '</div></aside>';
   }
@@ -808,6 +896,83 @@ input,textarea { font-family:inherit; }
       '<h2 class="section-title">已分发 · ' + skills.items.length + '</h2><div class="card">' + body + '</div>');
   }
 
+  // --- 设置：执行器接入与执行引擎配置 ---
+  function workerDetailView() {
+    var fleet = state.fleet;
+    var worker = fleet.detail;
+    var draft = fleet.draft;
+    var backends = draft.backends.length ? draft.backends.map(function (backend, index) {
+      return '<div class="backend-row" data-backend="' + index + '">' +
+        '<input data-backend-field="kind" placeholder="kind" value="' + esc(backend.kind) + '">' +
+        '<input data-backend-field="command" placeholder="命令" value="' + esc(backend.command) + '">' +
+        '<input data-backend-field="args" placeholder="参数，用 | 分隔" value="' + esc(backend.args) + '">' +
+        '<button class="btn btn-sm btn-danger" data-act="backend-remove" data-index="' + index + '">移除</button></div>';
+    }).join('') : '<div class="muted">没有执行引擎。安装时带 -JsonlCommand，或在下面添加。</div>';
+    return '<div class="card"><div class="detail-head">' +
+      '<button class="btn btn-sm" data-act="worker-back">返回列表</button>' +
+      '<h2>' + esc(worker.machine || worker.worker_id) + '</h2>' +
+      '<span class="badge ' + (worker.connected ? 'badge-ok' : 'badge-muted') + '">' +
+        (worker.connected ? '在线' : '离线') + '</span>' +
+      (worker.revoked ? '<span class="badge badge-danger">已停用</span>' : '') + '</div>' +
+      '<div class="kv">' +
+        '<div class="k">执行器 id</div><div class="mono">' + esc(worker.worker_id) + '</div>' +
+        '<div class="k">版本</div><div>' + esc(worker.version || '—') + '</div>' +
+        '<div class="k">最近可见</div><div>' + esc(when(worker.last_seen)) + '</div>' +
+        '<div class="k">配置版本</div><div>' + esc(worker.config_revision) + '</div>' +
+      '</div>' +
+      '<div class="block"><div class="label">项目（逗号分隔）</div>' +
+        '<input class="input" id="workerProjects" value="' + esc(draft.projects) + '"></div>' +
+      '<div class="block"><div class="label">能力（逗号分隔）</div>' +
+        '<input class="input" id="workerCapabilities" value="' + esc(draft.capabilities) + '"></div>' +
+      '<div class="block"><div class="label">执行引擎（kind / 命令 / 参数）</div>' + backends +
+        '<button class="btn btn-sm" data-act="backend-add" style="margin-top:8px">添加执行引擎</button></div>' +
+      (fleet.error ? '<div class="error">' + esc(fleet.error) + '</div>' : '') +
+      '<div class="actions" style="margin-top:16px">' +
+        '<button class="btn btn-primary" data-act="worker-save"' + (fleet.busy === 'save' ? ' disabled' : '') + '>' +
+          (fleet.busy === 'save' ? '保存中…' : '保存并下发') + '</button>' +
+        '<span class="muted" style="font-size:12px">保存后下一次心跳即应用。</span></div>' +
+      '</div>';
+  }
+  function settingsView() {
+    var fleet = state.fleet;
+    if (fleet.detail) return page('设置', workerDetailView());
+    var pending = fleet.enrollments.filter(function (entry) { return entry.status === 'pending'; });
+    var enroll = '<div class="card"><h2 class="section-title">接入新的执行器</h2>' +
+      '<p class="muted" style="font-size:13px;margin:0">新电脑上装好 Node 24，把源码树和 ' +
+      '<span class="mono">ops/windows/install-workflow-worker.ps1</span> 放过去，用下面的一次性授权码以' +
+      '管理员 PowerShell 运行安装脚本。授权码 24 小时有效、只能用一次。</p>' +
+      (fleet.code
+        ? '<div style="margin-top:12px"><div class="muted" style="font-size:12px">授权码</div>' +
+          '<div class="enroll-code">' + esc(fleet.code) + '</div></div>' +
+          '<div class="code-block">' + esc(installCommand(fleet.code)) + '</div>'
+        : '<div class="actions" style="margin-top:12px"><button class="btn btn-primary" data-act="enroll"' +
+          (fleet.busy === 'enroll' ? ' disabled' : '') + '>' +
+          (fleet.busy === 'enroll' ? '生成中…' : '生成授权码') + '</button></div>') +
+      '</div>';
+    var workers = !fleet.workers.length ? empty('还没有执行器。')
+      : fleet.workers.map(function (worker) {
+        var backends = (worker.backends || []).map(function (backend) { return backend.kind; })
+          .filter(Boolean).join(', ') || '无执行引擎';
+        return '<div class="list-row clickable" data-worker="' + esc(worker.worker_id) + '">' +
+          '<span class="badge ' + (worker.connected ? 'badge-ok' : 'badge-muted') + '">' +
+            (worker.connected ? '在线' : '离线') + '</span>' +
+          (worker.revoked ? '<span class="badge badge-danger">已停用</span>' : '') +
+          '<div class="grow">' + esc(worker.machine || worker.worker_id) + '<div class="sub">' +
+            esc((worker.projects || []).join(', ') || '未绑定项目') + ' · ' + esc(backends) + '</div></div>' +
+          '<span class="muted mono">' + esc(when(worker.last_seen)) + '</span></div>';
+      }).join('');
+    var codes = pending.length
+      ? '<h2 class="section-title">待认领的授权码 · ' + pending.length + '</h2><div class="card">' +
+        pending.map(function (entry) {
+          return '<div class="list-row"><div class="grow mono">' + esc(entry.code) + '</div>' +
+            '<span class="muted">' + esc(when(entry.createdAt)) + '</span></div>';
+        }).join('') + '</div>'
+      : '';
+    return page('设置',
+      (fleet.error ? '<div class="card error">' + esc(fleet.error) + '</div>' : '') +
+      enroll + '<h2 class="section-title">执行器 · ' + fleet.workers.length + '</h2><div class="card">' + workers + '</div>' + codes);
+  }
+
   // --- 任务 ---
   var TASK_STATUS_LABEL = {
     queued: '排队', claimed: '已领取', running: '运行中', awaiting_input: '等待输入',
@@ -1029,6 +1194,7 @@ input,textarea { font-family:inherit; }
     else if (state.view === 'nodes') root.innerHTML = nodesView();
     else if (state.view === 'replies') root.innerHTML = repliesView();
     else if (state.view === 'checkup') root.innerHTML = checkupView();
+    else if (state.view === 'settings') root.innerHTML = settingsView();
     else root.innerHTML = todayView();
   }
 
@@ -1043,6 +1209,7 @@ input,textarea { font-family:inherit; }
     if (view === 'nodes') return loadNodes();
     if (view === 'replies') return loadReplies();
     if (view === 'checkup') return loadCheckup();
+    if (view === 'settings') return loadFleet();
     return undefined;
   }
 
@@ -1115,6 +1282,8 @@ input,textarea { font-family:inherit; }
     }
     var skillRow = event.target.closest('[data-skill]');
     if (skillRow) return openSkill(skillRow.dataset.skill);
+    var workerRow = event.target.closest('[data-worker]');
+    if (workerRow) return openWorker(workerRow.dataset.worker);
     var revert = event.target.closest('[data-revert]');
     if (revert) return revertFile(revert.dataset.revert);
     var suggestion = event.target.closest('[data-suggestion]');
@@ -1144,6 +1313,26 @@ input,textarea { font-family:inherit; }
       return saveSkill();
     }
     if (action === 'skill-delete') return deleteSkill(state.skills.detail.name);
+    if (action === 'enroll') return createEnrollment();
+    if (action === 'worker-back') { state.fleet.detail = null; state.fleet.draft = null; render(); return; }
+    if (action === 'backend-add') {
+      state.fleet.draft.backends.push({ kind: 'workflow-jsonl', command: '', args: '', raw: {} });
+      render();
+      return;
+    }
+    if (action === 'backend-remove') {
+      state.fleet.draft.backends.splice(Number(button.dataset.index), 1);
+      render();
+      return;
+    }
+    if (action === 'worker-save') {
+      // The backend rows sync through the input listener; read the two plain fields.
+      var projectsField = document.getElementById('workerProjects');
+      var capabilitiesField = document.getElementById('workerCapabilities');
+      if (projectsField) state.fleet.draft.projects = projectsField.value;
+      if (capabilitiesField) state.fleet.draft.capabilities = capabilitiesField.value;
+      return saveWorker();
+    }
     if (action === 'checkup-run') return runCheckup();
     if (action === 'logout') return setToken('');
     var id = button.dataset.id;
@@ -1151,6 +1340,16 @@ input,textarea { font-family:inherit; }
     api('/api/v1/proposals/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: {} })
       .catch(function (err) { state.error = err.message || String(err); })
       .then(function () { state.busy = ''; load(); });
+  });
+
+  // Backend rows update in place, so typing does not re-render the form.
+  root.addEventListener('input', function (event) {
+    var field = event.target;
+    if (!field || !field.dataset || !field.dataset.backendField) return;
+    var row = field.closest ? field.closest('[data-backend]') : null;
+    if (!row) return;
+    var backend = state.fleet.draft && state.fleet.draft.backends[Number(row.dataset.backend)];
+    if (backend) backend[field.dataset.backendField] = field.value;
   });
 
   // The two knowledge filters reload on change; the search box waits for submit.

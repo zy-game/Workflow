@@ -62,8 +62,8 @@ test('the console carries the design tokens and the real API calls', () => {
     '/api/v1/presence', '/api/v1/replies?limit=', '/api/v1/ai/metrics', '/api/v1/ai/checkup', '/api/v1/auth/bootstrap', 'visibilitychange',
     '/api/v1/commitments?state=active', '/api/v1/tasks?limit=', '/api/v1/admin/peers', '/api/v1/admin/peer-sync',
     '/api/v1/digest/pending', '/api/v1/signals', '/events?limit=',
-    '/api/v1/workflow/memories?', '/api/v1/skills',
-    'data-task="', 'data-filter="', 'data-goto="', 'data-knowledge="', 'data-skill="',
+    '/api/v1/workflow/memories?', '/api/v1/skills', '/api/v1/workers', '/api/v1/enrollments',
+    'data-task="', 'data-filter="', 'data-goto="', 'data-knowledge="', 'data-skill="', 'data-worker="', 'data-backend',
   ]) {
     assert.ok(CONSOLE_HTML.includes(call), `missing API call: ${call}`);
   }
@@ -76,7 +76,7 @@ test('the console keeps the sidebar navigation from the design baseline', () => 
   assert.ok(CONSOLE_HTML.includes('class="nav-label">助理'), 'assistant navigation group');
   assert.ok(CONSOLE_HTML.includes('class="nav-label">运维'), 'operations navigation group');
   assert.ok(CONSOLE_HTML.includes('class="sidebar-foot"'), 'the presence footer lives in the sidebar');
-  for (const view of ['today', 'proposals', 'commitments', 'chat', 'memory', 'knowledge', 'tasks', 'nodes', 'skills', 'replies', 'checkup']) {
+  for (const view of ['today', 'proposals', 'commitments', 'chat', 'memory', 'knowledge', 'tasks', 'nodes', 'skills', 'replies', 'checkup', 'settings']) {
     assert.ok(CONSOLE_HTML.includes(`navItem('${view}'`), `missing navigation entry: ${view}`);
     // 今日 is the fallback branch, so it has no explicit view comparison.
     const branch = view === 'today' ? 'todayView()' : `state.view === '${view}'`;
