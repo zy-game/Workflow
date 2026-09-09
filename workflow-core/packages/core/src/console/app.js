@@ -106,7 +106,7 @@ input { font-family:inherit; }
     memory: { tree: [], path: null, content: '', history: [], error: '' },
     replies: { items: [], error: '' },
     checkup: { metrics: null, suggestions: [], error: '', busy: '' },
-    setup: { needed: false, codeRequired: false, error: '', busy: false },
+    setup: { needed: false, codeState: 'missing', error: '', busy: false },
     notifiedCount: 0,
   };
   var timer = null;
@@ -374,11 +374,12 @@ input { font-family:inherit; }
     return '<div class="center"><form class="card" id="setup" style="width:100%;max-width:400px">' +
       '<h1 style="font-size:16px;margin:0 0 4px">初始化 Workflow</h1>' +
       '<p class="muted" style="margin:0 0 20px;font-size:13px">还没有账号。创建第一个管理员账号。</p>' +
-      (setup.codeRequired
-        ? '<label class="field"><span>设置码（在服务器上运行 setup-code 获得）</span>' +
-          '<input id="setupCode" type="text" autocomplete="off"></label>'
-        : '<p class="muted" style="font-size:13px">服务器尚未签发设置码。请在服务器上运行：<br>' +
-          '<code>node .../index.js setup-code</code></p>') +
+      (setup.codeState === 'expired'
+        ? '<p class="muted" style="font-size:13px">设置码已过期，请在服务器上重新运行 <code>setup-code</code>。</p>'
+        : setup.codeState === 'missing'
+          ? '<p class="muted" style="font-size:13px">服务器尚未签发设置码，请先运行 <code>setup-code</code>。</p>'
+          : '') +
+      '<label class="field"><span>设置码</span><input id="setupCode" type="text" autocomplete="off"></label>' +
       '<label class="field"><span>邮箱</span><input id="setupEmail" type="email" autocomplete="username"></label>' +
       '<label class="field"><span>密码</span><input id="setupPassword" type="password" autocomplete="new-password"></label>' +
       '<button class="btn btn-primary" type="submit" style="width:100%"' + (setup.busy ? ' disabled' : '') + '>' +
@@ -391,7 +392,7 @@ input { font-family:inherit; }
     api('/api/v1/auth/bootstrap')
       .then(function (result) {
         state.setup.needed = Boolean(result.needed);
-        state.setup.codeRequired = Boolean(result.codeRequired);
+        state.setup.codeState = result.codeState || 'missing';
         render();
       })
       .catch(function () { /* a failed probe just leaves the login form */ });

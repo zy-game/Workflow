@@ -199,16 +199,21 @@ export class AuthRepository {
     const activeAccounts = this.db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE status = 'active'").get().n;
     const pending = Number(row?.completed ?? 0) === 0 && activeAccounts === 0;
     const expired = row?.expires_at ? Date.parse(row.expires_at) <= Date.now() : false;
+    // "no code yet" and "the code expired" need different instructions, so the
+    // page can tell the operator what to do next.
+    const codeState = !row?.token_digest ? 'missing' : expired ? 'expired' : 'active';
     return {
       needed: pending,
-      codeRequired: pending && Boolean(row?.token_digest) && !expired,
+      codeState,
+      codeRequired: pending && codeState === 'active',
+      codeExpiresAt: row?.expires_at ?? null,
       activeAccounts: Number(activeAccounts),
     };
   }
 
   // Issues a one-time setup code. Returns the plaintext exactly once; only its
   // digest is stored.
-  beginBootstrap({ ttlMs = 30 * 60 * 1000 } = {}) {
+  beginBootstrap({ ttlMs = 2 * 60 * 60 * 1000 } = {}) {
     const status = this.bootstrapStatus();
     if (!status.needed) {
       const error = new Error('setup is not available');
