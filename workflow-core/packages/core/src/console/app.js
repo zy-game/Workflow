@@ -375,9 +375,9 @@ input { font-family:inherit; }
       '<h1 style="font-size:16px;margin:0 0 4px">初始化 Workflow</h1>' +
       '<p class="muted" style="margin:0 0 20px;font-size:13px">还没有账号。创建第一个管理员账号。</p>' +
       (setup.codeState === 'expired'
-        ? '<p class="muted" style="font-size:13px">设置码已过期，请在服务器上重新运行 <code>setup-code</code>。</p>'
+        ? '<p class="muted" style="font-size:13px">设置码已过期，请在服务器上重新签发：</p>' + '<p class="muted" style="font-size:13px">在服务器上运行：<br>' +'<code>sudo bash -c 'set -a; . /etc/workflow-core/core.env; set +a; node /opt/workflow-core/current/packages/core/src/index.js setup-code'</code></p>'
         : setup.codeState === 'missing'
-          ? '<p class="muted" style="font-size:13px">服务器尚未签发设置码，请先运行 <code>setup-code</code>。</p>'
+          ? '<p class="muted" style="font-size:13px">服务器尚未签发设置码，请先运行：</p>' + '<p class="muted" style="font-size:13px">在服务器上运行：<br>' +'<code>sudo bash -c 'set -a; . /etc/workflow-core/core.env; set +a; node /opt/workflow-core/current/packages/core/src/index.js setup-code'</code></p>'
           : '') +
       '<label class="field"><span>设置码</span><input id="setupCode" type="text" autocomplete="off"></label>' +
       '<label class="field"><span>邮箱</span><input id="setupEmail" type="email" autocomplete="username"></label>' +

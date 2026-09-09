@@ -15,6 +15,32 @@
 
 Nginx routes `/worker` and all other paths to Core; the Worker WebSocket uses the `/worker` route. Install `ops/nginx/workflow-admin.conf` as `/etc/nginx/sites-available/workflow-admin`, symlink it into `sites-enabled`, and require `nginx -t` to pass before reload. `wf-api.service`, `feishu-listener.service`, and `ai-engine.service` must remain disabled so they cannot compete with Core for traffic or Feishu events.
 
+## First-run setup
+
+A fresh Core has no account, so the console offers a setup page. It is open only
+while no active account exists, and it needs a one-time code - the console is
+publicly reachable, so an unauthenticated setup endpoint would let a stranger
+claim the instance.
+
+Issue the code on the server and read it from your own terminal:
+
+```bash
+sudo bash -c 'set -a; . /etc/workflow-core/core.env; set +a;   /opt/node24/bin/node /opt/workflow-core/current/packages/core/src/index.js setup-code'
+```
+
+Enter it on the setup page with the first admin's email and password. Setup then
+closes permanently; a second attempt is refused with 409. The code expires after
+two hours and can be re-issued with the same command.
+
+If the only account's password is lost, reset it (no code needed):
+
+```bash
+sudo bash -c 'set -a; . /etc/workflow-core/core.env; set +a;   /opt/node24/bin/node /opt/workflow-core/current/packages/core/src/index.js   reset-password <email>'
+```
+
+Both commands must be invoked through `/opt/workflow-core/current`; run them with
+the environment file loaded, or Core cannot find its data directory.
+
 ## Feishu application requirements
 
 In the Feishu developer console for the same App ID used by Core:
