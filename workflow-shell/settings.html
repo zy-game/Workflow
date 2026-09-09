@@ -138,10 +138,13 @@ button:disabled{opacity:.5;cursor:not-allowed}
   }
 
   // Recover the selection from saved args so reopening the window shows the
-  // same CLI and parameter values instead of an empty form.
+  // same CLI and parameter values instead of an empty form. Matching is by
+  // bridge file name, so a path recorded before the app was moved still maps
+  // back to its catalog entry.
   function restore(savedArgs) {
     var args = Array.isArray(savedArgs) ? savedArgs.slice() : [];
-    selected = catalog.filter(function (entry) { return entry.bridgePath === args[0]; })[0] || null;
+    var wanted = bridgeName(args[0]);
+    selected = catalog.filter(function (entry) { return bridgeName(entry.bridgePath) === wanted; })[0] || null;
     paramValues = {};
     if (!selected) { renderCatalog(); renderParams(); return; }
     var known = {};
@@ -163,6 +166,12 @@ button:disabled{opacity:.5;cursor:not-allowed}
     renderParams();
   }
 
+  function bridgeName(value) {
+    var text = String(value || '');
+    var index = Math.max(text.lastIndexOf('/'), text.lastIndexOf('\\'));
+    return index >= 0 ? text.slice(index + 1) : text;
+  }
+
   function renderStatus(executor, hasToken) {
     var running = Boolean(executor && executor.running);
     el('dot').className = 'dot' + (running ? ' on' : '');
@@ -178,13 +187,22 @@ button:disabled{opacity:.5;cursor:not-allowed}
     el('stop').disabled = !running;
   }
 
-  function refresh() {
+  // The form is only filled from stored settings when the window opens or a
+  // save completes. The periodic tick must not touch it: it used to re-run the
+  // restore every five seconds and wipe whatever was being edited.
+  function loadForm() {
     return api.settings.get().then(function (settings) {
       el('serverUrl').value = settings.serverUrl || '';
       el('workerId').value = settings.workerId || '';
       restore(settings.backendArgs || []);
       renderStatus(settings.executor, settings.hasToken);
     }).catch(function (error) { el('error').textContent = error.message; });
+  }
+
+  function refreshStatus() {
+    return api.settings.get().then(function (settings) {
+      renderStatus(settings.executor, settings.hasToken);
+    }).catch(function () { /* the tick is best effort */ });
   }
 
   function refreshCatalog() {
@@ -227,20 +245,20 @@ button:disabled{opacity:.5;cursor:not-allowed}
       backendArgs: buildArgs(),
     }).then(function () {
       el('hint').textContent = '已保存，执行器已按新配置重启。';
-      return refresh();
+      return loadForm();
     }).catch(function (error) { el('error').textContent = error.message; })
       .then(function () { el('save').disabled = false; });
   });
 
   el('start').addEventListener('click', function () {
-    api.executor.start().then(function () { el('hint').textContent = '已启动。'; return refresh(); });
+    api.executor.start().then(function () { el('hint').textContent = '已启动。'; return loadForm(); });
   });
   el('stop').addEventListener('click', function () {
-    api.executor.stop().then(function () { el('hint').textContent = '已停止。'; return refresh(); });
+    api.executor.stop().then(function () { el('hint').textContent = '已停止。'; return loadForm(); });
   });
 
-  refreshCatalog().then(refresh);
-  setInterval(refresh, 5000);
+  refreshCatalog().then(loadForm);
+  setInterval(refreshStatus, 5000);
 })();
 </script>
 </body>

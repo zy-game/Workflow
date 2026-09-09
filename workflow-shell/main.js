@@ -211,7 +211,20 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+// Windows hides new tray icons in the overflow, so the discoverable way back
+// into a running instance is to launch it again: the second launch hands over
+// to the first one and asks for the settings window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) mainWindow.show(); else createWindow();
+    createSettingsWindow();
+  });
+}
+
 app.whenReady().then(() => {
+  if (!app.hasSingleInstanceLock()) return;
   // The console carries its own navigation; the default Electron menu is noise.
   Menu.setApplicationMenu(null);
   configStore = createConfigStore({

@@ -130,8 +130,24 @@ test('a background app has a way back in and a way out', () => {
   assert.match(main, /new Tray\(/);
   assert.match(main, /本机设置/);
   assert.match(main, /退出 Workflow/);
+  // Windows hides tray icons in the overflow, so a second launch must hand
+  // over to the running instance and ask for the settings window.
+  assert.match(main, /requestSingleInstanceLock\(\)/);
+  assert.match(main, /second-instance/);
+  assert.match(main, /app\.hasSingleInstanceLock\(\)/);
   // The settings window opens on first run, when no engine is configured yet.
   assert.match(main, /if \(!configStore\.read\(\)\.backendCommand\) createSettingsWindow\(\)/);
+});
+
+test('the periodic tick never overwrites the form being edited', () => {
+  const settings = fs.readFileSync(path.join(root, '../settings.html'), 'utf8');
+  // Only the status refreshes on a timer; the form is filled on open and save.
+  assert.match(settings, /setInterval\(refreshStatus, 5000\)/);
+  assert.ok(!/setInterval\(refresh,/.test(settings), 'the tick must not re-run the whole form load');
+  assert.match(settings, /function loadForm\(\)/);
+  assert.match(settings, /function refreshStatus\(\)/);
+  // A bridge path recorded before the app moved must still map to its entry.
+  assert.match(settings, /function bridgeName\(/);
 });
 
 test('the preload exposes capabilities, not privileges', () => {
