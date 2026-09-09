@@ -17,29 +17,29 @@ Nginx routes `/worker` and all other paths to Core; the Worker WebSocket uses th
 
 ## First-run setup
 
-A fresh Core has no account, so the console offers a setup page. It is open only
-while no active account exists, and it needs a one-time code - the console is
-publicly reachable, so an unauthenticated setup endpoint would let a stranger
-claim the instance.
-
-Issue the code on the server and read it from your own terminal:
+A fresh Core has no account. The first admin is seeded from the service
+environment, so deployment is the only proof of access needed:
 
 ```bash
-sudo bash -c 'set -a; . /etc/workflow-core/core.env; set +a;   /opt/node24/bin/node /opt/workflow-core/current/packages/core/src/index.js setup-code'
+# /etc/workflow-core/core.env
+WFC_BOOTSTRAP_ADMIN_EMAIL=you@example.com
+WFC_BOOTSTRAP_ADMIN_PASSWORD=<choose one>
 ```
 
-Enter it on the setup page with the first admin's email and password. Setup then
-closes permanently; a second attempt is refused with 409. The code expires after
-two hours and can be re-issued with the same command.
+Both must be set together. The account is created once, on a database that has
+no active account, and the variables are ignored afterwards - leaving them in
+place is harmless, and the password is never logged. The console shows an
+instruction page (and no form) until that account exists, because it is
+publicly reachable.
 
-If the only account's password is lost, reset it (no code needed):
+If the only account's password is lost, reset it:
 
 ```bash
 sudo bash -c 'set -a; . /etc/workflow-core/core.env; set +a;   /opt/node24/bin/node /opt/workflow-core/current/packages/core/src/index.js   reset-password <email>'
 ```
 
-Both commands must be invoked through `/opt/workflow-core/current`; run them with
-the environment file loaded, or Core cannot find its data directory.
+The command must be invoked through `/opt/workflow-core/current` with the
+environment file loaded, or Core cannot find its data directory.
 
 ## Feishu application requirements
 

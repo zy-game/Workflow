@@ -618,21 +618,6 @@ export async function startCore(env = process.env, dependencies = {}) {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, dependencies = {}) {
-  if (argv[0] === 'setup-code') {
-    const config = loadConfig(env);
-    const authRepository = new AuthRepository({ dataDir: config.dataDir });
-    try {
-      const { token, expiresAt } = authRepository.beginBootstrap();
-      // Printed to the operator's terminal, never to the service log.
-      process.stdout.write(`setup code: ${token}
-expires:    ${expiresAt}
-`);
-      return null;
-    } finally {
-      authRepository.close();
-    }
-  }
-
   if (argv[0] === 'reset-password') {
     const config = loadConfig(env);
     const authRepository = new AuthRepository({ dataDir: config.dataDir });

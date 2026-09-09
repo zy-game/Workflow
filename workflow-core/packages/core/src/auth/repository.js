@@ -211,23 +211,6 @@ export class AuthRepository {
     };
   }
 
-  // Issues a one-time setup code. Returns the plaintext exactly once; only its
-  // digest is stored.
-  beginBootstrap({ ttlMs = 2 * 60 * 60 * 1000 } = {}) {
-    const status = this.bootstrapStatus();
-    if (!status.needed) {
-      const error = new Error('setup is not available');
-      error.code = 'BOOTSTRAP_UNAVAILABLE';
-      throw error;
-    }
-    const { token, digest } = createRandomToken(32);
-    const now = new Date();
-    this.db.prepare(`
-      UPDATE bootstrap_state SET token_digest = ?, created_at = ?, expires_at = ? WHERE singleton = 1
-    `).run(digest, now.toISOString(), new Date(now.getTime() + ttlMs).toISOString());
-    return { token, expiresAt: new Date(now.getTime() + ttlMs).toISOString() };
-  }
-
   // Seeding from the environment: the operator proved server access by
   // configuring the deployment, so no one-time code is needed. It still refuses
   // once an active account exists, so the variables are safe to leave in place.
@@ -236,32 +219,6 @@ export class AuthRepository {
     if (!status.needed) {
       const error = new Error('setup is not available');
       error.code = 'BOOTSTRAP_UNAVAILABLE';
-      throw error;
-    }
-    return this.#finishBootstrap(await this.createAccount({ email, password, role: 'admin' }));
-  }
-
-  async completeBootstrap({ token, email, password }) {
-    const status = this.bootstrapStatus();
-    if (!status.needed) {
-      const error = new Error('setup is not available');
-      error.code = 'BOOTSTRAP_UNAVAILABLE';
-      throw error;
-    }
-    const row = this.db.prepare('SELECT * FROM bootstrap_state WHERE singleton = 1').get();
-    if (!row?.token_digest) {
-      const error = new Error('no setup code has been issued');
-      error.code = 'BOOTSTRAP_CODE_MISSING';
-      throw error;
-    }
-    if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) {
-      const error = new Error('the setup code has expired');
-      error.code = 'BOOTSTRAP_CODE_EXPIRED';
-      throw error;
-    }
-    if (digestToken(String(token ?? '')) !== row.token_digest) {
-      const error = new Error('the setup code is not valid');
-      error.code = 'BOOTSTRAP_CODE_INVALID';
       throw error;
     }
     return this.#finishBootstrap(await this.createAccount({ email, password, role: 'admin' }));
