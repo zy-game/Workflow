@@ -280,6 +280,7 @@ app.whenReady().then(() => {
     if (restarted) { executor.stop(); startExecutor(); }
     return { ok: true, restarted };
   });
+  ipcMain.handle('workflow:open-settings', () => { createSettingsWindow(); return true; });
   ipcMain.handle('workflow:cli-catalog', () => cliCatalog());
   // One-click install of a catalog entry. The output is returned rather than
   // streamed so the window can show the tail in one place.

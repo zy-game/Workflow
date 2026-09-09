@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('workflowDesktop', {
   // server address, and the executor's own start/stop. The worker token never
   // crosses this bridge in either direction.
   settings: {
+    // Settings belong to the machine, not the server, so the console only
+    // offers a way to open the local window.
+    open: () => ipcRenderer.invoke('workflow:open-settings'),
     get: () => ipcRenderer.invoke('workflow:settings-get'),
     save: (patch) => ipcRenderer.invoke('workflow:settings-save', patch),
     catalog: () => ipcRenderer.invoke('workflow:cli-catalog'),

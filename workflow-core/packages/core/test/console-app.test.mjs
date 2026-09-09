@@ -62,8 +62,8 @@ test('the console carries the design tokens and the real API calls', () => {
     '/api/v1/presence', '/api/v1/replies?limit=', '/api/v1/ai/metrics', '/api/v1/ai/checkup', '/api/v1/auth/bootstrap', 'visibilitychange',
     '/api/v1/commitments?state=active', '/api/v1/tasks?limit=', '/api/v1/admin/peers', '/api/v1/admin/peer-sync',
     '/api/v1/digest/pending', '/api/v1/signals', '/events?limit=',
-    '/api/v1/workflow/memories?', '/api/v1/skills', '/api/v1/workers', '/api/v1/enrollments',
-    'data-task="', 'data-filter="', 'data-goto="', 'data-knowledge="', 'data-skill="', 'data-worker="', 'data-backend',
+    '/api/v1/workflow/memories?', '/api/v1/skills',
+    'data-task="', 'data-filter="', 'data-goto="', 'data-knowledge="', 'data-skill="',
   ]) {
     assert.ok(CONSOLE_HTML.includes(call), `missing API call: ${call}`);
   }
@@ -76,7 +76,7 @@ test('the console keeps the sidebar navigation from the design baseline', () => 
   assert.ok(CONSOLE_HTML.includes('class="nav-label">助理'), 'assistant navigation group');
   assert.ok(CONSOLE_HTML.includes('class="nav-label">运维'), 'operations navigation group');
   assert.ok(CONSOLE_HTML.includes('class="sidebar-foot"'), 'the presence footer lives in the sidebar');
-  for (const view of ['today', 'proposals', 'commitments', 'chat', 'memory', 'knowledge', 'tasks', 'nodes', 'skills', 'replies', 'checkup', 'settings']) {
+  for (const view of ['today', 'proposals', 'commitments', 'chat', 'memory', 'knowledge', 'tasks', 'nodes', 'skills', 'replies', 'checkup']) {
     assert.ok(CONSOLE_HTML.includes(`navItem('${view}'`), `missing navigation entry: ${view}`);
     // 今日 is the fallback branch, so it has no explicit view comparison.
     const branch = view === 'today' ? 'todayView()' : `state.view === '${view}'`;
@@ -84,6 +84,13 @@ test('the console keeps the sidebar navigation from the design baseline', () => 
   }
   // 同步 has no page of its own: it answers the same question as 节点.
   assert.ok(!CONSOLE_HTML.includes("navItem('sync'"), 'sync must not be a separate navigation entry');
+});
+
+test('settings belong to the machine, so the console only opens the local window', () => {
+  assert.ok(!CONSOLE_HTML.includes("navItem('settings'"), 'settings must not be a console page');
+  assert.ok(!CONSOLE_HTML.includes("state.view === 'settings'"), 'there is no server-side settings view');
+  assert.ok(CONSOLE_HTML.includes('data-act="open-settings"'), 'the console offers a door to the local window');
+  assert.ok(CONSOLE_HTML.includes('settings.open()'), 'the door opens the shell window, not a page');
 });
 
 test('the console source references no remote assets', () => {
