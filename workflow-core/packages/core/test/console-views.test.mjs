@@ -31,8 +31,20 @@ const PAYLOADS = {
     online: [{ touchpointId: 't1', kind: 'desktop', idleBucket: 'active', lastSeen: now }],
     active: { touchpointId: 't1', kind: 'desktop', idleBucket: 'active', lastSeen: now },
   },
-  '/api/v1/tasks?limit=50': {
-    tasks: [{ task_id: 't1', type: 'workflow.project_task', status: 'succeeded', priority: 5, project_id: 'mg_game', created_at: now }],
+  '/api/v1/tasks?limit=100': {
+    tasks: [{ task_id: 't1', type: 'workflow.project_task', status: 'failed', priority: 5, project_id: 'mg_game', created_at: now }],
+  },
+  '/api/v1/tasks/t1': {
+    task: {
+      task_id: 't1', type: 'workflow.project_task', title: '跑一次工作流', status: 'failed', priority: 5,
+      project_id: 'mg_game', created_by: 'workflow:agent', backend_kind: 'jsonl', attempts: 1, max_attempts: 3,
+      created_at: now, started_at: now, finished_at: now,
+      brief: { goal: '把项目跑起来', acceptance: ['构建通过'], context: '上下文' },
+      result: { error: 'backend unavailable' },
+    },
+  },
+  '/api/v1/tasks/t1/events?limit=200': {
+    events: [{ event_id: 'e1', seq: 0, type: 'created', actor: 'workflow:agent', ts: now, payload: { project_id: 'mg_game' } }],
   },
   '/api/v1/admin/peers': {
     peers: [{ node_id: 'n1', display_name: 'node', status: 'active', protocol_version: 1, endpoint_url: 'x', last_seen_at: now }],
@@ -62,7 +74,7 @@ const PAYLOADS = {
 
 const VIEWS = {
   today: '今日', proposals: '提案', commitments: '责任', chat: '对话', memory: '记忆',
-  tasks: '任务', nodes: '节点', sync: '同步', replies: '回复记录', checkup: '体检',
+  tasks: '任务', nodes: '节点与同步', replies: '回复记录', checkup: '体检',
 };
 
 // The console script is an IIFE over the DOM, so the test provides the minimum
@@ -104,6 +116,12 @@ function bootConsole() {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+// A click target that answers closest() for the selectors the console asks about.
+function clickOn(handlers, matches) {
+  const target = { closest: (selector) => matches[selector] ?? null };
+  for (const handler of handlers.click || []) handler({ target });
+}
+
 test('every console view renders against a representative payload', async () => {
   const { root, handlers, unmocked } = bootConsole();
   await tick(); await tick(); await tick();
@@ -120,4 +138,22 @@ test('every console view renders against a representative payload', async () => 
   }
 
   assert.deepEqual(unmocked, [], `the console called endpoints the test does not stub: ${unmocked.join(', ')}`);
+});
+
+test('clicking a task opens its detail', async () => {
+  const { root, handlers, unmocked } = bootConsole();
+  await tick(); await tick(); await tick();
+
+  clickOn(handlers, { '[data-nav]': { dataset: { nav: 'tasks' } } });
+  await tick(); await tick();
+  assert.ok(root.innerHTML.includes('data-task="t1"'), 'the task list must offer a clickable row');
+
+  clickOn(handlers, { '[data-task]': { dataset: { task: 't1' } } });
+  await tick(); await tick();
+  const html = root.innerHTML;
+  assert.ok(html.includes('任务说明'), 'the detail shows the brief');
+  assert.ok(html.includes('构建通过'), 'the detail shows the acceptance criteria');
+  assert.ok(html.includes('backend unavailable'), 'the detail shows why the task failed');
+  assert.ok(html.includes('事件流'), 'the detail shows the event stream');
+  assert.deepEqual(unmocked, []);
 });

@@ -123,15 +123,40 @@ input,textarea { font-family:inherit; }
 .list-row:last-child { border-bottom:none; }
 .list-row .grow { flex:1; min-width:0; }
 .list-row .grow .sub { font-size:12px; color:var(--text-3); }
+.clickable { cursor:pointer; margin:0 calc(var(--s3) * -1); padding-left:var(--s3); padding-right:var(--s3);
+  border-radius:var(--r-btn); transition:background .15s ease; }
+.clickable:hover { background:var(--surface-2); }
 .kv { display:grid; grid-template-columns:104px 1fr; gap:var(--s1) var(--s3); font-size:13px; }
 .kv .k { color:var(--text-3); }
+.kv > div { min-width:0; overflow-wrap:anywhere; }
+.filters { display:flex; gap:var(--s2); margin-bottom:var(--s3); flex-wrap:wrap; }
+.filter { padding:2px var(--s3); border-radius:14px; border:1px solid var(--border-strong);
+  background:transparent; color:var(--text-2); font-size:12px; }
+.filter:hover { background:var(--surface-2); color:var(--text); }
+.filter[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent); color:var(--text); }
+.detail-head { display:flex; align-items:center; gap:var(--s3); margin-bottom:var(--s4); }
+.detail-head h2 { font-size:15px; margin:0; }
+.block { margin-top:var(--s4); }
+.block .label { font-size:12px; color:var(--text-3); margin-bottom:var(--s2); }
+.brief { background:var(--surface-2); border-radius:var(--r-btn); padding:var(--s3); font-size:13px;
+  white-space:pre-wrap; overflow-wrap:anywhere; }
+.brief ul { margin:var(--s2) 0 0; padding-left:var(--s4); }
+.event { display:flex; gap:var(--s3); padding:var(--s2) 0; border-bottom:1px solid var(--border); font-size:13px; align-items:baseline; }
+.event:last-child { border-bottom:none; }
+.event .seq { color:var(--text-3); font-family:var(--mono); font-size:11px; width:28px; flex-shrink:0; text-align:right; }
+.event .type { flex-shrink:0; }
+.event .payload { color:var(--text-3); font-family:var(--mono); font-size:11px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1; }
+.tree-item { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* 记忆 */
 .tree-item { padding:2px var(--s2); border-radius:5px; color:var(--text-2); cursor:pointer; font-size:13px; }
 .tree-item:hover { background:var(--surface-2); color:var(--text); }
 .tree-item.active { background:var(--accent-soft); color:var(--text); }
 .memory-grid { display:grid; grid-template-columns:240px 1fr; gap:var(--s3); align-items:start; }
-.file-head { padding-bottom:var(--s3); border-bottom:1px solid var(--border); margin-bottom:var(--s3); }
+.file-head { display:flex; align-items:baseline; justify-content:space-between; gap:var(--s3);
+  padding-bottom:var(--s3); border-bottom:1px solid var(--border); margin-bottom:var(--s3); }
+.file-head .mono { min-width:0; overflow-wrap:anywhere; }
 .file-body { margin:0; white-space:pre-wrap; word-break:break-word; font-family:var(--mono); font-size:12px; color:var(--text-2); }
 .history-row { display:flex; align-items:center; gap:var(--s3); padding:var(--s2) 0; border-bottom:1px solid var(--border); }
 .history-row:last-child { border-bottom:none; }
@@ -173,7 +198,6 @@ input,textarea { font-family:inherit; }
     memory: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V6z"/></svg>',
     task: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>',
     node: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/></svg>',
-    sync: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 12a8 8 0 0113-6M20 12a8 8 0 01-13 6"/><path d="M17 3v3h-3M7 21v-3h3"/></svg>',
     reply: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 015 5v6"/></svg>',
     checkup: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 12h4l2-6 3 12 2-6h7"/></svg>'
   };
@@ -184,6 +208,7 @@ input,textarea { font-family:inherit; }
     loginError: '', busyLogin: false,
     setup: { needed: false, error: '', busy: false },
     proposals: [], commitments: [], tasks: [], replies: [], digest: [],
+    tasksFilter: 'all', taskDetail: null, taskBusy: '',
     peers: [], sync: null, cursors: [],
     presence: null,
     memory: { tree: [], path: null, content: '', history: [], error: '' },
@@ -298,19 +323,31 @@ input,textarea { font-family:inherit; }
     }).catch(function (err) { state.error = err.message || String(err); render(); });
   }
   function loadTasks() {
-    return api('/api/v1/tasks?limit=50').then(function (result) {
+    return api('/api/v1/tasks?limit=100').then(function (result) {
       state.tasks = result.tasks || []; render();
     }).catch(function (err) { state.error = err.message || String(err); render(); });
   }
-  function loadNodes() {
-    return api('/api/v1/admin/peers').then(function (result) {
-      state.peers = result.peers || []; state.cursors = result.cursors || []; render();
-    }).catch(function (err) { state.error = err.message || String(err); render(); });
+  function openTask(taskId) {
+    state.taskBusy = taskId; state.taskDetail = null; render();
+    Promise.all([
+      api('/api/v1/tasks/' + encodeURIComponent(taskId)),
+      api('/api/v1/tasks/' + encodeURIComponent(taskId) + '/events?limit=200'),
+    ]).then(function (results) {
+      state.taskDetail = { task: results[0].task, events: results[1].events || [] };
+      state.taskBusy = ''; render();
+    }).catch(function (err) { state.taskBusy = ''; state.error = err.message || String(err); render(); });
   }
-  function loadSync() {
-    return api('/api/v1/admin/peer-sync').then(function (result) {
-      state.sync = result.sync || null; state.cursors = result.cursors || []; render();
-    }).catch(function (err) { state.error = err.message || String(err); render(); });
+  // 节点与同步同页：本节点的同步身份、peer 列表、游标和收件箱回答的是同一个
+  // 问题——有没有别的机器在和我交换事件。单节点部署时这一页本来就只有本节点。
+  function loadNodes() {
+    return Promise.all([api('/api/v1/admin/peers'), api('/api/v1/admin/peer-sync')])
+      .then(function (results) {
+        state.peers = results[0].peers || [];
+        state.cursors = results[0].cursors || results[1].cursors || [];
+        state.sync = results[1].sync || null;
+        render();
+      })
+      .catch(function (err) { state.error = err.message || String(err); render(); });
   }
   function loadReplies() {
     return api('/api/v1/replies?limit=100').then(function (result) {
@@ -359,7 +396,6 @@ input,textarea { font-family:inherit; }
       '<div class="nav-group"><div class="nav-label">运维</div>' +
         navItem('tasks', '任务', ICON.task) +
         navItem('nodes', '节点', ICON.node) +
-        navItem('sync', '同步', ICON.sync) +
         navItem('replies', '回复记录', ICON.reply) +
         navItem('checkup', '体检', ICON.checkup) +
       '</div>' +
@@ -432,16 +468,16 @@ input,textarea { font-family:inherit; }
       metricCard('在场触点', state.presence && state.presence.online ? state.presence.online.length : 0,
         state.presence && state.presence.active ? '主设备 ' + (state.presence.active.kind === 'desktop' ? '桌面端' : '浏览器') : '');
     var proposals = pending.slice(0, 3).map(function (proposal) {
-      return '<div class="list-row"><span class="badge badge-warn">待决策</span>' +
+      return '<div class="list-row clickable" data-goto="proposals"><span class="badge badge-warn">待决策</span>' +
         '<div class="grow">' + esc(proposal.title) + '<div class="sub">' + esc(proposal.ask) + '</div></div>' +
-        '<button class="btn btn-sm" data-nav="proposals">查看</button></div>';
+        '<span class="muted">查看</span></div>';
     }).join('');
     var commitments = soon.length ? soon.map(function (item) {
-      return '<div class="list-row"><div class="grow">' + esc(item.statement) +
+      return '<div class="list-row clickable" data-goto="commitments"><div class="grow">' + esc(item.statement) +
         '<div class="sub">' + esc(item.projectId || '未归属项目') + ' · 截止 ' + esc(when(item.dueAt)) + '</div></div></div>';
     }).join('') : '<div class="list-row muted">没有带截止时间的责任。</div>';
     var replies = state.replies.slice(0, 3).map(function (reply) {
-      return '<div class="list-row"><span class="badge badge-muted">' + esc(reply.tier) + '</span>' +
+      return '<div class="list-row clickable" data-goto="replies"><span class="badge badge-muted">' + esc(reply.tier) + '</span>' +
         '<div class="grow">' + esc(reply.channelTarget) + '<div class="sub">' + esc(reply.text) + '</div></div>' +
         '<span class="muted mono">' + esc(when(reply.createdAt)) + '</span></div>';
     }).join('') || '<div class="list-row muted">还没有回复。</div>';
@@ -592,13 +628,18 @@ input,textarea { font-family:inherit; }
   function memoryView() {
     var memory = state.memory;
     var body = memory.path
-      ? '<div class="file-head"><span class="muted mono">' + esc(memory.path) + '</span></div>' +
-        '<pre class="file-body">' + esc(memory.content) + '</pre>'
+      ? '<div class="file-head"><span class="muted mono">' + esc(memory.path) + '</span>' +
+        '<span class="muted" style="font-size:12px;white-space:nowrap">' +
+        esc(memory.content.split('\\n').length) + ' 行</span></div>' +
+        (memory.content.trim()
+          ? '<pre class="file-body">' + esc(memory.content) + '</pre>'
+          : '<div class="muted">这个文件是空的。</div>')
       : empty('从左侧选一个文件。');
     var history = memory.history.length
       ? '<h2 class="section-title">历史</h2>' + memory.history.map(function (entry) {
         return '<div class="history-row"><span class="mono">' + esc(entry.commit.slice(0, 7)) + '</span>' +
           '<span class="muted">' + esc(entry.subject) + '</span>' +
+          '<span class="muted mono" style="white-space:nowrap">' + esc(when(entry.at)) + '</span>' +
           '<button class="btn btn-sm" data-revert="' + esc(entry.commit) + '">回滚</button></div>';
       }).join('')
       : '';
@@ -610,61 +651,137 @@ input,textarea { font-family:inherit; }
   }
 
   // --- 任务 ---
+  var TASK_STATUS_LABEL = {
+    queued: '排队', claimed: '已领取', running: '运行中', awaiting_input: '等待输入',
+    done: '已完成', failed: '失败', cancelled: '已取消',
+  };
+  var TASK_FILTERS = [
+    { key: 'all', label: '全部', match: function () { return true; } },
+    { key: 'active', label: '进行中', match: function (task) { return ['queued', 'claimed', 'running', 'awaiting_input'].indexOf(task.status) >= 0; } },
+    { key: 'failed', label: '失败', match: function (task) { return task.status === 'failed' || task.status === 'cancelled'; } },
+    { key: 'done', label: '已完成', match: function (task) { return task.status === 'done'; } },
+  ];
   function taskStatusBadge(status) {
-    var map = { succeeded: 'badge-ok', running: 'badge-warn', failed: 'badge-danger' };
-    return '<span class="badge ' + (map[status] || 'badge-muted') + '">' + esc(status) + '</span>';
+    var map = {
+      done: 'badge-ok', failed: 'badge-danger', cancelled: 'badge-danger',
+      running: 'badge-warn', claimed: 'badge-warn', awaiting_input: 'badge-warn',
+    };
+    return '<span class="badge ' + (map[status] || 'badge-muted') + '">' + esc(TASK_STATUS_LABEL[status] || status) + '</span>';
+  }
+  function briefBlock(brief) {
+    if (!brief || typeof brief !== 'object') return '';
+    var parts = '';
+    if (brief.goal) parts += '<div class="brief">' + esc(brief.goal) + '</div>';
+    if (brief.prompt) parts += '<div class="brief">' + esc(brief.prompt) + '</div>';
+    if (Array.isArray(brief.acceptance) && brief.acceptance.length) {
+      parts += '<div class="block"><div class="label">验收标准</div><div class="brief"><ul>' +
+        brief.acceptance.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join('') + '</ul></div></div>';
+    }
+    if (brief.context) parts += '<div class="block"><div class="label">上下文</div><div class="brief">' + esc(brief.context) + '</div></div>';
+    return parts;
+  }
+  function taskDetailView() {
+    var detail = state.taskDetail;
+    var task = detail.task;
+    var kv = '<div class="kv">' +
+      '<div class="k">任务 id</div><div class="mono">' + esc(task.task_id) + '</div>' +
+      '<div class="k">项目</div><div>' + esc(task.project_id || '—') + '</div>' +
+      '<div class="k">类型</div><div class="mono">' + esc(task.type) + '</div>' +
+      '<div class="k">创建者</div><div>' + esc(task.created_by || '—') + '</div>' +
+      '<div class="k">优先级</div><div>' + esc(task.priority) + '</div>' +
+      '<div class="k">后端</div><div>' + esc(task.backend_kind || '—') + '</div>' +
+      '<div class="k">执行节点</div><div class="mono">' + esc(task.executor_node_id || '—') + '</div>' +
+      '<div class="k">尝试次数</div><div>' + esc(task.attempts) + ' / ' + esc(task.max_attempts) + '</div>' +
+      '<div class="k">创建</div><div>' + esc(when(task.created_at)) + '</div>' +
+      (task.started_at ? '<div class="k">开始</div><div>' + esc(when(task.started_at)) + '</div>' : '') +
+      (task.finished_at ? '<div class="k">结束</div><div>' + esc(when(task.finished_at)) + '</div>' : '') +
+      (task.session_ref ? '<div class="k">会话</div><div class="mono">' + esc(task.session_ref) + '</div>' : '') +
+      '</div>';
+    var brief = briefBlock(task.brief);
+    var result = task.result
+      ? '<div class="block"><div class="label">' + (task.status === 'failed' ? '失败原因' : '结果') + '</div>' +
+        '<div class="brief">' + esc(task.result.error || JSON.stringify(task.result, null, 2)) + '</div></div>'
+      : '';
+    var events = detail.events.length
+      ? detail.events.map(function (event) {
+        var payload = event.payload && Object.keys(event.payload).length ? JSON.stringify(event.payload) : '';
+        return '<div class="event"><span class="seq">' + esc(event.seq) + '</span>' +
+          '<span class="type">' + esc(event.type) + '</span>' +
+          '<span class="payload" title="' + esc(payload) + '">' + esc(payload) + '</span>' +
+          '<span class="muted mono">' + esc(when(event.ts)) + '</span></div>';
+      }).join('')
+      : '<div class="muted">没有事件记录。</div>';
+    return '<div class="card"><div class="detail-head">' +
+      '<button class="btn btn-sm" data-act="task-back">返回列表</button>' +
+      '<h2>' + esc(task.title || task.type) + '</h2>' + taskStatusBadge(task.status) + '</div>' +
+      kv +
+      (brief ? '<div class="block"><div class="label">任务说明</div>' + brief + '</div>' : '') +
+      result +
+      '<div class="block"><div class="label">事件流 · ' + detail.events.length + '</div>' + events + '</div></div>';
   }
   function tasksView() {
+    if (state.taskDetail) return page('任务', taskDetailView());
+    var rows = state.tasks.filter((TASK_FILTERS.filter(function (entry) { return entry.key === state.tasksFilter; })[0] || TASK_FILTERS[0]).match);
+    var filters = '<div class="filters">' + TASK_FILTERS.map(function (entry) {
+      return '<button class="filter" data-filter="' + entry.key + '" aria-pressed="' +
+        (entry.key === state.tasksFilter ? 'true' : 'false') + '">' + entry.label + ' ' +
+        state.tasks.filter(entry.match).length + '</button>';
+    }).join('') + '</div>';
     var body = !state.tasks.length ? empty('还没有任务。')
-      : state.tasks.map(function (task) {
-        return '<div class="list-row">' + taskStatusBadge(task.status) +
-          '<div class="grow">' + esc(task.type) + '<div class="sub">' +
-            esc(task.project_id || '未归属项目') + ' · 优先级 ' + esc(task.priority) + '</div></div>' +
-          '<span class="muted mono">' + esc(when(task.created_at)) + '</span></div>';
+      : !rows.length ? empty('这个筛选下没有任务。')
+      : rows.map(function (task) {
+        var busy = state.taskBusy === task.task_id;
+        return '<div class="list-row clickable" data-task="' + esc(task.task_id) + '">' + taskStatusBadge(task.status) +
+          '<div class="grow">' + esc(task.title || task.type) + '<div class="sub">' +
+            esc(task.project_id || '未归属项目') + ' · 优先级 ' + esc(task.priority) + ' · ' + esc(task.type) + '</div></div>' +
+          '<span class="muted mono">' + esc(busy ? '加载中…' : when(task.created_at)) + '</span></div>';
       }).join('');
-    return page('任务', '<h2 class="section-title">最近任务 · ' + state.tasks.length + '</h2><div class="card">' + body + '</div>');
+    return page('任务', filters + '<div class="card">' + body + '</div>');
   }
 
-  // --- 节点 ---
+  // --- 节点与同步 ---
   function nodesView() {
-    var body = !state.peers.length ? empty('还没有注册的 peer 节点。')
+    var sync = state.sync;
+    var identity = sync
+      ? '<div class="card"><div class="kv">' +
+          '<div class="k">本节点</div><div class="mono">' + esc(sync.node_id) + '</div>' +
+          '<div class="k">协议版本</div><div>v' + esc(sync.protocol_version) + '</div>' +
+          '<div class="k">签名</div><div>' + (sync.signing ? '已启用' : '<span class="badge badge-warn">未启用</span>') + '</div>' +
+          '<div class="k">中继</div><div>' + (sync.relay ? '已配置 · ' + (sync.relay_origins || []).length + ' 个来源' : '直连') + '</div>' +
+          '<div class="k">最高序号</div><div class="mono">' + esc(sync.head_seq) + '</div>' +
+        '</div></div>'
+      : empty('还没有同步状态。');
+    var peers = !state.peers.length
+      ? empty('还没有别的节点。只有一台机器跑 Core 时，这一页本来就只有本节点。')
       : state.peers.map(function (peer) {
         var revoked = peer.status !== 'active';
-        return '<div class="card"><div class="head"><strong style="flex:1">' + esc(peer.node_id) + '</strong>' +
+        return '<div class="card"><div class="head"><strong style="flex:1">' + esc(peer.display_name || peer.node_id) + '</strong>' +
           '<span class="badge ' + (revoked ? 'badge-danger' : 'badge-ok') + '">' + esc(peer.status) + '</span>' +
           '<span class="badge badge-muted">v' + esc(peer.protocol_version) + '</span></div>' +
           '<div class="kv" style="margin-top:12px">' +
-            '<div class="k">名称</div><div>' + esc(peer.display_name || '—') + '</div>' +
+            '<div class="k">节点 id</div><div class="mono">' + esc(peer.node_id) + '</div>' +
             '<div class="k">地址</div><div class="mono">' + esc(peer.endpoint_url || '—') + '</div>' +
             '<div class="k">最近可见</div><div>' + esc(when(peer.last_seen_at)) + '</div>' +
           '</div></div>';
       }).join('');
-    return page('节点', '<h2 class="section-title">peer 节点 · ' + state.peers.length + '</h2>' + body);
-  }
-
-  // --- 同步 ---
-  function syncView() {
-    var sync = state.sync;
-    if (!sync) return page('同步', empty('还没有同步状态。'));
-    var inbox = Object.keys(sync.inbox || {}).map(function (key) {
-      return '<div class="list-row"><div class="grow">' + esc(key) + '</div>' +
-        '<span class="mono">' + esc(sync.inbox[key]) + '</span></div>';
-    }).join('') || '<div class="list-row muted">收件箱是空的。</div>';
+    var inbox = sync
+      ? (Object.keys(sync.inbox || {}).map(function (key) {
+        return '<div class="list-row"><div class="grow">' + esc(key) + '</div>' +
+          '<span class="mono">' + esc(sync.inbox[key]) + '</span></div>';
+      }).join('') || '<div class="list-row muted">收件箱是空的。</div>')
+      : '';
     var cursors = state.cursors.length
       ? state.cursors.map(function (cursor) {
         return '<div class="list-row"><div class="grow mono">' + esc(cursor.node_id || cursor.nodeId) + '</div>' +
           '<span class="muted mono">' + esc(cursor.last_seq ?? cursor.lastSeq ?? '—') + '</span></div>';
       }).join('')
       : '<div class="list-row muted">还没有游标。</div>';
-    return page('同步',
-      '<h2 class="section-title">本节点</h2><div class="card"><div class="kv">' +
-        '<div class="k">节点</div><div class="mono">' + esc(sync.node_id) + '</div>' +
-        '<div class="k">协议版本</div><div>v' + esc(sync.protocol_version) + '</div>' +
-        '<div class="k">签名</div><div>' + (sync.signing ? '已启用' : '<span class="badge badge-warn">未启用</span>') + '</div>' +
-        '<div class="k">中继</div><div>' + (sync.relay ? '已配置 · ' + (sync.relay_origins || []).length + ' 个来源' : '直连') + '</div>' +
-        '<div class="k">最高序号</div><div class="mono">' + esc(sync.head_seq) + '</div>' +
-      '</div></div>' +
-      '<h2 class="section-title">收件箱</h2><div class="card">' + inbox + '</div>' +
+    return page('节点与同步',
+      '<p class="muted" style="margin:0 0 16px;font-size:13px">多台机器各跑一个 Core 时，' +
+        '它们用签名事件互相复制状态。这里显示本节点的同步身份，以及每个对端复制到哪了。</p>' +
+      '<h2 class="section-title">本节点</h2>' + identity +
+      '<h2 class="section-title">对端节点 · ' + state.peers.length + '</h2>' + peers +
+      (sync ? '<h2 class="section-title">收件箱</h2><div class="card">' + inbox + '</div>' : '') +
       '<h2 class="section-title">对端游标</h2><div class="card">' + cursors + '</div>');
   }
 
@@ -750,7 +867,6 @@ input,textarea { font-family:inherit; }
     else if (state.view === 'memory') root.innerHTML = memoryView();
     else if (state.view === 'tasks') root.innerHTML = tasksView();
     else if (state.view === 'nodes') root.innerHTML = nodesView();
-    else if (state.view === 'sync') root.innerHTML = syncView();
     else if (state.view === 'replies') root.innerHTML = repliesView();
     else if (state.view === 'checkup') root.innerHTML = checkupView();
     else root.innerHTML = todayView();
@@ -763,7 +879,6 @@ input,textarea { font-family:inherit; }
     if (view === 'memory') return state.memory.tree.length ? undefined : loadMemory();
     if (view === 'tasks') return loadTasks();
     if (view === 'nodes') return loadNodes();
-    if (view === 'sync') return loadSync();
     if (view === 'replies') return loadReplies();
     if (view === 'checkup') return loadCheckup();
     return undefined;
@@ -807,6 +922,16 @@ input,textarea { font-family:inherit; }
     }
     var file = event.target.closest('[data-file]');
     if (file) return openFile(file.dataset.file);
+    var goto = event.target.closest('[data-goto]');
+    if (goto) {
+      state.view = goto.dataset.goto; state.error = ''; render();
+      ensureView(state.view);
+      return;
+    }
+    var filter = event.target.closest('[data-filter]');
+    if (filter) { state.tasksFilter = filter.dataset.filter; render(); return; }
+    var taskRow = event.target.closest('[data-task]');
+    if (taskRow) return openTask(taskRow.dataset.task);
     var revert = event.target.closest('[data-revert]');
     if (revert) return revertFile(revert.dataset.revert);
     var suggestion = event.target.closest('[data-suggestion]');
@@ -815,6 +940,7 @@ input,textarea { font-family:inherit; }
     if (!button) return;
     var action = button.dataset.act;
     if (action === 'refresh') return ensureView(state.view) || loadToday();
+    if (action === 'task-back') { state.taskDetail = null; render(); return; }
     if (action === 'checkup-run') return runCheckup();
     if (action === 'logout') return setToken('');
     var id = button.dataset.id;

@@ -61,7 +61,8 @@ test('the console carries the design tokens and the real API calls', () => {
     'data-revert=', 'data-suggestion=',
     '/api/v1/presence', '/api/v1/replies?limit=', '/api/v1/ai/metrics', '/api/v1/ai/checkup', '/api/v1/auth/bootstrap', 'visibilitychange',
     '/api/v1/commitments?state=active', '/api/v1/tasks?limit=', '/api/v1/admin/peers', '/api/v1/admin/peer-sync',
-    '/api/v1/digest/pending', '/api/v1/signals',
+    '/api/v1/digest/pending', '/api/v1/signals', '/events?limit=',
+    'data-task="', 'data-filter="', 'data-goto="',
   ]) {
     assert.ok(CONSOLE_HTML.includes(call), `missing API call: ${call}`);
   }
@@ -74,12 +75,14 @@ test('the console keeps the sidebar navigation from the design baseline', () => 
   assert.ok(CONSOLE_HTML.includes('class="nav-label">助理'), 'assistant navigation group');
   assert.ok(CONSOLE_HTML.includes('class="nav-label">运维'), 'operations navigation group');
   assert.ok(CONSOLE_HTML.includes('class="sidebar-foot"'), 'the presence footer lives in the sidebar');
-  for (const view of ['today', 'proposals', 'commitments', 'chat', 'memory', 'tasks', 'nodes', 'sync', 'replies', 'checkup']) {
+  for (const view of ['today', 'proposals', 'commitments', 'chat', 'memory', 'tasks', 'nodes', 'replies', 'checkup']) {
     assert.ok(CONSOLE_HTML.includes(`navItem('${view}'`), `missing navigation entry: ${view}`);
     // 今日 is the fallback branch, so it has no explicit view comparison.
     const branch = view === 'today' ? 'todayView()' : `state.view === '${view}'`;
     assert.ok(CONSOLE_HTML.includes(branch), `missing view branch: ${view}`);
   }
+  // 同步 has no page of its own: it answers the same question as 节点.
+  assert.ok(!CONSOLE_HTML.includes("navItem('sync'"), 'sync must not be a separate navigation entry');
 });
 
 test('the console source references no remote assets', () => {
