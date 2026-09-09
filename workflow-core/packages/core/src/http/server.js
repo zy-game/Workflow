@@ -344,10 +344,21 @@ export function createCoreServer({ config = {}, nodeId = null, authRepository, t
     return null;
   });
 
-  // The console asks this to explain an install that has no account yet. The
-  // first admin comes from the service environment, so there is nothing here
-  // for an anonymous caller to claim.
+  // First-run setup. Public because a fresh install has no credentials at all;
+  // it closes permanently once an active account exists.
   router.add('GET', '/api/v1/auth/bootstrap', () => ({ ok: true, ...authRepository.bootstrapStatus() }));
+
+  router.add('POST', '/api/v1/auth/bootstrap', async (req, res, body) => {
+    try {
+      const account = await authRepository.completeBootstrap({
+        email: body?.email, password: body?.password,
+      });
+      return { ok: true, account: { email: account.email, role: account.role } };
+    } catch (error) {
+      const status = error.code === 'BOOTSTRAP_UNAVAILABLE' ? 409 : 400;
+      throw new HttpError(status, error.code ?? 'bootstrap_failed', error.message);
+    }
+  });
 
   router.add('GET', '/api/v1/auth/client-session', (req) => {
     const header = req.headers.authorization;

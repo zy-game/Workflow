@@ -219,6 +219,19 @@ export class AuthRepository {
     return this.#finishBootstrap(await this.createAccount({ email, password, role: 'admin' }));
   }
 
+  // First-run setup from the console. No code: whoever reaches the page before
+  // an account exists is the operator finishing their own deployment. It closes
+  // permanently the moment an active account exists.
+  async completeBootstrap({ email, password }) {
+    const status = this.bootstrapStatus();
+    if (!status.needed) {
+      const error = new Error('setup is already complete');
+      error.code = 'BOOTSTRAP_UNAVAILABLE';
+      throw error;
+    }
+    return this.#finishBootstrap(await this.createAccount({ email, password, role: 'admin' }));
+  }
+
   #finishBootstrap(account) {
     this.db.prepare('UPDATE bootstrap_state SET completed = 1, completed_at = ? WHERE singleton = 1')
       .run(new Date().toISOString());

@@ -106,7 +106,7 @@ input { font-family:inherit; }
     memory: { tree: [], path: null, content: '', history: [], error: '' },
     replies: { items: [], error: '' },
     checkup: { metrics: null, suggestions: [], error: '', busy: '' },
-    setup: { needed: false },
+    setup: { needed: false, error: '', busy: false },
     notifiedCount: 0,
   };
   var timer = null;
@@ -367,20 +367,20 @@ input { font-family:inherit; }
       '<h2 class="section-title" style="margin-top:24px">AI 改进建议 · ' + checkup.suggestions.length + '</h2>' + suggestions + '</div>';
   }
 
-  // A fresh install has no account. The first admin is seeded from the service
-  // environment, so this page only explains what to do - it deliberately offers
-  // no form, because the console is publicly reachable.
+  // First-run setup: a fresh install has no credentials at all, so the console
+  // offers to create the first admin. It disappears the moment an account
+  // exists.
   function setupView() {
-    return '<div class="center"><div class="card" style="width:100%;max-width:520px">' +
-      '<h1 style="font-size:16px;margin:0 0 12px">Workflow 尚未初始化</h1>' +
-      '<p class="muted" style="font-size:14px;margin:0 0 12px">这台服务器还没有管理员账号。' +
-      '在服务配置里设置以下两项后重启 Core，即可直接用该账号登录：</p>' +
-      '<pre class="file-body" style="margin:0 0 12px">WFC_BOOTSTRAP_ADMIN_EMAIL=you@example.com
-' +
-      'WFC_BOOTSTRAP_ADMIN_PASSWORD=<你的密码></pre>' +
-      '<p class="muted" style="font-size:13px;margin:0">账号只在数据库还没有可用账号时创建一次，' +
-      '之后这两个变量会被忽略，密码不会写入日志。</p>' +
-      '</div></div>';
+    var setup = state.setup;
+    return '<div class="center"><form class="card" id="setup" style="width:100%;max-width:400px">' +
+      '<h1 style="font-size:16px;margin:0 0 4px">初始化 Workflow</h1>' +
+      '<p class="muted" style="margin:0 0 20px;font-size:13px">还没有账号。创建第一个管理员账号。</p>' +
+      '<label class="field"><span>邮箱</span><input id="setupEmail" type="email" autocomplete="username"></label>' +
+      '<label class="field"><span>密码</span><input id="setupPassword" type="password" autocomplete="new-password"></label>' +
+      '<button class="btn btn-primary" type="submit" style="width:100%"' + (setup.busy ? ' disabled' : '') + '>' +
+        (setup.busy ? '创建中…' : '创建账号') + '</button>' +
+      (setup.error ? '<div class="error">' + esc(setup.error) + '</div>' : '') +
+      '</form></div>';
   }
 
   function loadSetup() {
@@ -463,6 +463,16 @@ input { font-family:inherit; }
   }
 
   root.addEventListener('submit', function (event) {
+    if (event.target.id === 'setup') {
+      event.preventDefault();
+      var setupEmail = document.getElementById('setupEmail').value.trim();
+      var setupPassword = document.getElementById('setupPassword').value;
+      state.setup.busy = true; state.setup.error = ''; render();
+      api('/api/v1/auth/bootstrap', { method: 'POST', body: { email: setupEmail, password: setupPassword } })
+        .then(function () { state.setup.busy = false; state.setup.needed = false; render(); })
+        .catch(function (err) { state.setup.busy = false; state.setup.error = err.message || String(err); render(); });
+      return;
+    }
     if (event.target.id !== 'login') return;
     event.preventDefault();
     // Read the fields before re-rendering: render() rebuilds the form.

@@ -52,12 +52,27 @@ test('a fresh install reports that setup is needed', async () => {
   assert.equal(status.body.activeAccounts, 0);
 });
 
-test('there is no unauthenticated way to create an account', async () => {
-  // The console is publicly reachable; the first admin comes from the service
-  // environment, so nothing here may create one.
-  const attempt = await call('POST', '/api/v1/auth/bootstrap', { email: 'x@example.com', password: 'whatever-123456' });
-  assert.ok(attempt.status === 404 || attempt.status === 405, `unexpected status ${attempt.status}`);
-  assert.equal(auth.listAccounts().length, 0);
+test('the setup page creates the first admin and then closes', async () => {
+  const weak = await call('POST', '/api/v1/auth/bootstrap', { email: 'x@example.com', password: 'short' });
+  assert.equal(weak.status, 400, 'password policy still applies');
+
+  const created = await call('POST', '/api/v1/auth/bootstrap', {
+    email: 'owner@example.com', password: 'first-owner-12345',
+  });
+  assert.equal(created.status, 200);
+  assert.equal(created.body.account.role, 'admin');
+
+  const after = await call('GET', '/api/v1/auth/bootstrap');
+  assert.equal(after.body.needed, false);
+  assert.equal(after.body.activeAccounts, 1);
+
+  // A second attempt must not be able to create another account.
+  const again = await call('POST', '/api/v1/auth/bootstrap', {
+    email: 'second@example.com', password: 'second-owner-12345',
+  });
+  assert.equal(again.status, 409);
+  assert.equal(again.body.code, 'BOOTSTRAP_UNAVAILABLE');
+  assert.equal(auth.listAccounts().length, 1);
 });
 
 test('a configured admin is seeded on first boot and ignored afterwards', async () => {
