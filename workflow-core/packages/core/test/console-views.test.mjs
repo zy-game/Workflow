@@ -69,12 +69,21 @@ const PAYLOADS = {
   },
   '/api/v1/memory/tree': { tree: [{ dir: true, name: 'projects', children: [{ name: 'a.md', path: 'projects/a.md' }] }] },
   '/api/v1/memory/file?path=projects%2Fa.md': { content: '# hi' },
-  '/api/v1/memory/history?path=projects%2Fa.md': { history: [{ commit: 'abcdef1234567', subject: 'init' }] },
+  '/api/v1/memory/history?path=projects%2Fa.md': { history: [{ commit: 'abcdef1234567', at: now, subject: 'init' }] },
+  '/api/v1/workflow/memories?limit=200': {
+    memories: [{
+      id: 'm1', scope: 'project', projectId: 'wfc-demo', type: 'pitfall', title: '模板字符串里的反斜杠要两层转义',
+      body: '外层模板字符串会先处理转义。\n结论：写成两层。', status: 'active', source: 'codex',
+      tags: ['console'], keywords: ['escape'], revision: 2, createdAt: now, updatedAt: now,
+    }],
+  },
+  '/api/v1/skills': { skills: [{ name: 'eng-review', version: 3, updatedAt: now }] },
+  '/api/v1/skills/eng-review': { skill: { name: 'eng-review', version: 3, updatedAt: now, content: '# 评审\n\n按正确性/并发/安全分级。' } },
 };
 
 const VIEWS = {
   today: '今日', proposals: '提案', commitments: '责任', chat: '对话', memory: '记忆',
-  tasks: '任务', nodes: '节点与同步', replies: '回复记录', checkup: '体检',
+  knowledge: '知识库', tasks: '任务', nodes: '节点与同步', skills: '技能', replies: '回复记录', checkup: '体检',
 };
 
 // The console script is an IIFE over the DOM, so the test provides the minimum
@@ -155,5 +164,38 @@ test('clicking a task opens its detail', async () => {
   assert.ok(html.includes('构建通过'), 'the detail shows the acceptance criteria');
   assert.ok(html.includes('backend unavailable'), 'the detail shows why the task failed');
   assert.ok(html.includes('事件流'), 'the detail shows the event stream');
+  assert.deepEqual(unmocked, []);
+});
+
+test('clicking a knowledge record opens its body', async () => {
+  const { root, handlers, unmocked } = bootConsole();
+  await tick(); await tick(); await tick();
+
+  clickOn(handlers, { '[data-nav]': { dataset: { nav: 'knowledge' } } });
+  await tick(); await tick();
+  assert.ok(root.innerHTML.includes('data-knowledge="m1"'), 'the list must offer a clickable record');
+
+  clickOn(handlers, { '[data-knowledge]': { dataset: { knowledge: 'm1' } } });
+  await tick();
+  const html = root.innerHTML;
+  assert.ok(html.includes('模板字符串里的反斜杠要两层转义'), 'the detail shows the title');
+  assert.ok(html.includes('结论：写成两层。'), 'the detail shows the body');
+  assert.deepEqual(unmocked, []);
+});
+
+test('opening a skill loads its content into the editor', async () => {
+  const { root, handlers, unmocked } = bootConsole();
+  await tick(); await tick(); await tick();
+
+  clickOn(handlers, { '[data-nav]': { dataset: { nav: 'skills' } } });
+  await tick(); await tick();
+  assert.ok(root.innerHTML.includes('data-skill="eng-review"'), 'the list must offer a clickable skill');
+
+  clickOn(handlers, { '[data-skill]': { dataset: { skill: 'eng-review' } } });
+  await tick(); await tick();
+  const html = root.innerHTML;
+  assert.ok(html.includes('id="skillContent"'), 'the editor is shown');
+  assert.ok(html.includes('按正确性/并发/安全分级。'), 'the editor holds the skill content');
+  assert.ok(html.includes('data-act="skill-delete"'), 'an existing skill can be deleted');
   assert.deepEqual(unmocked, []);
 });

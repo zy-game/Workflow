@@ -149,6 +149,17 @@ input,textarea { font-family:inherit; }
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1; }
 .tree-item { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
+/* 知识库 / 技能 */
+.toolbar { display:flex; gap:var(--s2); margin-bottom:var(--s3); flex-wrap:wrap; align-items:center; }
+.toolbar input, .toolbar select { padding:var(--s2) var(--s3); border-radius:var(--r-btn);
+  border:1px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:13px; }
+.toolbar input { flex:1; min-width:180px; }
+.editor { width:100%; min-height:320px; font-family:var(--mono); font-size:12px; line-height:1.6;
+  padding:var(--s3); border-radius:var(--r-btn); border:1px solid var(--border-strong);
+  background:var(--surface-2); color:var(--text); resize:vertical; }
+.knowledge-body { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; color:var(--text-2); }
+.chips { display:flex; gap:var(--s2); flex-wrap:wrap; margin-top:var(--s3); }
+
 /* 记忆 */
 .tree-item { padding:2px var(--s2); border-radius:5px; color:var(--text-2); cursor:pointer; font-size:13px; }
 .tree-item:hover { background:var(--surface-2); color:var(--text); }
@@ -199,6 +210,8 @@ input,textarea { font-family:inherit; }
     task: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>',
     node: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/></svg>',
     reply: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 015 5v6"/></svg>',
+    book: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2V5z"/><path d="M4 19a2 2 0 012-2h12"/></svg>',
+    skill: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 4h6a1 1 0 011 1v2H8V5a1 1 0 011-1z"/><path d="M8 6H5v14h14V6h-3"/><path d="M9 12l2 2 4-4"/></svg>',
     checkup: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 12h4l2-6 3 12 2-6h7"/></svg>'
   };
 
@@ -212,6 +225,8 @@ input,textarea { font-family:inherit; }
     peers: [], sync: null, cursors: [],
     presence: null,
     memory: { tree: [], path: null, content: '', history: [], error: '' },
+    knowledge: { items: [], query: '', projectId: '', type: '', detail: null, error: '' },
+    skills: { items: [], detail: null, draft: null, draftName: '', error: '', busy: '' },
     checkup: { metrics: null, suggestions: [], error: '', busy: '' },
     chat: { items: [], error: '', busy: false },
     notifiedCount: 0,
@@ -364,6 +379,55 @@ input,textarea { font-family:inherit; }
     return Promise.all([load(), loadCommitments(), loadDigest(), loadReplies(), loadPresence()]);
   }
 
+  // --- 知识库：跨项目沉淀的坑、洞察、决策、模式、约束 ---
+  function loadKnowledge() {
+    var knowledge = state.knowledge;
+    knowledge.error = '';
+    var params = ['limit=200'];
+    if (knowledge.projectId) params.push('project_id=' + encodeURIComponent(knowledge.projectId));
+    if (knowledge.type) params.push('type=' + encodeURIComponent(knowledge.type));
+    if (knowledge.query) params.push('query=' + encodeURIComponent(knowledge.query));
+    return api('/api/v1/workflow/memories?' + params.join('&'))
+      .then(function (result) { knowledge.items = result.memories || []; render(); })
+      .catch(function (err) { knowledge.error = err.message || String(err); render(); });
+  }
+
+  // --- 技能：服务器侧是唯一真源，保存即推送给在线执行器 ---
+  function loadSkills() {
+    state.skills.error = '';
+    return api('/api/v1/skills')
+      .then(function (result) { state.skills.items = result.skills || []; render(); })
+      .catch(function (err) { state.skills.error = err.message || String(err); render(); });
+  }
+  function openSkill(name) {
+    state.skills.error = '';
+    return api('/api/v1/skills/' + encodeURIComponent(name))
+      .then(function (result) {
+        state.skills.detail = result.skill;
+        state.skills.draft = result.skill.content;
+        state.skills.draftName = result.skill.name;
+        render();
+      })
+      .catch(function (err) { state.skills.error = err.message || String(err); render(); });
+  }
+  function saveSkill() {
+    var name = String(state.skills.draftName || '').trim();
+    if (!name) { state.skills.error = '技能名不能为空'; render(); return; }
+    state.skills.busy = 'save'; render();
+    api('/api/v1/skills/' + encodeURIComponent(name), { method: 'PUT', body: { content: state.skills.draft || '' } })
+      .then(function () { state.skills.busy = ''; return loadSkills().then(function () { return openSkill(name); }); })
+      .catch(function (err) { state.skills.busy = ''; state.skills.error = err.message || String(err); render(); });
+  }
+  function deleteSkill(name) {
+    state.skills.busy = 'delete'; render();
+    api('/api/v1/skills/' + encodeURIComponent(name), { method: 'DELETE' })
+      .then(function () {
+        state.skills.busy = ''; state.skills.detail = null; state.skills.draft = null; state.skills.draftName = '';
+        return loadSkills();
+      })
+      .catch(function (err) { state.skills.busy = ''; state.skills.error = err.message || String(err); render(); });
+  }
+
   // --- 骨架 ---
   function navItem(view, label, icon, badge) {
     var active = state.view === view ? ' aria-current="page"' : '';
@@ -392,10 +456,12 @@ input,textarea { font-family:inherit; }
         navItem('commitments', '责任', ICON.commitment) +
         navItem('chat', '对话', ICON.chat) +
         navItem('memory', '记忆', ICON.memory) +
+        navItem('knowledge', '知识库', ICON.book) +
       '</div>' +
       '<div class="nav-group"><div class="nav-label">运维</div>' +
         navItem('tasks', '任务', ICON.task) +
         navItem('nodes', '节点', ICON.node) +
+        navItem('skills', '技能', ICON.skill) +
         navItem('replies', '回复记录', ICON.reply) +
         navItem('checkup', '体检', ICON.checkup) +
       '</div>' +
@@ -650,6 +716,98 @@ input,textarea { font-family:inherit; }
       '</div><div><div class="card">' + body + '</div>' + history + '</div></div>');
   }
 
+  // --- 知识库 ---
+  var KNOWLEDGE_TYPES = ['pitfall', 'insight', 'decision', 'pattern', 'constraint'];
+  var KNOWLEDGE_TYPE_LABEL = { pitfall: '坑', insight: '洞察', decision: '决策', pattern: '模式', constraint: '约束' };
+  function knowledgeTypeLabel(type) { return KNOWLEDGE_TYPE_LABEL[type] || type; }
+  function knowledgeDetailView(item) {
+    var meta = '<div class="kv" style="margin-top:12px">' +
+      '<div class="k">项目</div><div>' + esc(item.projectId || '全局') + '</div>' +
+      '<div class="k">类型</div><div>' + esc(knowledgeTypeLabel(item.type)) + '</div>' +
+      '<div class="k">来源</div><div>' + esc(item.source || '—') + '</div>' +
+      '<div class="k">创建</div><div>' + esc(when(item.createdAt)) + '</div>' +
+      '<div class="k">更新</div><div>' + esc(when(item.updatedAt)) + '</div>' +
+      '<div class="k">版本</div><div>' + esc(item.revision) + '</div>' +
+      '</div>';
+    var chips = (item.tags || []).concat(item.keywords || []);
+    return '<div class="card"><div class="detail-head">' +
+      '<button class="btn btn-sm" data-act="knowledge-back">返回列表</button>' +
+      '<h2>' + esc(item.title) + '</h2>' +
+      '<span class="badge badge-muted">' + esc(knowledgeTypeLabel(item.type)) + '</span></div>' +
+      meta +
+      '<div class="block"><div class="label">正文</div><div class="knowledge-body">' + esc(item.body) + '</div></div>' +
+      (chips.length ? '<div class="chips">' + chips.map(function (chip) {
+        return '<span class="badge badge-muted">' + esc(chip) + '</span>';
+      }).join('') + '</div>' : '') +
+      '</div>';
+  }
+  function knowledgeView() {
+    var knowledge = state.knowledge;
+    if (knowledge.detail) return page('知识库', knowledgeDetailView(knowledge.detail));
+    var projects = [];
+    knowledge.items.forEach(function (item) {
+      if (item.projectId && projects.indexOf(item.projectId) < 0) projects.push(item.projectId);
+    });
+    var toolbar = '<form class="toolbar" id="knowledgeSearch">' +
+      '<input id="knowledgeQuery" placeholder="搜索标题或正文…" value="' + esc(knowledge.query) + '">' +
+      '<select id="knowledgeProject"><option value="">全部项目</option>' + projects.map(function (id) {
+        return '<option value="' + esc(id) + '"' + (id === knowledge.projectId ? ' selected' : '') + '>' + esc(id) + '</option>';
+      }).join('') + '</select>' +
+      '<select id="knowledgeType"><option value="">全部类型</option>' + KNOWLEDGE_TYPES.map(function (type) {
+        return '<option value="' + type + '"' + (type === knowledge.type ? ' selected' : '') + '>' + esc(knowledgeTypeLabel(type)) + '</option>';
+      }).join('') + '</select>' +
+      '<button class="btn" type="submit">搜索</button></form>';
+    var body = knowledge.error ? '<div class="card error">' + esc(knowledge.error) + '</div>'
+      : !knowledge.items.length ? empty(knowledge.query ? '没有匹配的知识。' : '知识库还是空的。')
+      : knowledge.items.map(function (item) {
+        var first = String(item.body || '').split('\\n')[0];
+        return '<div class="list-row clickable" data-knowledge="' + esc(item.id) + '">' +
+          '<span class="badge badge-muted">' + esc(knowledgeTypeLabel(item.type)) + '</span>' +
+          '<div class="grow">' + esc(item.title) + '<div class="sub">' +
+            esc(item.projectId || item.scope || '全局') + ' · ' + esc(first.slice(0, 80)) + '</div></div>' +
+          '<span class="muted mono">' + esc(when(item.updatedAt)) + '</span></div>';
+      }).join('');
+    return page('知识库',
+      toolbar + '<h2 class="section-title">共 ' + knowledge.items.length + ' 条</h2><div class="card">' + body + '</div>');
+  }
+
+  // --- 技能 ---
+  function skillDetailView() {
+    var skills = state.skills;
+    var isNew = !skills.detail;
+    var busy = skills.busy === 'save';
+    return '<div class="card"><div class="detail-head">' +
+      '<button class="btn btn-sm" data-act="skill-back">返回列表</button>' +
+      '<h2>' + esc(isNew ? '新建技能' : skills.detail.name) + '</h2>' +
+      (isNew ? '' : '<span class="badge badge-muted">v' + esc(skills.detail.version) + '</span>') + '</div>' +
+      (isNew ? '<label class="field"><span>技能名（就是文件名，例如 my-skill）</span>' +
+        '<input id="skillName" value="' + esc(skills.draftName) + '"></label>' : '') +
+      '<label class="field"><span>内容（Markdown）</span>' +
+        '<textarea class="editor" id="skillContent">' + esc(skills.draft || '') + '</textarea></label>' +
+      (skills.error ? '<div class="error">' + esc(skills.error) + '</div>' : '') +
+      '<div class="actions" style="margin-top:12px">' +
+        '<button class="btn btn-primary" data-act="skill-save"' + (busy ? ' disabled' : '') + '>' +
+          (busy ? '保存中…' : '保存') + '</button>' +
+        (isNew ? '' : '<button class="btn btn-danger" data-act="skill-delete"' +
+          (skills.busy === 'delete' ? ' disabled' : '') + '>删除</button>') +
+      '</div></div>';
+  }
+  function skillsView() {
+    var skills = state.skills;
+    if (skills.draft !== null) return page('技能', skillDetailView());
+    var body = skills.error ? '<div class="card error">' + esc(skills.error) + '</div>'
+      : !skills.items.length ? empty('还没有技能。')
+      : skills.items.map(function (skill) {
+        return '<div class="list-row clickable" data-skill="' + esc(skill.name) + '">' +
+          '<div class="grow">' + esc(skill.name) + '<div class="sub">v' + esc(skill.version) + '</div></div>' +
+          '<span class="muted mono">' + esc(when(skill.updatedAt)) + '</span></div>';
+      }).join('');
+    return page('技能',
+      '<div class="toolbar"><button class="btn btn-primary" data-act="skill-new">新建技能</button>' +
+        '<span class="muted" style="font-size:12px">保存后立即推送给所有在线执行器。</span></div>' +
+      '<h2 class="section-title">已分发 · ' + skills.items.length + '</h2><div class="card">' + body + '</div>');
+  }
+
   // --- 任务 ---
   var TASK_STATUS_LABEL = {
     queued: '排队', claimed: '已领取', running: '运行中', awaiting_input: '等待输入',
@@ -865,6 +1023,8 @@ input,textarea { font-family:inherit; }
     else if (state.view === 'commitments') root.innerHTML = commitmentsView();
     else if (state.view === 'chat') root.innerHTML = chatView();
     else if (state.view === 'memory') root.innerHTML = memoryView();
+    else if (state.view === 'knowledge') root.innerHTML = knowledgeView();
+    else if (state.view === 'skills') root.innerHTML = skillsView();
     else if (state.view === 'tasks') root.innerHTML = tasksView();
     else if (state.view === 'nodes') root.innerHTML = nodesView();
     else if (state.view === 'replies') root.innerHTML = repliesView();
@@ -877,6 +1037,8 @@ input,textarea { font-family:inherit; }
     if (view === 'proposals') return load();
     if (view === 'commitments') return loadCommitments();
     if (view === 'memory') return state.memory.tree.length ? undefined : loadMemory();
+    if (view === 'knowledge') return loadKnowledge();
+    if (view === 'skills') return loadSkills();
     if (view === 'tasks') return loadTasks();
     if (view === 'nodes') return loadNodes();
     if (view === 'replies') return loadReplies();
@@ -900,6 +1062,17 @@ input,textarea { font-family:inherit; }
       var field = document.getElementById('chatText');
       var text = field ? field.value.trim() : '';
       if (text) sendChat(text);
+      return;
+    }
+    if (event.target.id === 'knowledgeSearch') {
+      event.preventDefault();
+      var queryField = document.getElementById('knowledgeQuery');
+      var projectField = document.getElementById('knowledgeProject');
+      var typeField = document.getElementById('knowledgeType');
+      state.knowledge.query = queryField ? queryField.value.trim() : '';
+      state.knowledge.projectId = projectField ? projectField.value : '';
+      state.knowledge.type = typeField ? typeField.value : '';
+      loadKnowledge();
       return;
     }
     if (event.target.id !== 'login') return;
@@ -932,6 +1105,16 @@ input,textarea { font-family:inherit; }
     if (filter) { state.tasksFilter = filter.dataset.filter; render(); return; }
     var taskRow = event.target.closest('[data-task]');
     if (taskRow) return openTask(taskRow.dataset.task);
+    var knowledgeRow = event.target.closest('[data-knowledge]');
+    if (knowledgeRow) {
+      state.knowledge.detail = state.knowledge.items.filter(function (item) {
+        return item.id === knowledgeRow.dataset.knowledge;
+      })[0] || null;
+      render();
+      return;
+    }
+    var skillRow = event.target.closest('[data-skill]');
+    if (skillRow) return openSkill(skillRow.dataset.skill);
     var revert = event.target.closest('[data-revert]');
     if (revert) return revertFile(revert.dataset.revert);
     var suggestion = event.target.closest('[data-suggestion]');
@@ -941,6 +1124,26 @@ input,textarea { font-family:inherit; }
     var action = button.dataset.act;
     if (action === 'refresh') return ensureView(state.view) || loadToday();
     if (action === 'task-back') { state.taskDetail = null; render(); return; }
+    if (action === 'knowledge-back') { state.knowledge.detail = null; render(); return; }
+    if (action === 'skill-new') {
+      state.skills.detail = null; state.skills.draft = ''; state.skills.draftName = ''; state.skills.error = '';
+      render();
+      return;
+    }
+    if (action === 'skill-back') {
+      state.skills.detail = null; state.skills.draft = null; state.skills.draftName = ''; state.skills.error = '';
+      render();
+      return;
+    }
+    if (action === 'skill-save') {
+      // Read the editor before render() rebuilds it.
+      var contentField = document.getElementById('skillContent');
+      var nameField = document.getElementById('skillName');
+      if (contentField) state.skills.draft = contentField.value;
+      if (nameField) state.skills.draftName = nameField.value;
+      return saveSkill();
+    }
+    if (action === 'skill-delete') return deleteSkill(state.skills.detail.name);
     if (action === 'checkup-run') return runCheckup();
     if (action === 'logout') return setToken('');
     var id = button.dataset.id;
@@ -948,6 +1151,14 @@ input,textarea { font-family:inherit; }
     api('/api/v1/proposals/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: {} })
       .catch(function (err) { state.error = err.message || String(err); })
       .then(function () { state.busy = ''; load(); });
+  });
+
+  // The two knowledge filters reload on change; the search box waits for submit.
+  root.addEventListener('change', function (event) {
+    var target = event.target;
+    if (!target || !target.id) return;
+    if (target.id === 'knowledgeProject') { state.knowledge.projectId = target.value; loadKnowledge(); }
+    if (target.id === 'knowledgeType') { state.knowledge.type = target.value; loadKnowledge(); }
   });
 
   // The countdown is the only thing that changes without a server round trip.
