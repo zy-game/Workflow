@@ -227,6 +227,17 @@ export async function startCore(env = process.env, dependencies = {}) {
 
   try {
     authRepository = new AuthRepository({ dataDir: config.dataDir });
+    if (config.bootstrapAdmin) {
+      try {
+        if (authRepository.bootstrapStatus().needed) {
+          await authRepository.seedFirstAdmin(config.bootstrapAdmin);
+          // The password is deliberately absent from this line.
+          log(`[bootstrap] first admin seeded from environment: ${config.bootstrapAdmin.email}`);
+        }
+      } catch (error) {
+        log(`[bootstrap] seeding failed: ${error.message}`);
+      }
+    }
     const nodeIdentity = loadNodeIdentity({ dataDir: config.dataDir, nodeId: config.nodeId });
     coreDatabase = new CoreDatabase({ dataDir: config.dataDir });
     const taskRepository = new TaskRepository({ coreDb: coreDatabase, claimTimeoutMs: config.claimTimeoutMs, nodeId: nodeIdentity.nodeId });

@@ -88,3 +88,45 @@ test('the issued code creates the first admin and closes setup for good', async 
   assert.equal(again.status, 409);
   assert.equal(again.body.code, 'BOOTSTRAP_UNAVAILABLE');
 });
+
+test('the first admin can be seeded from the environment instead of a code', async () => {
+  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-seed-'));
+  const seeded = new AuthRepository({ dataDir: seedDir });
+  try {
+    assert.equal(seeded.bootstrapStatus().needed, true);
+    const account = await seeded.seedFirstAdmin({ email: 'ops@example.com', password: 'seeded-owner-12345' });
+    assert.equal(account.email, 'ops@example.com');
+    assert.equal(seeded.bootstrapStatus().needed, false, 'seeding closes setup');
+
+    // Safe to leave the variables in place: a second start is a no-op.
+    await assert.rejects(
+      () => seeded.seedFirstAdmin({ email: 'other@example.com', password: 'other-owner-12345' }),
+      /setup is not available/,
+    );
+    assert.equal(seeded.listAccounts().length, 1);
+  } finally {
+    seeded.close();
+    fs.rmSync(seedDir, { recursive: true, force: true });
+  }
+});
+
+test('a configured admin is seeded on first boot and ignored afterwards', async () => {
+  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfc-bootstrap-seed-'));
+  const repo = new AuthRepository({ dataDir: seedDir });
+  try {
+    const seeded = await repo.seedFirstAdmin({ email: 'seed@example.com', password: 'seeded-admin-12345' });
+    assert.equal(seeded.email, 'seed@example.com');
+    assert.equal(seeded.role, 'admin');
+    assert.equal(repo.bootstrapStatus().needed, false, 'seeding closes setup');
+
+    // Leaving the variables in the environment must not create a second admin.
+    await assert.rejects(
+      () => repo.seedFirstAdmin({ email: 'other@example.com', password: 'other-admin-12345' }),
+      /setup is not available/,
+    );
+    assert.equal(repo.listAccounts().length, 1);
+  } finally {
+    repo.close();
+    fs.rmSync(seedDir, { recursive: true, force: true });
+  }
+});

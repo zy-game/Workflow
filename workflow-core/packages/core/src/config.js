@@ -156,6 +156,15 @@ export function loadConfig(env = process.env) {
     throw new Error('WFC_FEISHU_CALLBACKS_ENABLED=1 requires WFC_FEISHU_VERIFICATION_TOKEN');
   }
 
+  // Seeding the first admin from the environment removes the interactive step
+  // for automated deployments. It is consumed once, on a database that has no
+  // active account, and ignored afterwards.
+  const bootstrapEmail = text(env, 'WFC_BOOTSTRAP_ADMIN_EMAIL');
+  const bootstrapPassword = text(env, 'WFC_BOOTSTRAP_ADMIN_PASSWORD');
+  if (Boolean(bootstrapEmail) !== Boolean(bootstrapPassword)) {
+    throw new Error('WFC_BOOTSTRAP_ADMIN_EMAIL and WFC_BOOTSTRAP_ADMIN_PASSWORD must be configured together');
+  }
+
   // Server LLM backend: 'auto' prefers a configured CLI and falls back to the
   // direct API; 'cli' requires an explicit command; 'direct' ignores any CLI.
   const llmBackend = oneOf(env, 'WFC_LLM_BACKEND', ['auto', 'cli', 'direct'], 'auto');
@@ -197,6 +206,17 @@ export function loadConfig(env = process.env) {
     // The judgment loop is what makes the assistant proactive, so it is on by
     // default. It only calls the model when a commitment is actually due, so an
     // idle system costs nothing.
+    // First-run seeding. An unattended deployment can create the first admin
+    // without the interactive setup code; the values are consumed once and
+    // ignored afterwards. The password is never logged.
+    bootstrapAdmin: (() => {
+      const email = text(env, 'WFC_BOOTSTRAP_ADMIN_EMAIL');
+      const password = text(env, 'WFC_BOOTSTRAP_ADMIN_PASSWORD');
+      if (Boolean(email) !== Boolean(password)) {
+        throw new Error('WFC_BOOTSTRAP_ADMIN_EMAIL and WFC_BOOTSTRAP_ADMIN_PASSWORD must be configured together');
+      }
+      return email ? { email, password } : null;
+    })(),
     judgment: {
       enabled: flag(env, 'WFC_JUDGMENT_ENABLED', true),
       intervalMs: integer(env, 'WFC_JUDGMENT_INTERVAL_MS', 5 * 60 * 1000, { min: 30_000 }),
@@ -206,6 +226,7 @@ export function loadConfig(env = process.env) {
       enabled: flag(env, 'WFC_DIGEST_ENABLED', true),
       intervalMs: integer(env, 'WFC_DIGEST_INTERVAL_MS', 24 * 60 * 60 * 1000, { min: 60_000 }),
     },
+    bootstrapAdmin: bootstrapEmail ? { email: bootstrapEmail, password: bootstrapPassword } : null,
     llm: {
       enabled: flag(env, 'WFC_LLM_ENABLED'),
       baseUrl: text(env, 'WFC_LLM_BASE_URL') || 'https://api.openai.com/v1',

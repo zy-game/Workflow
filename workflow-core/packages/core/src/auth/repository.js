@@ -228,6 +228,19 @@ export class AuthRepository {
     return { token, expiresAt: new Date(now.getTime() + ttlMs).toISOString() };
   }
 
+  // Seeding from the environment: the operator proved server access by
+  // configuring the deployment, so no one-time code is needed. It still refuses
+  // once an active account exists, so the variables are safe to leave in place.
+  async seedFirstAdmin({ email, password }) {
+    const status = this.bootstrapStatus();
+    if (!status.needed) {
+      const error = new Error('setup is not available');
+      error.code = 'BOOTSTRAP_UNAVAILABLE';
+      throw error;
+    }
+    return this.#finishBootstrap(await this.createAccount({ email, password, role: 'admin' }));
+  }
+
   async completeBootstrap({ token, email, password }) {
     const status = this.bootstrapStatus();
     if (!status.needed) {
@@ -251,7 +264,10 @@ export class AuthRepository {
       error.code = 'BOOTSTRAP_CODE_INVALID';
       throw error;
     }
-    const account = await this.createAccount({ email, password, role: 'admin' });
+    return this.#finishBootstrap(await this.createAccount({ email, password, role: 'admin' }));
+  }
+
+  #finishBootstrap(account) {
     this.db.prepare('UPDATE bootstrap_state SET completed = 1, completed_at = ? WHERE singleton = 1')
       .run(new Date().toISOString());
     return account;

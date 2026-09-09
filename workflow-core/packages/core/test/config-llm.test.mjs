@@ -66,3 +66,11 @@ test('CLI args are accepted in both the JSON and shell-sourced form', () => {
   assert.deepEqual(json.llm.cli.args, ['/a/b.js', '--profile']);
   assert.deepEqual(bare.llm.cli.args, json.llm.cli.args);
 });
+
+test('bootstrap seeding requires both values or neither', () => {
+  const both = loadConfig({ ...base, WFC_BOOTSTRAP_ADMIN_EMAIL: 'a@b.com', WFC_BOOTSTRAP_ADMIN_PASSWORD: 'long-enough-123' });
+  assert.equal(both.bootstrapAdmin.email, 'a@b.com');
+  assert.equal(loadConfig({ ...base }).bootstrapAdmin, null);
+  assert.throws(() => loadConfig({ ...base, WFC_BOOTSTRAP_ADMIN_EMAIL: 'a@b.com' }), /must be configured together/);
+  assert.throws(() => loadConfig({ ...base, WFC_BOOTSTRAP_ADMIN_PASSWORD: 'long-enough-123' }), /must be configured together/);
+});
