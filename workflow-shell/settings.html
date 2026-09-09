@@ -6,7 +6,7 @@
 <style>
 :root{--bg:#0b0d12;--surface:#14171e;--surface-2:#1b1f27;--surface-3:#222732;--border:#262b35;--border-strong:#333a47;
 --text:#e7e9ee;--text-2:#9aa1ad;--text-3:#6b7280;--accent:#6c8cff;
---ok:#3fb950;--danger:#f85149;
+--ok:#3fb950;--ok-soft:rgba(63,185,80,.12);--danger:#f85149;
 --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;padding:24px;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.6}
@@ -20,18 +20,23 @@ p{margin:0 0 12px}
 input{width:100%;padding:8px 12px;border-radius:6px;border:1px solid var(--border-strong);
 background:var(--surface-2);color:var(--text);font-size:13px;font-family:inherit}
 input[readonly]{color:var(--text-2)}
-.row{display:flex;gap:8px;align-items:center}
-.row input{flex:1;min-width:0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 button{padding:8px 16px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface-2);
 color:var(--text);font-size:13px;font-family:inherit;cursor:pointer}
 button:hover{background:var(--surface-3)}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button:disabled{opacity:.5;cursor:not-allowed}
+.cli{border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px}
+.cli.active{border-color:var(--accent);background:var(--surface-2)}
+.cli-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.cli-head strong{flex:1;font-size:13px}
+.badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:var(--surface-3);color:var(--text-2)}
+.badge.ok{background:var(--ok-soft);color:var(--ok)}
 .status{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--text-3);flex-shrink:0}
 .dot.on{background:var(--ok)}
 .hint{font-size:12px;color:var(--text-3);margin-top:12px}
-.warn{color:var(--danger);font-size:12px;margin-top:8px}
+.warn{color:var(--danger);font-size:12px;margin-top:8px;white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace}
 </style>
 </head>
 <body>
@@ -40,13 +45,11 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
 <section class="card">
   <h2>执行引擎</h2>
-  <p class="muted">本机跑任务用的 CLI。比如你在本机装了 Codex，就选它的可执行文件。</p>
-  <div class="row">
-    <input id="cli" readonly placeholder="还没有选择">
-    <button id="choose">选择…</button>
-  </div>
-  <label class="field" style="margin-top:12px"><span>参数（可选，用 | 分隔）</span>
-    <input id="args" placeholder="--flag value"></label>
+  <p class="muted">选一个 CLI，客户端负责装好它并填好参数，不用自己找路径。</p>
+  <div id="catalog"></div>
+  <div id="params"></div>
+  <label class="field"><span>桥接脚本</span><input id="cli" readonly placeholder="还没有选择"></label>
+  <label class="field"><span>额外参数（用 | 分隔）</span><input id="args" placeholder="--flag value"></label>
 </section>
 
 <section class="card">
@@ -75,7 +78,90 @@ button:disabled{opacity:.5;cursor:not-allowed}
 (function () {
   var api = window.workflowDesktop;
   function el(id) { return document.getElementById(id); }
-  var state = { backendCommand: '' };
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  var catalog = [];
+  var selected = null;
+  var paramValues = {};
+
+  function renderCatalog() {
+    el('catalog').innerHTML = catalog.map(function (entry) {
+      var active = selected && selected.id === entry.id ? ' active' : '';
+      return '<div class="cli' + active + '">' +
+        '<div class="cli-head"><strong>' + esc(entry.label) + '</strong>' +
+          '<span class="badge' + (entry.installed ? ' ok' : '') + '">' +
+          (entry.installed ? '已安装' : '未安装') + '</span></div>' +
+        '<div class="muted">' + esc(entry.description) + '</div>' +
+        '<div class="row" style="margin-top:8px">' +
+          '<button data-install="' + esc(entry.id) + '"' + (entry.installed ? ' disabled' : '') + '>一键安装</button>' +
+          '<button class="primary" data-use="' + esc(entry.id) + '">选用</button>' +
+        '</div></div>';
+    }).join('') || '<div class="muted">没有可用的 CLI。</div>';
+  }
+
+  function renderParams() {
+    if (!selected) { el('params').innerHTML = ''; return; }
+    el('params').innerHTML = selected.params.map(function (param) {
+      return '<label class="field"><span>' + esc(param.label) + '</span>' +
+        '<input data-param="' + esc(param.flag) + '" placeholder="' + esc(param.placeholder) + '" value="' +
+        esc(paramValues[param.flag] || '') + '"></label>';
+    }).join('');
+  }
+
+  function selectCli(id) {
+    var entry = catalog.filter(function (item) { return item.id === id; })[0];
+    if (!entry) return;
+    selected = entry;
+    paramValues = {};
+    el('cli').value = entry.bridgePath;
+    renderCatalog();
+    renderParams();
+    el('hint').textContent = '已选用 ' + entry.label + '，点保存生效。';
+  }
+
+  // Turn the chosen CLI plus its parameter values into the Worker's JSONL args:
+  // the bridge first, then each flag, then anything typed by hand.
+  function buildArgs() {
+    if (!selected) return [];
+    var args = [selected.bridgePath];
+    selected.params.forEach(function (param) {
+      var value = String(paramValues[param.flag] || '').trim();
+      if (value) args.push(param.flag, value);
+    });
+    String(el('args').value || '').split('|').map(function (item) { return item.trim(); })
+      .filter(Boolean).forEach(function (item) { args.push(item); });
+    return args;
+  }
+
+  // Recover the selection from saved args so reopening the window shows the
+  // same CLI and parameter values instead of an empty form.
+  function restore(savedArgs) {
+    var args = Array.isArray(savedArgs) ? savedArgs.slice() : [];
+    selected = catalog.filter(function (entry) { return entry.bridgePath === args[0]; })[0] || null;
+    paramValues = {};
+    if (!selected) { renderCatalog(); renderParams(); return; }
+    var known = {};
+    selected.params.forEach(function (param) { known[param.flag] = true; });
+    var extra = [];
+    for (var index = 1; index < args.length; index += 1) {
+      var flag = args[index];
+      var next = args[index + 1];
+      if (known[flag] && next !== undefined && String(next).charAt(0) !== '-') {
+        paramValues[flag] = next;
+        index += 1;
+      } else {
+        extra.push(flag);
+      }
+    }
+    el('cli').value = selected.bridgePath;
+    el('args').value = extra.join(' | ');
+    renderCatalog();
+    renderParams();
+  }
 
   function renderStatus(executor, hasToken) {
     var running = Boolean(executor && executor.running);
@@ -94,22 +180,41 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
   function refresh() {
     return api.settings.get().then(function (settings) {
-      state.backendCommand = settings.backendCommand || '';
-      el('cli').value = state.backendCommand;
-      el('args').value = (settings.backendArgs || []).join(' | ');
       el('serverUrl').value = settings.serverUrl || '';
       el('workerId').value = settings.workerId || '';
+      restore(settings.backendArgs || []);
       renderStatus(settings.executor, settings.hasToken);
     }).catch(function (error) { el('error').textContent = error.message; });
   }
 
-  el('choose').addEventListener('click', function () {
-    api.settings.chooseCli().then(function (picked) {
-      if (!picked) return;
-      state.backendCommand = picked;
-      el('cli').value = picked;
-      el('hint').textContent = '已选择，点保存生效。';
-    });
+  function refreshCatalog() {
+    return api.settings.catalog().then(function (items) {
+      catalog = items || [];
+      renderCatalog();
+    }).catch(function (error) { el('error').textContent = error.message; });
+  }
+
+  function installCli(id) {
+    el('error').textContent = '';
+    el('hint').textContent = '正在安装，可能要一两分钟…';
+    api.settings.installCli(id).then(function (result) {
+      el('hint').textContent = result.ok ? '安装完成。' : '安装失败。';
+      if (!result.ok) el('error').textContent = result.output || '';
+      return refreshCatalog();
+    }).catch(function (error) { el('error').textContent = error.message; });
+  }
+
+  el('catalog').addEventListener('click', function (event) {
+    var install = event.target.closest ? event.target.closest('[data-install]') : null;
+    if (install) return installCli(install.dataset.install);
+    var use = event.target.closest ? event.target.closest('[data-use]') : null;
+    if (use) return selectCli(use.dataset.use);
+    return undefined;
+  });
+
+  el('params').addEventListener('input', function (event) {
+    var field = event.target;
+    if (field && field.dataset && field.dataset.param) paramValues[field.dataset.param] = field.value;
   });
 
   el('save').addEventListener('click', function () {
@@ -118,8 +223,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
     api.settings.save({
       serverUrl: el('serverUrl').value,
       workerId: el('workerId').value,
-      backendCommand: state.backendCommand,
-      backendArgs: el('args').value.split('|').map(function (item) { return item.trim(); }).filter(Boolean),
+      backendCommand: null,
+      backendArgs: buildArgs(),
     }).then(function () {
       el('hint').textContent = '已保存，执行器已按新配置重启。';
       return refresh();
@@ -134,7 +239,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
     api.executor.stop().then(function () { el('hint').textContent = '已停止。'; return refresh(); });
   });
 
-  refresh();
+  refreshCatalog().then(refresh);
   setInterval(refresh, 5000);
 })();
 </script>

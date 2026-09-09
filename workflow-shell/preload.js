@@ -17,7 +17,8 @@ contextBridge.exposeInMainWorld('workflowDesktop', {
   settings: {
     get: () => ipcRenderer.invoke('workflow:settings-get'),
     save: (patch) => ipcRenderer.invoke('workflow:settings-save', patch),
-    chooseCli: () => ipcRenderer.invoke('workflow:choose-cli'),
+    catalog: () => ipcRenderer.invoke('workflow:cli-catalog'),
+    installCli: (id) => ipcRenderer.invoke('workflow:install-cli', id),
   },
   // The local executor: status only.
   executor: {

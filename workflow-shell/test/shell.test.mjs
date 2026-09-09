@@ -30,21 +30,28 @@ test('the console stays the main surface and local settings stay local', () => {
   assert.match(main, /WORKFLOW_SERVER_URL \|\| 'https:\/\/139\.155\.78\.241:8710'/);
   // The shell must not ship a second console.
   assert.ok(!fs.existsSync(path.join(root, '../index.html')), 'the shell must not ship its own console page');
-  // The local settings page exists because picking a local executable is
-  // something a server-hosted page must never be able to do.
+  // The local settings page exists because choosing and configuring an engine
+  // is something a server-hosted page must never be able to do.
   const settings = fs.readFileSync(path.join(root, '../settings.html'), 'utf8');
-  assert.match(settings, /id="cli"/, 'the settings page must offer the executor CLI');
-  assert.match(settings, /id="choose"/, 'the settings page must offer a picker');
+  assert.match(settings, /id="catalog"/, 'the settings page must offer the CLI catalog');
+  assert.match(settings, /data-install=/, 'a catalog entry must be installable');
+  assert.match(settings, /data-use=/, 'a catalog entry must be selectable');
+  assert.match(settings, /id="cli"/, 'the settings page must show the chosen bridge');
   assert.ok(!/console/i.test(settings), 'the settings page must not reimplement the console');
 });
 
-test('picking the executor CLI uses a native file dialog', () => {
-  assert.match(main, /dialog\.showOpenDialog/);
-  assert.match(main, /properties: \['openFile'\]/);
-  assert.match(main, /extensions: \['exe', 'cmd', 'bat'\]/);
-  // The chosen path is what the executor runs.
-  assert.match(main, /backendCommand: config\.backendCommand/);
-  assert.match(main, /workflow:choose-cli/);
+test('the CLI catalog installs and presets an engine instead of asking for a path', () => {
+  assert.match(main, /const CLI_CATALOG = \[/);
+  assert.match(main, /'@openai\/codex'/, 'Codex CLI must be offered');
+  assert.match(main, /'@oh-my-pi\/pi-coding-agent'/, 'OMP must be offered');
+  assert.match(main, /codex-bridge\.mjs/);
+  assert.match(main, /omp-json-bridge\.mjs/);
+  // One-click install runs npm against the catalog package.
+  assert.match(main, /execFile\(npm, \['install', '-g', entry\.package\]/);
+  // The catalog reports what the bridge will actually find.
+  assert.match(main, /npm', 'node_modules'\)/);
+  // The command is derived, never typed: a hand-written path cannot break it.
+  assert.match(main, /next\.backendCommand = next\.backendArgs\.length/);
 });
 
 test('the settings window never receives the credential', () => {
@@ -56,13 +63,14 @@ test('the settings window never receives the credential', () => {
   assert.match(handler, /publicConfig\(\)/, 'the response must come from the redacted view');
 });
 
-test('the settings page renders what the main process reports', async () => {
+test('the settings page renders the catalog and the saved engine', async () => {
   const html = fs.readFileSync(path.join(root, '../settings.html'), 'utf8');
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const bridge = 'C:/app/resources/workflow-core/packages/worker/bin/omp-json-bridge.mjs';
   const elements = new Map();
   const element = (id) => {
     if (!elements.has(id)) {
-      elements.set(id, { id, value: '', textContent: '', className: '', disabled: false, addEventListener() {} });
+      elements.set(id, { id, value: '', textContent: '', innerHTML: '', className: '', disabled: false, addEventListener() {} });
     }
     return elements.get(id);
   };
@@ -76,13 +84,25 @@ test('the settings page renders what the main process reports', async () => {
           get: async () => ({
             serverUrl: 'https://core.example:8710',
             workerId: 'worker-test',
-            backendCommand: 'C:/tools/codex.exe',
-            backendArgs: ['--flag'],
+            backendCommand: 'node',
+            backendArgs: [bridge, '--model', 'deepseek/x'],
             hasToken: true,
             executor: { running: false, pid: null, restarts: 0, lastError: null },
           }),
           save: async () => ({ ok: true }),
-          chooseCli: async () => null,
+          catalog: async () => ([
+            {
+              id: 'omp', label: 'OMP（oh-my-pi）', description: 'oh-my-pi', package: '@oh-my-pi/pi-coding-agent',
+              installed: true, bridgePath: bridge,
+              params: [{ flag: '--model', label: '模型', placeholder: 'x' }],
+            },
+            {
+              id: 'codex', label: 'Codex CLI', description: 'codex', package: '@openai/codex',
+              installed: false, bridgePath: 'C:/app/resources/workflow-core/packages/worker/bin/codex-bridge.mjs',
+              params: [{ flag: '--model', label: '模型', placeholder: 'gpt-5-codex' }],
+            },
+          ]),
+          installCli: async () => ({ ok: true, output: '' }),
         },
         executor: { start: async () => ({}), stop: async () => ({}) },
       },
@@ -91,9 +111,13 @@ test('the settings page renders what the main process reports', async () => {
   vm.runInNewContext(script, sandbox, { filename: 'settings-inline.js' });
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(element('cli').value, 'C:/tools/codex.exe', 'the configured CLI must be shown');
-  assert.equal(element('args').value, '--flag', 'the configured args must be shown');
+  assert.match(element('catalog').innerHTML, /OMP（oh-my-pi）/, 'the catalog is listed');
+  assert.match(element('catalog').innerHTML, /已安装/, 'installed state is shown');
+  assert.match(element('catalog').innerHTML, /未安装/, 'a missing CLI is shown as such');
+  assert.equal(element('cli').value, bridge, 'the saved bridge is recognised and shown');
+  assert.match(element('params').innerHTML, /data-param="--model"/, 'the saved CLI keeps its parameter field');
   assert.equal(element('serverUrl').value, 'https://core.example:8710');
   assert.equal(element('workerId').value, 'worker-test');
   assert.match(element('state').textContent, /已停止/);

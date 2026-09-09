@@ -10,6 +10,9 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 const MAX_LINE_BYTES = 1024 * 1024;
+// Extra arguments come from WFC_JSONL_ARGS after the bridge path, so a
+// configured executor can set things like --model without editing this file.
+const EXTRA_ARGS = process.argv.slice(2);
 
 function codexEntry() {
   const candidates = [
@@ -30,7 +33,7 @@ function runTurn({ task, prompt, sessionRef }) {
     out({ type: 'error', error: 'codex entry not found in npm global tree' });
     return null;
   }
-  const args = [entry, 'exec', '--json', '--skip-git-repo-check'];
+  const args = [entry, 'exec', '--json', '--skip-git-repo-check', ...EXTRA_ARGS];
   args.push(String(prompt || task?.brief?.goal || task?.type || ''));
   const child = spawn(process.execPath, args, {
     stdio: ['pipe', 'pipe', 'pipe'],

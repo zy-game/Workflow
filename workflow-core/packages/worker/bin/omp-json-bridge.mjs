@@ -10,6 +10,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 const MAX_LINE_BYTES = 1024 * 1024;
+// Extra arguments come from WFC_JSONL_ARGS after the bridge path. They are
+// appended last so a configured executor can override the built-in model or
+// profile without editing this file.
+const EXTRA_ARGS = process.argv.slice(2);
 
 function ompEntry() {
   const candidates = [
@@ -42,7 +46,7 @@ function runTurn({ task, prompt }) {
     out({ type: 'error', error: 'omp executable not found' });
     return null;
   }
-  const args = [cli, '-p', '--mode', 'json', '--profile', 'wfc-worker', '--model', 'deepseek/deepseek-v4-flash-vision-exp'];
+  const args = [cli, '-p', '--mode', 'json', '--profile', 'wfc-worker', '--model', 'deepseek/deepseek-v4-flash-vision-exp', ...EXTRA_ARGS];
   args.push(String(prompt || task?.brief?.goal || task?.type || ''));
   const child = spawn(bun, args, {
     stdio: ['ignore', 'pipe', 'pipe'],

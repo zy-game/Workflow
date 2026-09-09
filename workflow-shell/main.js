@@ -5,8 +5,10 @@
 // native notifications, and a process that keeps running so the assistant can
 // reach the user on this machine.
 const os = require('node:os');
+const fs = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, powerMonitor, safeStorage, shell } = require('electron');
+const { execFile } = require('node:child_process');
+const { app, BrowserWindow, Menu, Notification, Tray, ipcMain, nativeImage, powerMonitor, safeStorage, shell } = require('electron');
 const { createConfigStore } = require('./lib/config.js');
 const { createExecutor } = require('./lib/executor.js');
 
@@ -128,6 +130,50 @@ const WORKER_ENTRY = process.env.WORKFLOW_WORKER_ENTRY
 // user which worker id to request instead of inventing one silently.
 const DEFAULT_WORKER_ID = `worker-${os.hostname()}`;
 
+// The execution engines the client can set up by itself. Each entry is a CLI the
+// Worker's bridges already know how to drive, so choosing one here fills in the
+// command, the bridge and the flags instead of asking for a path and an order.
+const CLI_CATALOG = [
+  {
+    id: 'codex',
+    label: 'Codex CLI',
+    description: 'OpenAI Codex，经 codex exec --json 驱动。',
+    package: '@openai/codex',
+    bridge: 'codex-bridge.mjs',
+    params: [{ flag: '--model', label: '模型', placeholder: 'gpt-5-codex' }],
+  },
+  {
+    id: 'omp',
+    label: 'OMP（oh-my-pi）',
+    description: 'oh-my-pi，经 omp -p --mode json 驱动。',
+    package: '@oh-my-pi/pi-coding-agent',
+    bridge: 'omp-json-bridge.mjs',
+    params: [
+      { flag: '--model', label: '模型', placeholder: 'deepseek/deepseek-v4-flash-vision-exp' },
+      { flag: '--profile', label: 'profile', placeholder: 'wfc-worker' },
+    ],
+  },
+];
+
+function bridgePath(name) {
+  return path.join(WORKER_BASE, 'workflow-core', 'packages', 'worker', 'bin', name);
+}
+
+// "Installed" means present in the npm global tree the bridges look in, so the
+// status shown here matches what the bridge will actually find.
+function cliCatalog() {
+  const globalRoot = path.join(process.env.APPDATA || '', 'npm', 'node_modules');
+  return CLI_CATALOG.map((entry) => ({
+    id: entry.id,
+    label: entry.label,
+    description: entry.description,
+    package: entry.package,
+    params: entry.params,
+    installed: fs.existsSync(path.join(globalRoot, ...entry.package.split('/'))),
+    bridgePath: bridgePath(entry.bridge),
+  }));
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -211,27 +257,29 @@ app.whenReady().then(() => {
     const next = {};
     if (typeof patch?.serverUrl === 'string' && patch.serverUrl.trim()) next.serverUrl = patch.serverUrl.trim().replace(/\/+$/, '');
     if (typeof patch?.workerId === 'string' && patch.workerId.trim()) next.workerId = patch.workerId.trim();
-    next.backendCommand = typeof patch?.backendCommand === 'string' && patch.backendCommand.trim() ? patch.backendCommand.trim() : null;
     next.backendArgs = Array.isArray(patch?.backendArgs) ? patch.backendArgs.map(String).filter(Boolean) : [];
+    // The command is always the Node runtime that runs the bridge; the window
+    // never has to know it, and a hand-typed path cannot break it.
+    next.backendCommand = next.backendArgs.length ? (process.env.WORKFLOW_NODE_BIN || 'node') : null;
     configStore.write(next);
     // A running executor would otherwise keep the engine it started with.
     const restarted = executor.isRunning();
     if (restarted) { executor.stop(); startExecutor(); }
     return { ok: true, restarted };
   });
-  ipcMain.handle('workflow:choose-cli', async () => {
-    const options = {
-      title: '选择执行引擎 CLI',
-      properties: ['openFile'],
-      filters: process.platform === 'win32'
-        ? [{ name: '可执行文件', extensions: ['exe', 'cmd', 'bat'] }, { name: '所有文件', extensions: ['*'] }]
-        : [],
-    };
-    const parent = settingsWindow ?? mainWindow ?? null;
-    const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+  ipcMain.handle('workflow:cli-catalog', () => cliCatalog());
+  // One-click install of a catalog entry. The output is returned rather than
+  // streamed so the window can show the tail in one place.
+  ipcMain.handle('workflow:install-cli', async (_event, id) => {
+    const entry = CLI_CATALOG.find((item) => item.id === id);
+    if (!entry) throw new Error(`unknown cli: ${id}`);
+    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    return await new Promise((resolve) => {
+      execFile(npm, ['install', '-g', entry.package], { timeout: 600_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+        resolve({ ok: !error, output: String(error ? (stderr || error.message) : stdout).slice(-4000) });
+      });
+    });
   });
-
   createTray();
   // A provisioned token makes this machine an executor node without further
   // action: the point of the shell is to be reachable.
