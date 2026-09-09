@@ -1,9 +1,9 @@
 // console/app.js - the Workflow console, served by Core at /console.
 //
-// No build step and no external assets: the same design tokens as
-// docs/design/console-mockup.html, wired to the real API with plain DOM code.
-// The page itself is public like /admin; every API call it makes requires the
-// user's own session.
+// No build step and no external assets: the same design tokens and sidebar
+// layout as docs/design/console-mockup.html, wired to the real API with plain
+// DOM code. The page itself is public like /admin; every API call it makes
+// requires the user's own session.
 export const CONSOLE_HTML = `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="dark">
 <head>
@@ -25,10 +25,10 @@ export const CONSOLE_HTML = `<!DOCTYPE html>
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
 * { box-sizing:border-box; }
-html,body { margin:0; min-height:100%; background:var(--bg); color:var(--text);
+html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
   font-family:var(--font); font-size:14px; line-height:1.6; -webkit-font-smoothing:antialiased; }
 button { font-family:inherit; font-size:14px; cursor:pointer; }
-input { font-family:inherit; }
+input,textarea { font-family:inherit; }
 .btn { padding:var(--s2) var(--s4); border-radius:var(--r-btn); border:1px solid var(--border-strong);
   background:var(--surface-2); color:var(--text); transition:background .15s ease; }
 .btn:hover { background:var(--surface-3); }
@@ -36,6 +36,8 @@ input { font-family:inherit; }
 .btn-primary:hover { filter:brightness(1.08); }
 .btn-danger { background:var(--danger-soft); border-color:var(--danger); color:var(--danger); }
 .btn-ghost { background:transparent; border-color:transparent; color:var(--text-2); }
+.btn-ghost:hover { background:var(--surface-2); color:var(--text); }
+.btn-sm { padding:2px var(--s2); font-size:12px; }
 .btn:disabled { opacity:.5; cursor:not-allowed; }
 .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-card); padding:var(--s4); }
 .card + .card { margin-top:var(--s3); }
@@ -47,16 +49,51 @@ input { font-family:inherit; }
 .badge-muted { background:var(--surface-3); color:var(--text-2); }
 .mono { font-family:var(--mono); font-size:12px; }
 .muted { color:var(--text-3); }
-.center { min-height:100vh; display:grid; place-items:center; padding:var(--s5); }
-.shell { max-width:820px; margin:0 auto; padding:var(--s5); }
-.topbar { display:flex; align-items:center; gap:var(--s3); margin-bottom:var(--s5); }
-.topbar h1 { font-size:16px; font-weight:600; margin:0; }
 .spacer { flex:1; }
+.center { min-height:100vh; display:grid; place-items:center; padding:var(--s5); }
 .field { display:block; margin-bottom:var(--s3); }
 .field span { display:block; font-size:12px; color:var(--text-3); margin-bottom:var(--s1); }
-.field input { width:100%; padding:var(--s2) var(--s3); border-radius:var(--r-btn);
+.field input, .field textarea { width:100%; padding:var(--s2) var(--s3); border-radius:var(--r-btn);
   border:1px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:14px; }
+.field textarea { min-height:76px; resize:vertical; }
 .error { color:var(--danger); font-size:13px; margin-top:var(--s2); }
+.section-title { font-size:12px; font-weight:600; letter-spacing:.4px; color:var(--text-3);
+  text-transform:uppercase; margin:0 0 var(--s3); }
+.section-title + .section-title { margin-top:var(--s5); }
+
+/* 布局：左侧边栏 + 主区 */
+.app { display:flex; height:100vh; overflow:hidden; }
+.sidebar { width:232px; flex-shrink:0; background:var(--surface); border-right:1px solid var(--border);
+  display:flex; flex-direction:column; overflow-y:auto; }
+.brand { display:flex; align-items:center; gap:var(--s3); padding:var(--s5) var(--s4) var(--s4); }
+.brand-mark { width:26px; height:26px; border-radius:7px; background:linear-gradient(140deg,var(--accent),#9a6cff);
+  display:grid; place-items:center; color:#fff; flex-shrink:0; }
+.brand-name { font-size:15px; font-weight:600; letter-spacing:.2px; }
+.brand-sub { font-size:12px; color:var(--text-3); line-height:1.2; }
+.nav-group { padding:var(--s3) var(--s2); }
+.nav-label { font-size:12px; color:var(--text-3); padding:0 var(--s3) var(--s2); letter-spacing:.4px; }
+.nav-item { display:flex; align-items:center; gap:var(--s3); padding:var(--s2) var(--s3);
+  border-radius:var(--r-btn); color:var(--text-2); cursor:pointer; border:none; background:none;
+  width:100%; text-align:left; font-family:inherit; font-size:14px;
+  transition:background .15s ease, color .15s ease; }
+.nav-item:hover { background:var(--surface-2); color:var(--text); }
+.nav-item[aria-current="page"] { background:var(--accent-soft); color:var(--text); font-weight:500; }
+.nav-item[aria-current="page"] svg { color:var(--accent); }
+.nav-item svg { color:var(--text-3); flex-shrink:0; }
+.nav-badge { margin-left:auto; background:var(--danger); color:#fff; font-size:11px; font-weight:600;
+  min-width:18px; height:18px; padding:0 5px; border-radius:9px; display:grid; place-items:center; }
+.sidebar-foot { margin-top:auto; padding:var(--s4); border-top:1px solid var(--border); }
+.presence { display:flex; align-items:center; gap:var(--s2); font-size:12px; color:var(--text-2); }
+.dot { width:7px; height:7px; border-radius:50%; background:var(--ok); flex-shrink:0; }
+.dot.off { background:var(--text-3); }
+.main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+.topbar { height:56px; flex-shrink:0; border-bottom:1px solid var(--border); background:var(--surface);
+  display:flex; align-items:center; gap:var(--s3); padding:0 var(--s5); }
+.topbar h1 { font-size:16px; font-weight:600; margin:0; }
+.content { flex:1; overflow-y:auto; padding:var(--s5); }
+.inner { max-width:980px; }
+
+/* 提案 */
 .proposal { border-left:3px solid var(--accent); }
 .proposal.rejected { border-left-color:var(--danger); opacity:.72; }
 .proposal.approved { border-left-color:var(--ok); }
@@ -75,24 +112,48 @@ input { font-family:inherit; }
 .draft { margin-top:var(--s3); padding:var(--s3); background:var(--surface-2);
   border-radius:var(--r-btn); font-size:13px; white-space:pre-wrap; }
 .actions { display:flex; gap:var(--s2); margin-top:var(--s4); align-items:center; }
-.section-title { font-size:12px; font-weight:600; letter-spacing:.4px; color:var(--text-3);
-  text-transform:uppercase; margin:0 0 var(--s3); }
-.btn-sm { padding: 2px var(--s2); font-size: 12px; }
-.tree-item { padding: 2px var(--s2); border-radius: 5px; color: var(--text-2); cursor: pointer; font-size: 13px; }
-.tree-item:hover { background: var(--surface-2); color: var(--text); }
-.tree-item.active { background: rgba(108,140,255,.12); color: var(--text); }
-.memory-grid { display: grid; grid-template-columns: 240px 1fr; gap: var(--s3); align-items: start; }
-.file-head { padding-bottom: var(--s3); border-bottom: 1px solid var(--border); margin-bottom: var(--s3); }
-.file-body { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
-.history-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) 0; border-bottom: 1px solid var(--border); }
-.history-row:last-child { border-bottom: none; }
-.history-row .muted { flex: 1; }
-.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s3); }
-.metric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: var(--s4); }
-.metric .k { font-size: 12px; color: var(--text-3); }
-.metric .v { font-size: 24px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
-.metric .d { font-size: 12px; margin-top: 2px; }
-@media (max-width:640px) { .shell { padding:var(--s4); } .actions { flex-wrap:wrap; } .memory-grid { grid-template-columns: 1fr; } .metrics { grid-template-columns: 1fr 1fr; } }
+
+/* 指标与列表 */
+.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:var(--s3); }
+.metric { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-card); padding:var(--s4); }
+.metric .k { font-size:12px; color:var(--text-3); }
+.metric .v { font-size:24px; font-weight:600; margin-top:2px; font-variant-numeric:tabular-nums; }
+.metric .d { font-size:12px; margin-top:2px; }
+.list-row { display:flex; align-items:center; gap:var(--s3); padding:var(--s3) 0; border-bottom:1px solid var(--border); }
+.list-row:last-child { border-bottom:none; }
+.list-row .grow { flex:1; min-width:0; }
+.list-row .grow .sub { font-size:12px; color:var(--text-3); }
+.kv { display:grid; grid-template-columns:104px 1fr; gap:var(--s1) var(--s3); font-size:13px; }
+.kv .k { color:var(--text-3); }
+
+/* 记忆 */
+.tree-item { padding:2px var(--s2); border-radius:5px; color:var(--text-2); cursor:pointer; font-size:13px; }
+.tree-item:hover { background:var(--surface-2); color:var(--text); }
+.tree-item.active { background:var(--accent-soft); color:var(--text); }
+.memory-grid { display:grid; grid-template-columns:240px 1fr; gap:var(--s3); align-items:start; }
+.file-head { padding-bottom:var(--s3); border-bottom:1px solid var(--border); margin-bottom:var(--s3); }
+.file-body { margin:0; white-space:pre-wrap; word-break:break-word; font-family:var(--mono); font-size:12px; color:var(--text-2); }
+.history-row { display:flex; align-items:center; gap:var(--s3); padding:var(--s2) 0; border-bottom:1px solid var(--border); }
+.history-row:last-child { border-bottom:none; }
+.history-row .muted { flex:1; }
+
+/* 对话 */
+.thread { display:flex; flex-direction:column; gap:var(--s3); }
+.bubble { padding:var(--s3); border-radius:var(--r-card); font-size:13px; white-space:pre-wrap; }
+.bubble.me { background:var(--accent-soft); align-self:flex-end; max-width:80%; }
+.bubble.it { background:var(--surface); border:1px solid var(--border); }
+.bubble .meta { font-size:11px; color:var(--text-3); margin-top:var(--s2); }
+
+@media (max-width:720px) {
+  .app { flex-direction:column; height:auto; min-height:100vh; }
+  .sidebar { width:100%; flex-direction:row; align-items:center; overflow-x:auto; border-right:none; border-bottom:1px solid var(--border); }
+  .brand, .nav-label, .sidebar-foot { display:none; }
+  .nav-group { display:flex; padding:var(--s2); }
+  .nav-item { white-space:nowrap; }
+  .content { padding:var(--s4); }
+  .memory-grid { grid-template-columns:1fr; }
+  .actions { flex-wrap:wrap; }
+}
 </style>
 </head>
 <body>
@@ -100,13 +161,34 @@ input { font-family:inherit; }
 <script>
 (function () {
   var TOKEN_KEY = 'workflow.console.token';
+  var TOUCHPOINT_KEY = 'workflow.console.touchpoint';
   var root = document.getElementById('root');
+
+  var ICON = {
+    logo: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.5 4.5v9L12 21l-7.5-4.5v-9L12 3z"/><path d="M12 12l7.5-4.5M12 12v9M12 12L4.5 7.5"/></svg>',
+    today: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    proposal: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 5h16v11H8l-4 3V5z"/></svg>',
+    commitment: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 5h9a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h3z"/><path d="M9 3v4M9 12l2 2 3-3"/></svg>',
+    chat: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 12a8 8 0 01-8 8H7l-4 3V12a8 8 0 018-8h2a8 8 0 018 8z"/></svg>',
+    memory: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V6z"/></svg>',
+    task: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>',
+    node: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/></svg>',
+    sync: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 12a8 8 0 0113-6M20 12a8 8 0 01-13 6"/><path d="M17 3v3h-3M7 21v-3h3"/></svg>',
+    reply: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 015 5v6"/></svg>',
+    checkup: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 12h4l2-6 3 12 2-6h7"/></svg>'
+  };
+
   var state = {
-    view: 'proposals', proposals: [], loading: false, error: '', busy: '', loginError: '', busyLogin: false,
-    memory: { tree: [], path: null, content: '', history: [], error: '' },
-    replies: { items: [], error: '' },
-    checkup: { metrics: null, suggestions: [], error: '', busy: '' },
+    view: 'today',
+    loading: false, error: '', busy: '',
+    loginError: '', busyLogin: false,
     setup: { needed: false, error: '', busy: false },
+    proposals: [], commitments: [], tasks: [], replies: [], digest: [],
+    peers: [], sync: null, cursors: [],
+    presence: null,
+    memory: { tree: [], path: null, content: '', history: [], error: '' },
+    checkup: { metrics: null, suggestions: [], error: '', busy: '' },
+    chat: { items: [], error: '', busy: false },
     notifiedCount: 0,
   };
   var timer = null;
@@ -119,14 +201,23 @@ input { font-family:inherit; }
   function token() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
   function setToken(value) {
     try { if (value) localStorage.setItem(TOKEN_KEY, value); else localStorage.removeItem(TOKEN_KEY); } catch (e) {}
-    state.proposals = []; state.error = '';
+    state.proposals = []; state.error = ''; state.view = 'today';
     render();
     if (value) load();
+  }
+  function when(value) {
+    if (!value) return '—';
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return String(value);
+    var diff = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (diff < 60) return diff <= 0 ? '刚刚' : diff + ' 秒前';
+    if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+    return Math.floor(diff / 86400) + ' 天前';
   }
 
   // Presence: this tab reports its own facts; the server decides who is most
   // likely in front of the user.
-  var TOUCHPOINT_KEY = 'workflow.console.touchpoint';
   function touchpointId() {
     try {
       var id = sessionStorage.getItem(TOUCHPOINT_KEY);
@@ -148,13 +239,14 @@ input { font-family:inherit; }
     bucket.then(function (value) {
       return api('/api/v1/presence', {
         method: 'POST',
-        body: {
-          touchpoint_id: touchpointId(),
-          kind: desktop ? 'desktop' : 'browser',
-          idle_bucket: value,
-        },
+        body: { touchpoint_id: touchpointId(), kind: desktop ? 'desktop' : 'browser', idle_bucket: value },
       });
-    }).catch(function () { /* presence is best effort */ });
+    }).then(loadPresence).catch(function () { /* presence is best effort */ });
+  }
+  function loadPresence() {
+    return api('/api/v1/presence').then(function (result) {
+      state.presence = result; render();
+    }).catch(function () { /* the footer just stays unknown */ });
   }
 
   // A native notification is the one thing a closed tab cannot do.
@@ -165,10 +257,7 @@ input { font-family:inherit; }
     if (!desktop || !desktop.notify) return;
     if (pending.length <= (state.notifiedCount || 0)) return;
     state.notifiedCount = pending.length;
-    desktop.notify({
-      title: 'Workflow：' + pending.length + ' 条待决策',
-      body: pending[0].title,
-    });
+    desktop.notify({ title: 'Workflow：' + pending.length + ' 条待决策', body: pending[0].title });
   }
 
   function api(path, options) {
@@ -191,10 +280,11 @@ input { font-family:inherit; }
     });
   }
 
+  // --- 加载器 ---
   function load() {
-    if (!token()) return;
+    if (!token()) return Promise.resolve();
     state.loading = true; state.error = ''; render();
-    api('/api/v1/proposals?state=pending')
+    return api('/api/v1/proposals?state=pending')
       .then(function (result) {
         state.proposals = result.proposals || [];
         notifyIfMorePending(state.proposals);
@@ -202,10 +292,101 @@ input { font-family:inherit; }
       .catch(function (err) { state.error = err.message || String(err); })
       .then(function () { state.loading = false; render(); });
   }
+  function loadCommitments() {
+    return api('/api/v1/commitments?state=active').then(function (result) {
+      state.commitments = result.commitments || []; render();
+    }).catch(function (err) { state.error = err.message || String(err); render(); });
+  }
+  function loadTasks() {
+    return api('/api/v1/tasks?limit=50').then(function (result) {
+      state.tasks = result.tasks || []; render();
+    }).catch(function (err) { state.error = err.message || String(err); render(); });
+  }
+  function loadNodes() {
+    return api('/api/v1/admin/peers').then(function (result) {
+      state.peers = result.peers || []; state.cursors = result.cursors || []; render();
+    }).catch(function (err) { state.error = err.message || String(err); render(); });
+  }
+  function loadSync() {
+    return api('/api/v1/admin/peer-sync').then(function (result) {
+      state.sync = result.sync || null; state.cursors = result.cursors || []; render();
+    }).catch(function (err) { state.error = err.message || String(err); render(); });
+  }
+  function loadReplies() {
+    return api('/api/v1/replies?limit=100').then(function (result) {
+      state.replies = result.replies || []; render();
+    }).catch(function (err) { state.error = err.message || String(err); render(); });
+  }
+  function loadDigest() {
+    return api('/api/v1/digest/pending').then(function (result) {
+      state.digest = result.commitments || []; render();
+    }).catch(function () { /* the digest is optional on the overview */ });
+  }
+  function loadToday() {
+    state.error = ''; render();
+    return Promise.all([load(), loadCommitments(), loadDigest(), loadReplies(), loadPresence()]);
+  }
 
-  function secondsLeft(deadline) {
-    if (!deadline) return null;
-    return Math.max(0, Math.floor((new Date(deadline).getTime() - Date.now()) / 1000));
+  // --- 骨架 ---
+  function navItem(view, label, icon, badge) {
+    var active = state.view === view ? ' aria-current="page"' : '';
+    return '<button class="nav-item"' + active + ' data-nav="' + view + '">' + icon +
+      '<span>' + label + '</span>' +
+      (badge ? '<span class="nav-badge">' + badge + '</span>' : '') + '</button>';
+  }
+  function presenceHtml() {
+    var presence = state.presence;
+    var live = presence && presence.online ? presence.online : [];
+    var active = presence && presence.active ? presence.active : null;
+    if (!live.length) return '<div class="presence"><span class="dot off"></span><span>不在场</span></div>';
+    var label = active
+      ? '在场 · ' + (active.kind === 'desktop' ? '桌面端' : '浏览器') + '（' + when(active.lastSeen) + '）'
+      : '已连接 · ' + live.length + ' 个触点';
+    return '<div class="presence"><span class="dot"></span><span>' + esc(label) + '</span></div>';
+  }
+  function sidebar() {
+    var pending = state.proposals.filter(function (proposal) { return proposal.state === 'pending'; }).length;
+    return '<aside class="sidebar">' +
+      '<div class="brand"><div class="brand-mark">' + ICON.logo + '</div><div>' +
+        '<div class="brand-name">Workflow</div><div class="brand-sub">第二个我</div></div></div>' +
+      '<div class="nav-group"><div class="nav-label">助理</div>' +
+        navItem('today', '今日', ICON.today) +
+        navItem('proposals', '提案', ICON.proposal, pending || '') +
+        navItem('commitments', '责任', ICON.commitment) +
+        navItem('chat', '对话', ICON.chat) +
+        navItem('memory', '记忆', ICON.memory) +
+      '</div>' +
+      '<div class="nav-group"><div class="nav-label">运维</div>' +
+        navItem('tasks', '任务', ICON.task) +
+        navItem('nodes', '节点', ICON.node) +
+        navItem('sync', '同步', ICON.sync) +
+        navItem('replies', '回复记录', ICON.reply) +
+        navItem('checkup', '体检', ICON.checkup) +
+      '</div>' +
+      '<div class="sidebar-foot">' + presenceHtml() + '</div></aside>';
+  }
+  function topbarActions() {
+    var buttons = '';
+    if (state.view === 'checkup') {
+      buttons += '<button class="btn btn-ghost btn-sm" data-act="checkup-run"' +
+        (state.checkup.busy === 'checkup' ? ' disabled' : '') + '>立即体检</button>';
+    }
+    buttons += '<button class="btn btn-ghost btn-sm" data-act="refresh">刷新</button>' +
+      '<button class="btn btn-ghost btn-sm" data-act="logout">退出</button>';
+    return buttons;
+  }
+  function page(title, body) {
+    return '<div class="app">' + sidebar() +
+      '<div class="main"><header class="topbar"><h1>' + esc(title) + '</h1>' +
+      '<div class="spacer"></div>' + topbarActions() + '</header>' +
+      '<main class="content"><div class="inner">' +
+      (state.error ? '<div class="card error">' + esc(state.error) + '</div>' : '') +
+      body + '</div></main></div></div>';
+  }
+  function empty(text) { return '<div class="card muted">' + esc(text) + '</div>'; }
+  function metricCard(label, value, hint) {
+    return '<div class="metric"><div class="k">' + esc(label) + '</div><div class="v">' +
+      esc(value == null ? '—' : value) + '</div>' + (hint ? '<div class="d muted">' + esc(hint) + '</div>' : '') + '</div>';
   }
 
   function loginView() {
@@ -220,6 +401,63 @@ input { font-family:inherit; }
       '</form></div>';
   }
 
+  // First-run setup: a fresh install has no credentials at all, so the console
+  // offers to create the first admin. It disappears the moment an account
+  // exists.
+  function setupView() {
+    var setup = state.setup;
+    return '<div class="center"><form class="card" id="setup" style="width:100%;max-width:400px">' +
+      '<h1 style="font-size:16px;margin:0 0 4px">初始化 Workflow</h1>' +
+      '<p class="muted" style="margin:0 0 20px;font-size:13px">还没有账号。创建第一个管理员账号。</p>' +
+      '<label class="field"><span>邮箱</span><input id="setupEmail" type="email" autocomplete="username"></label>' +
+      '<label class="field"><span>密码</span><input id="setupPassword" type="password" autocomplete="new-password"></label>' +
+      '<button class="btn btn-primary" type="submit" style="width:100%"' + (setup.busy ? ' disabled' : '') + '>' +
+        (setup.busy ? '创建中…' : '创建账号') + '</button>' +
+      (setup.error ? '<div class="error">' + esc(setup.error) + '</div>' : '') +
+      '</form></div>';
+  }
+  function loadSetup() {
+    api('/api/v1/auth/bootstrap')
+      .then(function (result) { state.setup.needed = Boolean(result.needed); render(); })
+      .catch(function () { /* a failed probe just leaves the login form */ });
+  }
+
+  // --- 今日 ---
+  function todayView() {
+    var pending = state.proposals.filter(function (proposal) { return proposal.state === 'pending'; });
+    var soon = state.commitments.filter(function (item) { return item.dueAt; }).slice(0, 5);
+    var cards = metricCard('待决策', pending.length, pending.length ? '需要你拍板' : '没有等你的事') +
+      metricCard('活跃责任', state.commitments.length, '我记着的事') +
+      metricCard('待提醒', state.digest.length, '到了提醒时间') +
+      metricCard('在场触点', state.presence && state.presence.online ? state.presence.online.length : 0,
+        state.presence && state.presence.active ? '主设备 ' + (state.presence.active.kind === 'desktop' ? '桌面端' : '浏览器') : '');
+    var proposals = pending.slice(0, 3).map(function (proposal) {
+      return '<div class="list-row"><span class="badge badge-warn">待决策</span>' +
+        '<div class="grow">' + esc(proposal.title) + '<div class="sub">' + esc(proposal.ask) + '</div></div>' +
+        '<button class="btn btn-sm" data-nav="proposals">查看</button></div>';
+    }).join('');
+    var commitments = soon.length ? soon.map(function (item) {
+      return '<div class="list-row"><div class="grow">' + esc(item.statement) +
+        '<div class="sub">' + esc(item.projectId || '未归属项目') + ' · 截止 ' + esc(when(item.dueAt)) + '</div></div></div>';
+    }).join('') : '<div class="list-row muted">没有带截止时间的责任。</div>';
+    var replies = state.replies.slice(0, 3).map(function (reply) {
+      return '<div class="list-row"><span class="badge badge-muted">' + esc(reply.tier) + '</span>' +
+        '<div class="grow">' + esc(reply.channelTarget) + '<div class="sub">' + esc(reply.text) + '</div></div>' +
+        '<span class="muted mono">' + esc(when(reply.createdAt)) + '</span></div>';
+    }).join('') || '<div class="list-row muted">还没有回复。</div>';
+    return page('今日',
+      '<h2 class="section-title">概览</h2><div class="metrics">' + cards + '</div>' +
+      '<h2 class="section-title">需要你决定 · ' + pending.length + '</h2>' +
+      (proposals || empty('没有待决策的提案。')) +
+      '<h2 class="section-title">临近的责任</h2><div class="card">' + commitments + '</div>' +
+      '<h2 class="section-title">最近回复</h2><div class="card">' + replies + '</div>');
+  }
+
+  // --- 提案 ---
+  function secondsLeft(deadline) {
+    if (!deadline) return null;
+    return Math.max(0, Math.floor((new Date(deadline).getTime() - Date.now()) / 1000));
+  }
   function proposalView(proposal) {
     var pending = proposal.state === 'pending';
     var left = pending ? secondsLeft(proposal.vetoDeadline) : null;
@@ -250,34 +488,190 @@ input { font-family:inherit; }
       '<div class="actions">' + actions + '<div class="spacer"></div>' +
         '<span class="muted mono">' + esc(proposal.proposalId) + '</span></div></div>';
   }
-
   function proposalsView() {
     var body = state.loading ? '<div class="card muted">加载中…</div>'
-      : state.error ? '<div class="card error">' + esc(state.error) + '</div>'
       : state.proposals.length ? state.proposals.map(proposalView).join('')
-      : '<div class="card muted">没有待决策的提案。</div>';
-    return '<div class="shell"><div class="topbar"><h1>提案</h1><div class="spacer"></div>' +
-      '<button class="btn btn-ghost" data-nav="memory">记忆</button>' +
-      '<button class="btn btn-ghost" data-nav="replies">回复记录</button>' +
-      '<button class="btn btn-ghost" data-nav="checkup">体检</button>' +
-      '<button class="btn btn-ghost" data-act="refresh">刷新</button>' +
-      '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
-      '<h2 class="section-title">待决策 · ' + state.proposals.length + '</h2>' + body + '</div>';
+      : empty('没有待决策的提案。');
+    return page('提案', '<h2 class="section-title">待决策 · ' + state.proposals.length + '</h2>' + body);
   }
 
-  // --- audit: every reply the assistant sent, with the tier that allowed it ---
-  function loadReplies() {
-    state.replies.error = ''; render();
-    api('/api/v1/replies?limit=100')
-      .then(function (result) { state.replies.items = result.replies || []; render(); })
-      .catch(function (err) { state.replies.error = err.message || String(err); render(); });
+  // --- 责任 ---
+  function commitmentsView() {
+    var body = !state.commitments.length ? empty('没有活跃的责任。')
+      : state.commitments.map(function (item) {
+        return '<div class="card"><div class="head"><strong style="flex:1">' + esc(item.statement) + '</strong>' +
+          '<span class="badge badge-ok">' + esc(item.state) + '</span></div>' +
+          '<div class="kv" style="margin-top:12px">' +
+            '<div class="k">项目</div><div>' + esc(item.projectId || '—') + '</div>' +
+            '<div class="k">截止</div><div>' + esc(item.dueAt ? when(item.dueAt) : '—') + '</div>' +
+            '<div class="k">触发策略</div><div class="mono">' + esc(item.triggerPolicy || '—') + '</div>' +
+            '<div class="k">关注策略</div><div class="mono">' + esc(item.attentionPolicy || '—') + '</div>' +
+            '<div class="k">最近活动</div><div>' + esc(when(item.lastActivityAt)) + '</div>' +
+          '</div></div>';
+      }).join('');
+    return page('责任', '<h2 class="section-title">活跃责任 · ' + state.commitments.length + '</h2>' + body);
   }
 
+  // --- 对话 ---
+  function chatView() {
+    var thread = state.chat.items.length
+      ? state.chat.items.map(function (item) {
+        return '<div class="bubble ' + (item.role === 'me' ? 'me' : 'it') + '">' + esc(item.text) +
+          (item.meta ? '<div class="meta">' + esc(item.meta) + '</div>' : '') + '</div>';
+      }).join('')
+      : '<div class="card muted">说点什么。你说的话会变成一条信号，由 Workflow 判断该不该动手。</div>';
+    return page('对话',
+      '<h2 class="section-title">和 Workflow 说话</h2>' +
+      '<div class="thread" id="thread">' + thread + '</div>' +
+      '<form class="card" id="chat" style="margin-top:16px">' +
+        '<label class="field"><span>内容</span><textarea id="chatText" placeholder="例如：下周三评审前提醒我确认时间"></textarea></label>' +
+        '<div class="actions" style="margin-top:0">' +
+        '<button class="btn btn-primary" type="submit"' + (state.chat.busy ? ' disabled' : '') + '>' +
+          (state.chat.busy ? '发送中…' : '发送') + '</button>' +
+        '<span class="muted" style="font-size:12px">发出去之后，是否回复由提案和策略决定。</span></div>' +
+        (state.chat.error ? '<div class="error">' + esc(state.chat.error) + '</div>' : '') +
+      '</form>');
+  }
+  function sendChat(text) {
+    state.chat.busy = true; state.chat.error = ''; render();
+    api('/api/v1/signals', { method: 'POST', body: { channel: 'console', kind: 'ambient', text: text } })
+      .then(function (result) {
+        var signal = result.signal || {};
+        var parts = [];
+        if (result.created === false) parts.push('这条信号已经收到过');
+        if (result.attached) parts.push('并入已有责任');
+        if (result.opened) parts.push('新开了一条责任');
+        state.chat.items.push({ role: 'me', text: text, meta: when(new Date().toISOString()) });
+        state.chat.items.push({
+          role: 'it',
+          text: parts.length ? parts.join('，') : '记下了。',
+          meta: '信号 ' + (signal.signal_id || signal.signalId || '—') + (signal.kind ? ' · ' + signal.kind : ''),
+        });
+        state.chat.busy = false;
+        render();
+        load();
+      })
+      .catch(function (err) { state.chat.busy = false; state.chat.error = err.message || String(err); render(); });
+  }
+
+  // --- 记忆 ---
+  function loadMemory() {
+    state.memory.error = ''; render();
+    return api('/api/v1/memory/tree')
+      .then(function (result) { state.memory.tree = result.tree || []; render(); })
+      .catch(function (err) { state.memory.error = err.message || String(err); render(); });
+  }
+  function openFile(pathname) {
+    state.memory.path = pathname; state.memory.error = ''; render();
+    Promise.all([
+      api('/api/v1/memory/file?path=' + encodeURIComponent(pathname)),
+      api('/api/v1/memory/history?path=' + encodeURIComponent(pathname)),
+    ]).then(function (results) {
+      state.memory.content = results[0].content || '';
+      state.memory.history = results[1].history || [];
+      render();
+    }).catch(function (err) { state.memory.error = err.message || String(err); render(); });
+  }
+  function revertFile(commit) {
+    if (!state.memory.path) return;
+    state.memory.error = ''; render();
+    api('/api/v1/memory/revert', { method: 'POST', body: { commit: commit, path: state.memory.path } })
+      .then(function () { openFile(state.memory.path); })
+      .catch(function (err) { state.memory.error = err.message || String(err); render(); });
+  }
+  function treeHtml(nodes, depth) {
+    return (nodes || []).map(function (node) {
+      var pad = 'style="padding-left:' + (8 + depth * 14) + 'px"';
+      if (node.dir) {
+        return '<div class="tree-item" ' + pad + '>' + esc(node.name) + '</div>' + treeHtml(node.children, depth + 1);
+      }
+      var active = state.memory.path === node.path ? ' active' : '';
+      return '<div class="tree-item' + active + '" ' + pad + ' data-file="' + esc(node.path) + '">' + esc(node.name) + '</div>';
+    }).join('');
+  }
+  function memoryView() {
+    var memory = state.memory;
+    var body = memory.path
+      ? '<div class="file-head"><span class="muted mono">' + esc(memory.path) + '</span></div>' +
+        '<pre class="file-body">' + esc(memory.content) + '</pre>'
+      : empty('从左侧选一个文件。');
+    var history = memory.history.length
+      ? '<h2 class="section-title">历史</h2>' + memory.history.map(function (entry) {
+        return '<div class="history-row"><span class="mono">' + esc(entry.commit.slice(0, 7)) + '</span>' +
+          '<span class="muted">' + esc(entry.subject) + '</span>' +
+          '<button class="btn btn-sm" data-revert="' + esc(entry.commit) + '">回滚</button></div>';
+      }).join('')
+      : '';
+    return page('记忆',
+      (memory.error ? '<div class="card error">' + esc(memory.error) + '</div>' : '') +
+      '<div class="memory-grid"><div class="card tree">' +
+        (memory.tree.length ? treeHtml(memory.tree, 0) : '<span class="muted">仓库还是空的。</span>') +
+      '</div><div><div class="card">' + body + '</div>' + history + '</div></div>');
+  }
+
+  // --- 任务 ---
+  function taskStatusBadge(status) {
+    var map = { succeeded: 'badge-ok', running: 'badge-warn', failed: 'badge-danger' };
+    return '<span class="badge ' + (map[status] || 'badge-muted') + '">' + esc(status) + '</span>';
+  }
+  function tasksView() {
+    var body = !state.tasks.length ? empty('还没有任务。')
+      : state.tasks.map(function (task) {
+        return '<div class="list-row">' + taskStatusBadge(task.status) +
+          '<div class="grow">' + esc(task.type) + '<div class="sub">' +
+            esc(task.project_id || '未归属项目') + ' · 优先级 ' + esc(task.priority) + '</div></div>' +
+          '<span class="muted mono">' + esc(when(task.created_at)) + '</span></div>';
+      }).join('');
+    return page('任务', '<h2 class="section-title">最近任务 · ' + state.tasks.length + '</h2><div class="card">' + body + '</div>');
+  }
+
+  // --- 节点 ---
+  function nodesView() {
+    var body = !state.peers.length ? empty('还没有注册的 peer 节点。')
+      : state.peers.map(function (peer) {
+        var revoked = peer.status !== 'active';
+        return '<div class="card"><div class="head"><strong style="flex:1">' + esc(peer.node_id) + '</strong>' +
+          '<span class="badge ' + (revoked ? 'badge-danger' : 'badge-ok') + '">' + esc(peer.status) + '</span>' +
+          '<span class="badge badge-muted">v' + esc(peer.protocol_version) + '</span></div>' +
+          '<div class="kv" style="margin-top:12px">' +
+            '<div class="k">名称</div><div>' + esc(peer.display_name || '—') + '</div>' +
+            '<div class="k">地址</div><div class="mono">' + esc(peer.endpoint_url || '—') + '</div>' +
+            '<div class="k">最近可见</div><div>' + esc(when(peer.last_seen_at)) + '</div>' +
+          '</div></div>';
+      }).join('');
+    return page('节点', '<h2 class="section-title">peer 节点 · ' + state.peers.length + '</h2>' + body);
+  }
+
+  // --- 同步 ---
+  function syncView() {
+    var sync = state.sync;
+    if (!sync) return page('同步', empty('还没有同步状态。'));
+    var inbox = Object.keys(sync.inbox || {}).map(function (key) {
+      return '<div class="list-row"><div class="grow">' + esc(key) + '</div>' +
+        '<span class="mono">' + esc(sync.inbox[key]) + '</span></div>';
+    }).join('') || '<div class="list-row muted">收件箱是空的。</div>';
+    var cursors = state.cursors.length
+      ? state.cursors.map(function (cursor) {
+        return '<div class="list-row"><div class="grow mono">' + esc(cursor.node_id || cursor.nodeId) + '</div>' +
+          '<span class="muted mono">' + esc(cursor.last_seq ?? cursor.lastSeq ?? '—') + '</span></div>';
+      }).join('')
+      : '<div class="list-row muted">还没有游标。</div>';
+    return page('同步',
+      '<h2 class="section-title">本节点</h2><div class="card"><div class="kv">' +
+        '<div class="k">节点</div><div class="mono">' + esc(sync.node_id) + '</div>' +
+        '<div class="k">协议版本</div><div>v' + esc(sync.protocol_version) + '</div>' +
+        '<div class="k">签名</div><div>' + (sync.signing ? '已启用' : '<span class="badge badge-warn">未启用</span>') + '</div>' +
+        '<div class="k">中继</div><div>' + (sync.relay ? '已配置 · ' + (sync.relay_origins || []).length + ' 个来源' : '直连') + '</div>' +
+        '<div class="k">最高序号</div><div class="mono">' + esc(sync.head_seq) + '</div>' +
+      '</div></div>' +
+      '<h2 class="section-title">收件箱</h2><div class="card">' + inbox + '</div>' +
+      '<h2 class="section-title">对端游标</h2><div class="card">' + cursors + '</div>');
+  }
+
+  // --- 回复记录 ---
   function repliesView() {
-    var items = state.replies.items;
-    var body = state.replies.error ? '<div class="card error">' + esc(state.replies.error) + '</div>'
-      : !items.length ? '<div class="card muted">还没有回复记录。</div>'
-      : items.map(function (reply) {
+    var body = !state.replies.length ? empty('还没有回复记录。')
+      : state.replies.map(function (reply) {
         var evidence = (reply.evidence || []).map(function (item) {
           return '<span class="mono">' + esc(item.kind || '—') + ':' + esc(item.ref || '') + '</span>';
         }).join(' ');
@@ -286,24 +680,18 @@ input { font-family:inherit; }
           '<span class="badge ' + (reply.autonomy === 'timeout' ? 'badge-warn' : 'badge-ok') + '">' +
             esc(reply.autonomy === 'timeout' ? '超时发出' : reply.autonomy === 'user' ? '你批准' : '自主') + '</span>' +
           '<strong style="flex:1">' + esc(reply.channelTarget) + '</strong>' +
-          '<span class="muted mono">' + esc(reply.createdAt) + '</span></div>' +
+          '<span class="muted mono">' + esc(when(reply.createdAt)) + '</span></div>' +
           '<div class="draft">' + esc(reply.text) + '</div>' +
           (evidence ? '<div class="evidence" style="border-top:none;padding-top:8px">' + evidence + '</div>' : '') +
           '</div>';
       }).join('');
-    return '<div class="shell"><div class="topbar"><h1>回复记录</h1><div class="spacer"></div>' +
-      '<button class="btn btn-ghost" data-nav="proposals">提案</button>' +
-      '<button class="btn btn-ghost" data-nav="memory">记忆</button>' +
-      '<button class="btn btn-ghost" data-nav="replies">回复记录</button>' +
-      '<button class="btn btn-ghost" data-act="replies-refresh">刷新</button>' +
-      '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
-      '<h2 class="section-title">共 ' + items.length + ' 条</h2>' + body + '</div>';
+    return page('回复记录', '<h2 class="section-title">共 ' + state.replies.length + ' 条</h2>' + body);
   }
 
-  // --- checkup: how well the assistant judges when to interrupt ---
+  // --- 体检 ---
   function loadCheckup() {
     state.checkup.error = ''; render();
-    Promise.all([api('/api/v1/ai/metrics'), api('/api/v1/ai/suggestions?status=pending')])
+    return Promise.all([api('/api/v1/ai/metrics'), api('/api/v1/ai/suggestions?status=pending')])
       .then(function (results) {
         state.checkup.metrics = results[0].metrics || null;
         state.checkup.suggestions = results[1].suggestions || [];
@@ -311,26 +699,18 @@ input { font-family:inherit; }
       })
       .catch(function (err) { state.checkup.error = err.message || String(err); render(); });
   }
-
   function runCheckup() {
     state.checkup.busy = 'checkup'; render();
     api('/api/v1/ai/checkup', { method: 'POST', body: {} })
       .catch(function (err) { state.checkup.error = err.message || String(err); })
       .then(function () { state.checkup.busy = ''; loadCheckup(); });
   }
-
   function decideSuggestion(id, action) {
     state.checkup.busy = id; render();
     api('/api/v1/ai/suggestions/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: {} })
       .catch(function (err) { state.checkup.error = err.message || String(err); })
       .then(function () { state.checkup.busy = ''; loadCheckup(); });
   }
-
-  function metricCard(label, value, hint) {
-    return '<div class="metric"><div class="k">' + esc(label) + '</div><div class="v">' +
-      esc(value == null ? '—' : value) + '</div>' + (hint ? '<div class="d muted">' + esc(hint) + '</div>' : '') + '</div>';
-  }
-
   function checkupView() {
     var checkup = state.checkup;
     var assistant = checkup.metrics && checkup.metrics.assistant;
@@ -354,112 +734,39 @@ input { font-family:inherit; }
           '<button class="btn btn-ghost" data-suggestion="' + esc(suggestion.suggestionId) + '" data-decision="ignore"' + (busy ? ' disabled' : '') + '>忽略</button>' +
           '</div></div>';
       }).join('')
-      : '<div class="card muted">没有待处理的建议。</div>';
-    return '<div class="shell"><div class="topbar"><h1>体检</h1><div class="spacer"></div>' +
-      '<button class="btn btn-ghost" data-nav="proposals">提案</button>' +
-      '<button class="btn btn-ghost" data-nav="memory">记忆</button>' +
-      '<button class="btn btn-ghost" data-nav="replies">回复记录</button>' +
-      '<button class="btn btn-ghost" data-act="checkup-refresh">刷新</button>' +
-      '<button class="btn btn-ghost" data-act="checkup-run"' + (checkup.busy === 'checkup' ? ' disabled' : '') + '>立即体检</button>' +
-      '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
+      : empty('没有待处理的建议。');
+    return page('体检',
       (checkup.error ? '<div class="card error">' + esc(checkup.error) + '</div>' : '') +
       '<h2 class="section-title">助理行为指标</h2><div class="metrics">' + cards + '</div>' +
-      '<h2 class="section-title" style="margin-top:24px">AI 改进建议 · ' + checkup.suggestions.length + '</h2>' + suggestions + '</div>';
-  }
-
-  // First-run setup: a fresh install has no credentials at all, so the console
-  // offers to create the first admin. It disappears the moment an account
-  // exists.
-  function setupView() {
-    var setup = state.setup;
-    return '<div class="center"><form class="card" id="setup" style="width:100%;max-width:400px">' +
-      '<h1 style="font-size:16px;margin:0 0 4px">初始化 Workflow</h1>' +
-      '<p class="muted" style="margin:0 0 20px;font-size:13px">还没有账号。创建第一个管理员账号。</p>' +
-      '<label class="field"><span>邮箱</span><input id="setupEmail" type="email" autocomplete="username"></label>' +
-      '<label class="field"><span>密码</span><input id="setupPassword" type="password" autocomplete="new-password"></label>' +
-      '<button class="btn btn-primary" type="submit" style="width:100%"' + (setup.busy ? ' disabled' : '') + '>' +
-        (setup.busy ? '创建中…' : '创建账号') + '</button>' +
-      (setup.error ? '<div class="error">' + esc(setup.error) + '</div>' : '') +
-      '</form></div>';
-  }
-
-  function loadSetup() {
-    api('/api/v1/auth/bootstrap')
-      .then(function (result) {
-        state.setup.needed = Boolean(result.needed);
-        render();
-      })
-      .catch(function () { /* a failed probe just leaves the login form */ });
+      '<h2 class="section-title">AI 改进建议 · ' + checkup.suggestions.length + '</h2>' + suggestions);
   }
 
   function render() {
     if (!token() && state.setup.needed) { root.innerHTML = setupView(); return; }
     if (!token()) { root.innerHTML = loginView(); return; }
-    if (state.view === 'memory') root.innerHTML = memoryView();
+    if (state.view === 'proposals') root.innerHTML = proposalsView();
+    else if (state.view === 'commitments') root.innerHTML = commitmentsView();
+    else if (state.view === 'chat') root.innerHTML = chatView();
+    else if (state.view === 'memory') root.innerHTML = memoryView();
+    else if (state.view === 'tasks') root.innerHTML = tasksView();
+    else if (state.view === 'nodes') root.innerHTML = nodesView();
+    else if (state.view === 'sync') root.innerHTML = syncView();
     else if (state.view === 'replies') root.innerHTML = repliesView();
     else if (state.view === 'checkup') root.innerHTML = checkupView();
-    else root.innerHTML = proposalsView();
+    else root.innerHTML = todayView();
   }
 
-  // --- memory: the assistant's beliefs, as readable files ---
-  function loadMemory() {
-    state.memory.error = ''; render();
-    api('/api/v1/memory/tree')
-      .then(function (result) { state.memory.tree = result.tree || []; render(); })
-      .catch(function (err) { state.memory.error = err.message || String(err); render(); });
-  }
-
-  function openFile(pathname) {
-    state.memory.path = pathname; state.memory.error = ''; render();
-    Promise.all([
-      api('/api/v1/memory/file?path=' + encodeURIComponent(pathname)),
-      api('/api/v1/memory/history?path=' + encodeURIComponent(pathname)),
-    ]).then(function (results) {
-      state.memory.content = results[0].content || '';
-      state.memory.history = results[1].history || [];
-      render();
-    }).catch(function (err) { state.memory.error = err.message || String(err); render(); });
-  }
-
-  function revertFile(commit) {
-    if (!state.memory.path) return;
-    state.memory.error = ''; render();
-    api('/api/v1/memory/revert', { method: 'POST', body: { commit: commit, path: state.memory.path } })
-      .then(function () { openFile(state.memory.path); })
-      .catch(function (err) { state.memory.error = err.message || String(err); render(); });
-  }
-
-  function treeHtml(nodes, depth) {
-    return (nodes || []).map(function (node) {
-      var pad = 'style="padding-left:' + (8 + depth * 14) + 'px"';
-      if (node.dir) {
-        return '<div class="tree-item" ' + pad + '>' + esc(node.name) + '</div>' + treeHtml(node.children, depth + 1);
-      }
-      var active = state.memory.path === node.path ? ' active' : '';
-      return '<div class="tree-item' + active + '" ' + pad + ' data-file="' + esc(node.path) + '">' + esc(node.name) + '</div>';
-    }).join('');
-  }
-
-  function memoryView() {
-    var memory = state.memory;
-    var body = memory.path
-      ? '<div class="file-head"><span class="muted mono">' + esc(memory.path) + '</span></div>' +
-        '<pre class="file-body">' + esc(memory.content) + '</pre>'
-      : '<div class="card muted">从左侧选一个文件。</div>';
-    var history = memory.history.length
-      ? '<h2 class="section-title">历史</h2>' + memory.history.map(function (entry) {
-        return '<div class="history-row"><span class="mono">' + esc(entry.commit.slice(0, 7)) + '</span>' +
-          '<span class="muted">' + esc(entry.subject) + '</span>' +
-          '<button class="btn btn-sm" data-revert="' + esc(entry.commit) + '">回滚</button></div>';
-      }).join('')
-      : '';
-    return '<div class="shell"><div class="topbar"><h1>记忆</h1><div class="spacer"></div>' +
-      '<button class="btn btn-ghost" data-nav="proposals">提案</button>' +
-      '<button class="btn btn-ghost" data-act="memory-refresh">刷新</button>' +
-      '<button class="btn btn-ghost" data-act="logout">退出</button></div>' +
-      (memory.error ? '<div class="card error">' + esc(memory.error) + '</div>' : '') +
-      '<div class="memory-grid"><div class="card tree">' + treeHtml(memory.tree, 0) + '</div>' +
-      '<div><div class="card">' + body + '</div>' + history + '</div></div></div>';
+  function ensureView(view) {
+    if (view === 'today') return loadToday();
+    if (view === 'proposals') return load();
+    if (view === 'commitments') return loadCommitments();
+    if (view === 'memory') return state.memory.tree.length ? undefined : loadMemory();
+    if (view === 'tasks') return loadTasks();
+    if (view === 'nodes') return loadNodes();
+    if (view === 'sync') return loadSync();
+    if (view === 'replies') return loadReplies();
+    if (view === 'checkup') return loadCheckup();
+    return undefined;
   }
 
   root.addEventListener('submit', function (event) {
@@ -471,6 +778,13 @@ input { font-family:inherit; }
       api('/api/v1/auth/bootstrap', { method: 'POST', body: { email: setupEmail, password: setupPassword } })
         .then(function () { state.setup.busy = false; state.setup.needed = false; render(); })
         .catch(function (err) { state.setup.busy = false; state.setup.error = err.message || String(err); render(); });
+      return;
+    }
+    if (event.target.id === 'chat') {
+      event.preventDefault();
+      var field = document.getElementById('chatText');
+      var text = field ? field.value.trim() : '';
+      if (text) sendChat(text);
       return;
     }
     if (event.target.id !== 'login') return;
@@ -487,11 +801,8 @@ input { font-family:inherit; }
   root.addEventListener('click', function (event) {
     var nav = event.target.closest('[data-nav]');
     if (nav) {
-      state.view = nav.dataset.nav;
-      render();
-      if (state.view === 'memory' && !state.memory.tree.length) loadMemory();
-      if (state.view === 'replies' && !state.replies.items.length) loadReplies();
-      if (state.view === 'checkup' && !state.checkup.metrics) loadCheckup();
+      state.view = nav.dataset.nav; state.error = ''; render();
+      ensureView(state.view);
       return;
     }
     var file = event.target.closest('[data-file]');
@@ -503,10 +814,7 @@ input { font-family:inherit; }
     var button = event.target.closest('[data-act]');
     if (!button) return;
     var action = button.dataset.act;
-    if (action === 'refresh') return load();
-    if (action === 'memory-refresh') return loadMemory();
-    if (action === 'replies-refresh') return loadReplies();
-    if (action === 'checkup-refresh') return loadCheckup();
+    if (action === 'refresh') return ensureView(state.view) || loadToday();
     if (action === 'checkup-run') return runCheckup();
     if (action === 'logout') return setToken('');
     var id = button.dataset.id;
@@ -519,7 +827,8 @@ input { font-family:inherit; }
   // The countdown is the only thing that changes without a server round trip.
   timer = setInterval(function () {
     if (!token()) return;
-    if (state.proposals.some(function (proposal) { return proposal.state === 'pending' && proposal.vetoDeadline; })) render();
+    if (state.view === 'proposals' &&
+        state.proposals.some(function (proposal) { return proposal.state === 'pending' && proposal.vetoDeadline; })) render();
   }, 1000);
   window.addEventListener('beforeunload', function () { if (timer) clearInterval(timer); });
 
@@ -529,7 +838,7 @@ input { font-family:inherit; }
   setInterval(reportPresence, 30000).unref?.();
 
   render();
-  if (token()) { load(); reportPresence(); }
+  if (token()) { load(); loadToday(); reportPresence(); }
   else loadSetup();
 })();
 </script>

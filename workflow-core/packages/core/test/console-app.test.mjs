@@ -58,13 +58,28 @@ test('the console carries the design tokens and the real API calls', () => {
     '/api/v1/auth/client-login', '/api/v1/proposals?state=pending',
     'data-act="approve"', 'data-act="reject"', 'data-act="send"',
     '/api/v1/memory/tree', '/api/v1/memory/file?path=', '/api/v1/memory/history?path=', '/api/v1/memory/revert',
-    'data-nav="memory"', 'data-nav="replies"', 'data-nav="checkup"', 'data-revert=', 'data-suggestion=',
+    'data-revert=', 'data-suggestion=',
     '/api/v1/presence', '/api/v1/replies?limit=', '/api/v1/ai/metrics', '/api/v1/ai/checkup', '/api/v1/auth/bootstrap', 'visibilitychange',
+    '/api/v1/commitments?state=active', '/api/v1/tasks?limit=', '/api/v1/admin/peers', '/api/v1/admin/peer-sync',
+    '/api/v1/digest/pending', '/api/v1/signals',
   ]) {
     assert.ok(CONSOLE_HTML.includes(call), `missing API call: ${call}`);
   }
   assert.ok(CONSOLE_HTML.includes('function esc('), 'rendered server values must be escaped');
   assert.ok(CONSOLE_HTML.includes('response.status === 401'), 'an expired session must return to the login view');
+});
+
+test('the console keeps the sidebar navigation from the design baseline', () => {
+  assert.ok(CONSOLE_HTML.includes('class="sidebar"'), 'the sidebar is the primary navigation');
+  assert.ok(CONSOLE_HTML.includes('class="nav-label">助理'), 'assistant navigation group');
+  assert.ok(CONSOLE_HTML.includes('class="nav-label">运维'), 'operations navigation group');
+  assert.ok(CONSOLE_HTML.includes('class="sidebar-foot"'), 'the presence footer lives in the sidebar');
+  for (const view of ['today', 'proposals', 'commitments', 'chat', 'memory', 'tasks', 'nodes', 'sync', 'replies', 'checkup']) {
+    assert.ok(CONSOLE_HTML.includes(`navItem('${view}'`), `missing navigation entry: ${view}`);
+    // 今日 is the fallback branch, so it has no explicit view comparison.
+    const branch = view === 'today' ? 'todayView()' : `state.view === '${view}'`;
+    assert.ok(CONSOLE_HTML.includes(branch), `missing view branch: ${view}`);
+  }
 });
 
 test('the console source references no remote assets', () => {
