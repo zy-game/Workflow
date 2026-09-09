@@ -194,20 +194,15 @@ export class AuthRepository {
   // A fresh install has no way in. Setup is open only while no active account
   // exists, and it needs a one-time code that is printed to the server log, so
   // a publicly reachable console cannot be claimed by a stranger.
+  // Whether an install still needs its first admin. The first admin comes from
+  // the service environment, so this is a read-only probe the console uses to
+  // explain an uninitialised install.
   bootstrapStatus() {
-    const row = this.db.prepare('SELECT * FROM bootstrap_state WHERE singleton = 1').get();
-    const activeAccounts = this.db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE status = 'active'").get().n;
-    const pending = Number(row?.completed ?? 0) === 0 && activeAccounts === 0;
-    const expired = row?.expires_at ? Date.parse(row.expires_at) <= Date.now() : false;
-    // "no code yet" and "the code expired" need different instructions, so the
-    // page can tell the operator what to do next.
-    const codeState = !row?.token_digest ? 'missing' : expired ? 'expired' : 'active';
+    const row = this.db.prepare('SELECT completed FROM bootstrap_state WHERE singleton = 1').get();
+    const activeAccounts = Number(this.db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE status = 'active'").get().n);
     return {
-      needed: pending,
-      codeState,
-      codeRequired: pending && codeState === 'active',
-      codeExpiresAt: row?.expires_at ?? null,
-      activeAccounts: Number(activeAccounts),
+      needed: Number(row?.completed ?? 0) === 0 && activeAccounts === 0,
+      activeAccounts,
     };
   }
 
