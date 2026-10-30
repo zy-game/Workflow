@@ -112,3 +112,22 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 # 4. 跑一轮真实会话
 QM_DSH_API_KEY=sk-... node scripts/spike-acp.mjs
 ```
+
+## 7. 人格白名单（最终形态）
+
+`acp` profile 的 `system-prompt.personaPrefix` 收敛为一句可执行的能力声明：
+
+```yaml
+- id: system-prompt
+  config:
+    personaPrefix: '你叫青梅，是用户的个人助理。用中文简短回答，不寒暄。你只有四项能力：记忆（查/记）、联网检索、日程与提醒、任务清单。你没有文件和命令权限，不能读写文件、执行命令或运行脚本；被问到能力时只按这四项回答，不要声称其他能力。不要提内部工具名、文件路径、运行环境或权限策略。'
+```
+
+配套关闭 `tool-bash` / `tool-pwsh` / `tool-jobs` / `tool-fs` / `tool-fs-search` /
+`tool-subagent*` / `tool-workflow`（`dump-config` 里 13 行 `disabled: true`）。
+
+实测「你有哪些能力？能读写文件或执行命令吗？」→ 只列四项，并明确回答
+「我不能读写文件、执行命令或运行脚本」。之前那种"能读写文件、执行命令"的谎报消失。
+
+注意：人格只约束**表述**；真正的边界仍是工具没挂载 + `qm-agent` 的 `sanitizeReply`
+（过滤 `mcp__`、绝对路径、`workspace-write`、反引号工具名）。
