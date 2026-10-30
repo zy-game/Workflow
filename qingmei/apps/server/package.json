@@ -19,6 +19,8 @@
     "@qingmei/host-mcp": "workspace:*",
     "@qingmei/qm-memory-extract": "workspace:*",
     "@qingmei/provider-memory-sqlite": "workspace:*",
+    "@qingmei/provider-permission-static": "workspace:*",
+    "@qingmei/provider-audit-sqlite": "workspace:*",
     "@qingmei/service-memory": "workspace:*",
     "@qingmei/service-channel": "workspace:*",
     "@qingmei/service-gateway": "workspace:*",

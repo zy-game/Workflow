@@ -10,5 +10,8 @@
   "dependencies": {
     "cordis": "4.0.0-rc.12",
     "@qingmei/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@qingmei/provider-permission-static": "workspace:*"
   }
 }

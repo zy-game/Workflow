@@ -9,8 +9,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Context } from 'cordis'
 import {
   McpService,
+  uid,
+  type Actor,
+  type AuditService,
+  type ChannelId,
   type MemoryRecord,
   type MemoryService,
+  type PermissionService,
   type Scheduled,
   type ScheduleInput,
   type SchedulePatch,
@@ -23,12 +28,60 @@ export interface McpConfig {
   /** 简单 bearer 校验；DSH 通过 headers 带上 */
   token?: string
   path?: string
+  /** 调用工具的 actor；P1 只有 owner 一个身份 */
+  actorId?: string
+  /** 工具调用发生的会话类型：群聊里策略会收紧 */
+  conversation?: 'dm' | 'group'
 }
 
 export const name = 'host-mcp'
-export const inject = ['memory', 'schedule']
+export const inject = ['memory', 'schedule', 'permission', 'audit']
 
 const PROTOCOL_VERSION = '2024-11-05'
+
+/** 工具调用前的鉴权与留痕所需的一切 */
+export interface ToolGuard {
+  permission: PermissionService
+  audit: AuditService
+  actor: Actor
+  channel: ChannelId
+  conversation: 'dm' | 'group'
+}
+
+/**
+ * 工具调用的准入：先问 permission，再记一条审计，拒绝时抛出可读原因。
+ *
+ * 审计先写、再抛错：被拒绝的调用本身也是要留痕的事实。
+ * 「需要确认」等同于拒绝——渠道确认链路是 H 阶段的事（docs/07 §8）。
+ */
+export async function guardToolCall(guard: ToolGuard, toolName: string): Promise<void> {
+  const action = `tool.invoke:${toolName}`
+  const decision = await guard.permission.check({
+    actor: guard.actor,
+    channel: guard.channel,
+    conversation: guard.conversation,
+    action,
+    resource: toolName,
+  })
+
+  await guard.audit.append({
+    at: new Date(),
+    actorId: guard.actor.id,
+    channel: guard.channel,
+    action,
+    target: toolName,
+    ...(decision.effect === 'ask' ? {} : { decision: decision.effect }),
+    ...(decision.effect === 'allow' ? {} : { detail: { effect: decision.effect, reason: decisionText(decision) } }),
+    traceId: uid('trace'),
+  })
+
+  if (decision.effect === 'deny') throw new Error(`工具「${toolName}」被拒绝：${decision.reason}`)
+  if (decision.effect === 'ask') throw new Error(`工具「${toolName}」需要主人确认：${decision.prompt}`)
+}
+
+function decisionText(decision: { effect: 'deny'; reason: string } | { effect: 'ask'; prompt: string }): string {
+  return decision.effect === 'deny' ? decision.reason : decision.prompt
+}
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[]
@@ -221,6 +274,7 @@ export class McpHost extends McpService {
   private readonly options: Required<McpConfig>
   private readonly tools: HostTool[]
   private readonly toolsByName: Map<string, HostTool>
+  private readonly guard: ToolGuard
 
   constructor(ctx: Context, config: McpConfig = {}) {
     super(ctx)
@@ -228,9 +282,20 @@ export class McpHost extends McpService {
     if (!memory) throw new Error('[host-mcp] 缺少 memory 服务')
     const schedule = ctx.reflect.get('schedule', false) as ScheduleService | undefined
     if (!schedule) throw new Error('[host-mcp] 缺少 schedule 服务')
+    const permission = ctx.reflect.get('permission', false) as PermissionService | undefined
+    if (!permission) throw new Error('[host-mcp] 缺少 permission 服务')
+    const audit = ctx.reflect.get('audit', false) as AuditService | undefined
+    if (!audit) throw new Error('[host-mcp] 缺少 audit 服务')
 
     this.tools = createTools({ memory, schedule })
     this.toolsByName = new Map(this.tools.map((tool) => [tool.name, tool]))
+    this.guard = {
+      permission,
+      audit,
+      actor: { id: config.actorId?.trim() || 'owner', displayName: '主人', role: 'owner' },
+      channel: 'web',
+      conversation: config.conversation === 'group' ? 'group' : 'dm',
+    }
     this.options = {
       host: config.host ?? '127.0.0.1',
       port: config.port ?? 7420,
@@ -320,6 +385,8 @@ export class McpHost extends McpService {
       const tool = this.toolsByName.get(name)
       if (!tool) throw new Error(`未知工具：${name}`)
       const args = (params.arguments ?? {}) as Record<string, unknown>
+      // 先过权限与审计，再执行。被拒绝的调用也会留痕
+      await guardToolCall(this.guard, name)
       return await tool.call(args)
     }
     throw new Error(`未知方法：${method}`)

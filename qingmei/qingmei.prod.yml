@@ -22,6 +22,11 @@
     limit: 8
     minConfidence: 0.6
 
+# 工具调用的准入与留痕：host-mcp 每次 tools/call 都过这里
+- name: '@qingmei/provider-permission-static'
+
+- name: '@qingmei/provider-audit-sqlite'
+
 - name: '@qingmei/provider-llm-openai'
   config:
     baseURL: { $env: 'QM_LLM_BASE_URL' }

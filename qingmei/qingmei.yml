@@ -21,6 +21,11 @@
   config:
     greeting: '我是青梅，P1 版本先跑通闭环。'
 
+# 权限与审计：工具调用的准入与留痕（host-mcp 依赖它们）
+- name: '@qingmei/provider-permission-static'
+
+- name: '@qingmei/provider-audit-sqlite'
+
 # ── 业务
 - name: '@qingmei/qm-agent'
   config:

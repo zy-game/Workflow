@@ -1,9 +1,9 @@
 # NEXT · 下个会话从这里开始
 
-> 写于 2026-10-30，技术债 1/2、日程暂停·继续、日程编辑完成并已部署；
+> 写于 2026-10-30，技术债 1/2、日程暂停·继续、日程编辑、工具准入与审计完成并已部署；
 > 同一天把 `docs/` 与实现对齐（见第 7 节）。
-> 仓库全量测试 136/136（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
-> 新会话第一句建议：「读 qingmei/NEXT.md，做 M2 收口（工具审批 + 审计）」。
+> 仓库全量测试 154/154（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
+> 新会话第一句建议：「读 qingmei/NEXT.md，做渠道确认链路」。
 
 ## 1. 现在是什么状态
 
@@ -38,16 +38,22 @@ qm-history（qm_message 的唯一写入方）
 - **消息落库只有一个写方**：`qm-history`
   - `qm/turn/start` → 用户消息；`qm/outbound`（渠道投递成功后）→ 助手消息
   - `qm-agent` 只读 `qm_message` 组装上下文，`qm-reminder` 只投递不落库
+- **工具准入与审计**：每次 `tools/call` 先过 `permission` 再执行
+  - 判定：显式 deny > 显式 allow > 群聊默认 > 工具风险 > 全局默认 deny
+  - 工具分 `read` / `write` / `dangerous`；群聊拒绝改日程/写记忆，理由是可读中文
+  - `dangerous` 或 `ask` 一律先拒（渠道确认链路未做）；被拒绝的调用也写审计
+  - 审计落 `qm_audit`（只追加），列名按 docs/04；每次调用一条，带 `trace_id`
 - 人格白名单 + 输出卫生（内部工具名/路径不外泄）
 
 ## 2. 下一步
 
 > 2026-10-30 已把 `docs/` 与实现对齐（见第 7 节）。**现在以 docs/05 的 M2 清单为准**，
-> 下面按它的剩余项排。
+> 下面按它的剩余项排。M2 只差「渠道确认链路」这一条。
 
-1. **M2 收口：MCP 工具面的审批与审计**（docs/05 M2 验收第 5 条）。
-   最小版：`permission` 服务（先做静态规则：危险工具默认拒绝）→ 拒绝时写 `qm_audit` →
-   `qm_request_approval` 工具留给 H 阶段接渠道确认。
+1. **渠道确认链路**（docs/05 M2 验收第 5 条的后半）。
+   现在 `permission` 的 `ask` 直接按拒绝处理。要做的闭环：
+   `ask` → 生成待确认请求（存一条 `qm_approval`）→ Web 面板/接口批准或拒绝 →
+   批准后短时（如 60s）放行同一 `action` → 过期作废。没有确认 UI 之前不要放开 `ask`。
 2. **历史表结构**（合并「历史表索引」）：按 docs/04 给 `qm_message` 结构化
    （`blocks_json` / `direction` / `trace_id` + `(session_id, platform_message_id)` 幂等索引），
    加 `qm_turn` 账本。现在消息被拍平成 `text`，接 QQ/飞书后图片/卡片会丢结构。
@@ -69,7 +75,8 @@ qm-history（qm_message 的唯一写入方）
    长对话后要按 `session_id + created_at` 建真实列或加二级索引 —— 与第 2 节第 2 条一起做。
 5. **MCP 工具命名未统一**：对话车道是 `memory_*` / `schedule_*`，docs/07 的任务数据面是 `qm_*`；
    接 H 阶段前要统一，否则模型会在同义工具里选错。
-6. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
+6. **审计没有查询接口**：只能查库或写脚本；等路由挪回插件时一起给 `GET /api/v1/audit`。
+7. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
 
 ## 4. 运维速查（139.155.78.241，用户 ubuntu，密钥 company.pem）
 
@@ -210,11 +217,13 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
 | `docs/02` schedule | 契约改成实现的形状：`ScheduleInput` / `SchedulePatch` / `Scheduled(pausedAt, firedAt)` / `create|list|cancel|pause|resume|update`，并写明 cron 语义与 `InvalidScheduleError → 400` |
 | `docs/02` memory | 标注当前只做 fact 子集、`qm-agent` 把 memory 当可选的偏离 |
 | `docs/02` 事件表 | `qm/schedule/due` 的消费者改成 `qm-reminder` |
+| `docs/02` 服务清单 | 标注 10 个服务已实现（含 `permission` / `audit`），其余未实现 |
+| `docs/02` permission / audit | 标注实现口径：静态策略 + 工具风险分级、群聊默认拒绝、`ask` 先拒；审计落 `qm_audit`、只追加、只记 MCP 工具调用 |
 | `docs/03` §8 | 标注当前 HTTP 面只实现了 messages/events/schedules/healthz，会话资源与幂等键未做 |
-| `docs/05` M2 | 按 ADR-013 重写交付物与验收：工具面 = MCP 注册表 + 白名单/审批，删除「自研工具循环 6 步/90s」这类已作废的验收 |
+| `docs/05` M2 | 按 ADR-013 重写交付物与验收：工具面 = MCP 注册表 + 白名单/审批，删除「自研工具循环 6 步/90s」这类已作废的验收；状态更新为「静态准入 + 审计已完成，渠道确认未做」 |
 | `docs/07` §4 | 标注目标工具集（`qm_*`）未实现，当前只有对话车道的 `memory_*` / `schedule_*` |
 | `README-P1.md` | 标明它是 M0 的历史验收记录，当前状态看 NEXT |
 
-还**没**对齐（属于代码要改，不是文档要改）：工具审批与审计、`qm_turn` 账本、
-`gateway.route` 无生产使用者、MCP 命名统一、memory 必需化、`cron.ts` 拆分。
+还**没**对齐（属于代码要改，不是文档要改）：渠道确认链路（`ask` 目前等于拒绝）、
+`qm_turn` 账本、`gateway.route` 无生产使用者、MCP 命名统一、memory 必需化、`cron.ts` 拆分。
 这些都在第 2 节里排了序。

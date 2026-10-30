@@ -378,6 +378,69 @@ export abstract class MemoryService extends Service {
   abstract forget(ids: string[]): Promise<number>
 }
 
+// ────────────────────────────────────────────── 权限与审计
+
+export interface Actor {
+  id: string
+  displayName: string
+  role: 'owner' | 'family' | 'guest' | 'stranger'
+}
+
+export interface PermissionRequest {
+  actor: Actor
+  channel: ChannelId
+  conversation: 'dm' | 'group'
+  /** 'tool.invoke:<name>' | 'memory.read' | 'channel.send'… */
+  action: string
+  resource?: string
+}
+
+export type Decision =
+  | { effect: 'allow' }
+  | { effect: 'deny'; reason: string }
+  | { effect: 'ask'; prompt: string }
+
+/** 静态策略：动作前缀匹配（'tool.invoke:schedule_' 命中所有 schedule_*） */
+export interface PolicyRule {
+  match: string
+  effect: 'allow' | 'deny' | 'ask'
+  reason?: string
+  prompt?: string
+  conversation?: 'dm' | 'group'
+  role?: Actor['role']
+}
+
+export abstract class PermissionService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'permission')
+  }
+  abstract check(req: PermissionRequest): Promise<Decision>
+  abstract rules(): PolicyRule[]
+  /** 运行时追加规则；返回撤销函数 */
+  abstract addRule(rule: PolicyRule): () => void
+}
+
+export interface AuditEntry {
+  at: Date
+  actorId: string
+  channel: ChannelId
+  action: string
+  target?: string
+  decision?: 'allow' | 'deny'
+  /** 已脱敏；原始内容只存引用 */
+  detail?: Record<string, unknown>
+  traceId: string
+}
+
+/** 审计只追加：没有 update / delete */
+export abstract class AuditService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'audit')
+  }
+  abstract append(entry: AuditEntry): Promise<void>
+  abstract query(q: { since?: Date; actorId?: string; action?: string; limit?: number }): Promise<AuditEntry[]>
+}
+
 // ────────────────────────────────────────────── MCP
 
 /**

@@ -26,6 +26,9 @@ importers:
       '@qingmei/host-mcp':
         specifier: workspace:*
         version: link:../../packages/host-mcp
+      '@qingmei/provider-audit-sqlite':
+        specifier: workspace:*
+        version: link:../../packages/provider-audit-sqlite
       '@qingmei/provider-dsh-acp':
         specifier: workspace:*
         version: link:../../packages/provider-dsh-acp
@@ -38,6 +41,9 @@ importers:
       '@qingmei/provider-memory-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-memory-sqlite
+      '@qingmei/provider-permission-static':
+        specifier: workspace:*
+        version: link:../../packages/provider-permission-static
       '@qingmei/provider-schedule-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-schedule-sqlite
@@ -122,6 +128,23 @@ importers:
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-permission-static':
+        specifier: workspace:*
+        version: link:../provider-permission-static
+
+  packages/provider-audit-sqlite:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
 
   packages/provider-dsh-acp:
     dependencies:
@@ -171,6 +194,15 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
+
+  packages/provider-permission-static:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
 
   packages/provider-schedule-sqlite:
     dependencies:

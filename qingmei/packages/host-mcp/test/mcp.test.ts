@@ -2,8 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Context } from 'cordis'
 import {
+  AuditService,
   MemoryService,
+  PermissionService,
   ScheduleService,
+  type AuditEntry,
+  type Decision,
   type MemoryRecord,
   type RecallQuery,
   type RecallResult,
@@ -11,7 +15,8 @@ import {
   type ScheduleInput,
   type SchedulePatch,
 } from '@qingmei/core'
-import { createTools, scheduleInputFrom, type HostTool } from '../src/index.ts'
+import * as permissionPlugin from '@qingmei/provider-permission-static'
+import { createTools, guardToolCall, scheduleInputFrom, type HostTool, type ToolGuard } from '../src/index.ts'
 
 // ────────────────────────────────────────────── 假服务
 
@@ -138,6 +143,58 @@ function setup() {
 
 function textOf(result: { content: { type: string; text: string }[] }): string {
   return result.content.map((block) => block.text).join('\n')
+}
+
+// ────────────────────────────────────────────── 鉴权替身
+
+class FakePermission extends PermissionService {
+  private readonly decision: Decision
+
+  constructor(ctx: Context, decision: Decision) {
+    super(ctx)
+    this.decision = decision
+  }
+
+  async check(): Promise<Decision> {
+    return this.decision
+  }
+
+  rules() {
+    return []
+  }
+
+  addRule(): () => void {
+    return () => {}
+  }
+}
+
+class FakeAudit extends AuditService {
+  readonly entries: AuditEntry[] = []
+
+  constructor(ctx: Context) {
+    super(ctx)
+  }
+
+  async append(entry: AuditEntry): Promise<void> {
+    this.entries.push(entry)
+  }
+
+  async query(): Promise<AuditEntry[]> {
+    return [...this.entries]
+  }
+}
+
+function guardWith(decision: Decision): { guard: ToolGuard; audit: FakeAudit } {
+  const ctx = new Context()
+  const audit = new FakeAudit(ctx)
+  const guard: ToolGuard = {
+    permission: new FakePermission(ctx, decision),
+    audit,
+    actor: { id: 'owner', displayName: '主人', role: 'owner' },
+    channel: 'web',
+    conversation: 'dm',
+  }
+  return { guard, audit }
 }
 
 // ────────────────────────────────────────────── 用例
@@ -310,4 +367,56 @@ test('工具定义是纯数据，handler 只通过依赖访问服务', async () 
     tools.map((tool) => tool.name),
     again.map((tool) => tool.name),
   )
+})
+
+// ────────────────────────────────────────────── 准入与审计
+
+test('guardToolCall：放行时留一条 allow 审计', async () => {
+  const { guard, audit } = guardWith({ effect: 'allow' })
+  await guardToolCall(guard, 'schedule_create')
+
+  assert.equal(audit.entries.length, 1)
+  const entry = audit.entries[0]!
+  assert.equal(entry.action, 'tool.invoke:schedule_create')
+  assert.equal(entry.target, 'schedule_create')
+  assert.equal(entry.actorId, 'owner')
+  assert.equal(entry.channel, 'web')
+  assert.equal(entry.decision, 'allow')
+  assert.equal(entry.detail, undefined)
+  assert.match(entry.traceId, /^trace_/)
+})
+
+test('guardToolCall：拒绝时抛可读原因，并留一条 deny 审计', async () => {
+  const { guard, audit } = guardWith({ effect: 'deny', reason: '群聊里不能读或改你的日程' })
+
+  await assert.rejects(guardToolCall(guard, 'schedule_list'), /被拒绝：群聊里不能读或改你的日程/)
+  assert.equal(audit.entries.length, 1)
+  assert.equal(audit.entries[0]!.decision, 'deny')
+  assert.deepEqual(audit.entries[0]!.detail, { effect: 'deny', reason: '群聊里不能读或改你的日程' })
+})
+
+test('guardToolCall：需要确认时按拒绝处理，审计里记下 effect=ask', async () => {
+  const { guard, audit } = guardWith({ effect: 'ask', prompt: '执行 shell 前需要主人确认' })
+
+  await assert.rejects(guardToolCall(guard, 'shell'), /需要主人确认：执行 shell 前需要主人确认/)
+  assert.equal(audit.entries[0]!.decision, undefined)
+  assert.deepEqual(audit.entries[0]!.detail, { effect: 'ask', reason: '执行 shell 前需要主人确认' })
+})
+
+test('当前全部工具在私聊里都能通过真实策略（新增工具忘了登记会在这里挂）', async () => {
+  const { tools } = setup()
+  const ctx = new Context()
+  await ctx.plugin(permissionPlugin)
+  const permission = ctx.reflect.get('permission', false) as PermissionService
+
+  for (const tool of tools) {
+    const decision = await permission.check({
+      actor: { id: 'owner', displayName: '主人', role: 'owner' },
+      channel: 'web',
+      conversation: 'dm',
+      action: `tool.invoke:${tool.name}`,
+      resource: tool.name,
+    })
+    assert.equal(decision.effect, 'allow', `${tool.name} 没在权限策略里登记，私聊也会被默认拒绝`)
+  }
 })
