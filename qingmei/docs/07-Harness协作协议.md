@@ -129,6 +129,13 @@ interface NewSessionOptions {
 `qm_finish_task` 携带的 `memory` 字段是跨端记忆的主要来源：PC 工作区做完的事，通过它变成
 手机可召回的事实与教训。格式与合并规则见 [10 · 跨端统一记忆](10-跨端统一记忆.md) §5.1。
 
+> **当前落地（2026-10-30）**：上表是「子 agent 任务数据面」的目标工具集，**尚未实现**。
+> 现在 `host-mcp` 只暴露对话车道用得到的
+> `memory_recall` / `memory_remember` / `schedule_create` / `schedule_update` /
+> `schedule_cancel` / `schedule_pause` / `schedule_resume` / `schedule_list`（无 `qm_` 前缀）。
+> 接 H 阶段做任务数据面时要做两件事：统一 `qm_` 命名；把「对话车道工具」与「任务上报工具」
+> 分成两组，否则模型会在同义工具里选错。
+
 `qm_report_progress` 的入参刻意保持极简，避免子 agent 花 token 填表：
 
 ```json
