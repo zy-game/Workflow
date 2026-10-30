@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0e1014" />
+    <title>青梅 · P1</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230e1014'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%237ed6a6'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- P1 零构建：原生 ES module 直接由网关托管；M0 起迁移 Vue 3（见 app.js 顶部注释）。 -->
+    <div class="app">
+      <header class="topbar">
+        <h1 class="brand">青梅 · <span class="brand-phase">P1</span></h1>
+        <span
+          id="status"
+          class="status"
+          data-state="connecting"
+          role="status"
+          aria-live="polite"
+          title="连接中…"
+        >
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-text" class="status-text">连接中…</span>
+        </span>
+      </header>
+
+      <main id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text" aria-label="对话">
+        <p id="empty" class="empty">说点什么吧。P1 先跑通一条最小闭环。</p>
+      </main>
+
+      <form id="composer" class="composer" autocomplete="off">
+        <label class="sr-only" for="input">消息</label>
+        <textarea
+          id="input"
+          class="input"
+          name="text"
+          rows="1"
+          maxlength="8000"
+          placeholder="给青梅发消息…"
+          enterkeyhint="send"
+        ></textarea>
+        <button id="send" class="send" type="submit">发送</button>
+      </form>
+    </div>
+    <noscript><p class="noscript">青梅 Web 端需要 JavaScript。</p></noscript>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,210 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  apps/server:
+    dependencies:
+      '@qingmei/channel-web':
+        specifier: workspace:*
+        version: link:../../packages/channel-web
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@qingmei/host-gateway':
+        specifier: workspace:*
+        version: link:../../packages/host-gateway
+      '@qingmei/provider-llm-echo':
+        specifier: workspace:*
+        version: link:../../packages/provider-llm-echo
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../../packages/provider-store-sqlite
+      '@qingmei/qm-agent':
+        specifier: workspace:*
+        version: link:../../packages/qm-agent
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../../packages/service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../../packages/service-gateway
+      '@qingmei/service-llm':
+        specifier: workspace:*
+        version: link:../../packages/service-llm
+      '@qingmei/service-store':
+        specifier: workspace:*
+        version: link:../../packages/service-store
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+      js-yaml:
+        specifier: ^5.5.0
+        version: 5.5.0
+
+  packages/channel-web:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/core:
+    dependencies:
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/host-gateway:
+    dependencies:
+      '@qingmei/channel-web':
+        specifier: workspace:*
+        version: link:../channel-web
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/provider-llm-echo:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      '@qingmei/service-llm':
+        specifier: workspace:*
+        version: link:../service-llm
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/provider-store-sqlite:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      '@qingmei/service-store':
+        specifier: workspace:*
+        version: link:../service-store
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/qm-agent:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
+      '@qingmei/service-llm':
+        specifier: workspace:*
+        version: link:../service-llm
+      '@qingmei/service-store':
+        specifier: workspace:*
+        version: link:../service-store
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/service-channel:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/service-gateway:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/service-llm:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/service-store:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+packages:
+
+  '@standard-schema/spec@1.1.0':
+    resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  argparse@3.0.4:
+    resolution: {integrity: sha512-fwWK3Zq22l4XJJjx5mcBHGikIk+hJqO+32dPm0Jur7+rtG5x1scOjSfdT9ZKeWHPpsya/l0HHK4tDImBkTrtvA==}
+
+  cordis@4.0.0-rc.12:
+    resolution: {integrity: sha512-/ZtRivYxr5sffTULPewHuX5kEy5sWi8oADHSpnt0KjAd8uKRIj+kv4fh3lxtutIfVlgwJVFVXWOQp/gYa+kIOQ==}
+    hasBin: true
+    peerDependencies:
+      '@cordisjs/plugin-include': ^1.2.0
+      '@cordisjs/plugin-loader': ^1.0.0-rc.9
+    peerDependenciesMeta:
+      '@cordisjs/plugin-include':
+        optional: true
+      '@cordisjs/plugin-loader':
+        optional: true
+
+  cosmokit@1.8.1:
+    resolution: {integrity: sha512-PDBv4l90xZKrUsZ0vtoycgZpO/j4iFsqJXrAxsyBDsnQRI7ZMJXIjgDJsKNjd5L8jnVnnlrDCdhkFbTncgCVjQ==}
+
+  js-yaml@5.5.0:
+    resolution: {integrity: sha512-paNr4LFIFPjeeSmwNYdrb8FafLLG/Cr2Af3GjbsHJ5CxIjH4r0c2emlmRdAtpPAieP1gRVzk6buBbVP5gBMGAg==}
+    hasBin: true
+
+snapshots:
+
+  '@standard-schema/spec@1.1.0': {}
+
+  argparse@3.0.4: {}
+
+  cordis@4.0.0-rc.12:
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      cosmokit: 1.8.1
+
+  cosmokit@1.8.1: {}
+
+  js-yaml@5.5.0:
+    dependencies:
+      argparse: 3.0.4

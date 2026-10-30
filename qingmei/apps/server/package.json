@@ -1,0 +1,21 @@
+{
+  "name": "@qingmei/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@qingmei/channel-web": "workspace:*",
+    "@qingmei/core": "workspace:*",
+    "@qingmei/host-gateway": "workspace:*",
+    "@qingmei/provider-llm-echo": "workspace:*",
+    "@qingmei/provider-store-sqlite": "workspace:*",
+    "@qingmei/qm-agent": "workspace:*",
+    "@qingmei/service-channel": "workspace:*",
+    "@qingmei/service-gateway": "workspace:*",
+    "@qingmei/service-llm": "workspace:*",
+    "@qingmei/service-store": "workspace:*",
+    "cordis": "4.0.0-rc.12",
+    "js-yaml": "^5.5.0"
+  }
+}

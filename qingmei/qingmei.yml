@@ -1,0 +1,37 @@
+# 青梅 P1 组合根（assembly root）
+#
+# 每一项是一份插件清单：name 是包名，组合根按 name 动态 import 后交给 cordis；
+# config 原样传给插件。顺序无关：插件由依赖（inject）决定实际加载时机，
+# 排在前面的消费方会停在 PENDING，等提供方就绪后自动继续。
+#
+# 相对路径（path / webRoot）以进程工作目录为基准，请在仓库根目录启动。
+
+# ── 服务契约的实现（基础设施；service-store / service-llm 是门面，无运行时行为）
+- name: '@qingmei/service-store'
+- name: '@qingmei/service-llm'
+- name: '@qingmei/service-channel'
+- name: '@qingmei/service-gateway'
+
+# ── 提供方
+- name: '@qingmei/provider-store-sqlite'
+  config:
+    path: './data/qm.db'
+
+- name: '@qingmei/provider-llm-echo'
+  config:
+    greeting: '我是青梅，P1 版本先跑通闭环。'
+
+# ── 业务
+- name: '@qingmei/qm-agent'
+  config:
+    persona: '你叫青梅，是一个务实的个人助理。回答简短。'
+
+# ── 渠道与宿主
+- name: '@qingmei/channel-web'
+
+- name: '@qingmei/host-gateway'
+  config:
+    host: '127.0.0.1'
+    port: 7410
+    token: 'dev-token'
+    webRoot: './apps/web/public'

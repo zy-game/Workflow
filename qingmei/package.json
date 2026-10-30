@@ -1,0 +1,20 @@
+{
+  "name": "qingmei",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.13.1",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node apps/server/src/index.ts",
+    "dev": "node --watch apps/server/src/index.ts",
+    "qm": "node apps/server/src/cli.ts",
+    "serve": "node apps/server/src/cli.ts serve",
+    "doctor": "node apps/server/src/cli.ts doctor",
+    "smoke": "node scripts/smoke.mjs",
+    "test": "node --test --test-reporter=spec"
+  },
+  "dependencies": {
+    "cordis": "4.0.0-rc.12"
+  }
+}
