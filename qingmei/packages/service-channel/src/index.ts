@@ -6,6 +6,7 @@
  */
 import type { Context } from 'cordis'
 import {
+  EVENTS,
   ChannelService,
   type ChannelAdapter,
   type ChannelId,
@@ -69,11 +70,25 @@ export class ChannelHub extends ChannelService {
   async send(envelope: OutboundEnvelope): Promise<SendResult> {
     const entry = this.adapters.get(envelope.channel)
     if (!entry) return { ok: false, error: 'no adapter' }
+    let result: SendResult
     try {
-      return await entry.adapter.send(envelope)
+      result = await entry.adapter.send(envelope)
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+    if (result.ok) {
+      // 投递成功才发 qm/outbound；用 parallel 等订阅者（落库）写完，
+      // 这样发送方一返回，下一回合读历史就能看到这条消息。
+      try {
+        await this.ctx.events.parallel(EVENTS.outbound, {
+          ...envelope,
+          ...(result.platformMessageId ? { platformMessageId: result.platformMessageId } : {}),
+        })
+      } catch (error) {
+        this.report('出站消息的收尾处理失败', error)
+      }
+    }
+    return result
   }
 
   status(): { id: ChannelId; online: boolean }[] {

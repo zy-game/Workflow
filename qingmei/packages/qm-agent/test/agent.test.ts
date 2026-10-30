@@ -1,19 +1,18 @@
 /**
  * qm-agent 的回合行为测试。
  *
- * 用内存版 store/channel/gateway 与脚本化 llm 驱动真实的 cordis 容器，
- * 断言流式事件、上下文组装、落库与渠道回投的实际内容。
+ * 用内存版 store、真实 service-channel + 假适配器、脚本化 llm 驱动真实的 cordis 容器，
+ * 断言流式事件、上下文组装、落库（由 qm-history 负责）与渠道回投的实际内容。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Context } from 'cordis'
 import {
   EVENTS,
-  ChannelService,
   GatewayService,
   StoreService,
   type ChannelAdapter,
-  type ChannelId,
+  type ChannelCapabilities,
   type Collection,
   type GatewayEvent,
   type InboundMessage,
@@ -27,6 +26,8 @@ import {
 } from '@qingmei/core'
 import { LlmService, type ChatRequest, type ChatStreamChunk } from '@qingmei/service-llm'
 
+import * as channelPlugin from '@qingmei/service-channel'
+import * as historyPlugin from '@qingmei/qm-history'
 import * as agent from '../src/index.ts'
 
 const PERSONA = '你是青梅，回答简短。'
@@ -190,26 +191,6 @@ function createFakes(options: FakeOptions) {
     }
   }
 
-  class FakeChannel extends ChannelService {
-    constructor(ctx: Context) {
-      super(ctx)
-    }
-
-    register(_adapter: ChannelAdapter): () => void {
-      return () => {}
-    }
-
-    async send(envelope: OutboundEnvelope): Promise<SendResult> {
-      if (options.failSend) throw new Error(options.failSend)
-      state.sent.push(envelope)
-      return { ok: true, platformMessageId: `out_${state.sent.length}` }
-    }
-
-    status(): { id: ChannelId; online: boolean }[] {
-      return []
-    }
-  }
-
   class FakeGateway extends GatewayService {
     constructor(ctx: Context) {
       super(ctx)
@@ -252,7 +233,30 @@ function createFakes(options: FakeOptions) {
     }
   }
 
-  return { state, FakeStore, FakeChannel, FakeGateway, FakeLlm }
+  // 走真实的 service-channel：qm/outbound 由它发出，qm-history 才能落库
+  const adapter: ChannelAdapter = {
+    id: 'web',
+    capabilities: {
+      markdown: true,
+      card: true,
+      button: true,
+      image: true,
+      voice: false,
+      file: false,
+      edit: false,
+      thread: false,
+      maxTextLength: 4000,
+    },
+    async start(): Promise<void> {},
+    async stop(): Promise<void> {},
+    async send(envelope: OutboundEnvelope): Promise<SendResult> {
+      if (options.failSend) throw new Error(options.failSend)
+      state.sent.push(envelope)
+      return { ok: true, platformMessageId: `out_${state.sent.length}` }
+    },
+  }
+
+  return { state, adapter, FakeStore, FakeGateway, FakeLlm }
 }
 
 // ────────────────────────────────────────────── 测试脚手架
@@ -269,10 +273,12 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   const fakes = createFakes(options)
 
   await ctx.plugin(fakes.FakeStore)
-  await ctx.plugin(fakes.FakeChannel)
+  await ctx.plugin(channelPlugin)
   await ctx.plugin(fakes.FakeGateway)
   await ctx.plugin(fakes.FakeLlm)
+  await ctx.plugin(historyPlugin)
   await ctx.plugin(agent, { persona: PERSONA })
+  ctx.channel.register(fakes.adapter)
 
   const chunks: TurnChunk[] = []
   const ends: TurnEnd[] = []
@@ -286,9 +292,12 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   return { ctx, state: fakes.state, chunks, ends }
 }
 
+let inboundSeq = 0
+
 function inbound(text: string, conversationId = 'conv-1'): InboundMessage {
+  inboundSeq += 1
   return {
-    platformMessageId: 'pm_1',
+    platformMessageId: `pm_${inboundSeq}`,
     channel: 'web',
     accountId: 'account-1',
     conversation: { kind: 'dm', id: conversationId },
@@ -366,7 +375,8 @@ test('一次 inbound：chunk 事件、turn/end、store 两条消息、渠道回�
     { role: 'user', content: '在吗' },
   ])
 
-  // 落库：user 与 assistant 各一条，带齐 P1 约定字段
+  // 落库：user 与 assistant 各一条，带齐 P1 约定字段（qm-history 异步写入，等它落完）
+  await waitFor(() => h.state.messages().length === 2, '落库两条')
   const rows = h.state.messages()
   assert.equal(rows.length, 2)
   assert.deepEqual(
@@ -415,6 +425,7 @@ test('上下文只取本会话最近 20 条历史，并按 created_at 升序拼�
   assert.deepEqual(current, { role: 'user', content: '现在几点了' })
 
   // 两条新消息也进库：25 条历史 + 1 条别的会话 + 本轮 2 条
+  await waitFor(() => h.state.messages().length === 28, '本轮两条落库')
   assert.equal(h.state.messages().length, 28)
 })
 
@@ -434,6 +445,7 @@ test('模型出错：兜底回复、turn/end 仍发出且 ok=false、历史照�
     error: '模型路由不可用',
   })
 
+  await waitFor(() => h.state.messages().length === 2, '落库两条')
   assert.deepEqual(
     h.state.messages().map((row) => [row.role, row.text]),
     [
@@ -465,6 +477,7 @@ test('同一会话的两个回合串行执行，后一回合能看到前一回�
     { role: 'user', content: '第二条' },
   ])
 
+  await waitFor(() => h.state.messages().length === 4, '两轮都落库')
   assert.deepEqual(
     h.state.messages().map((row) => [row.role, row.text]),
     [
@@ -477,7 +490,7 @@ test('同一会话的两个回合串行执行，后一回合能看到前一回�
   assert.equal(h.state.sent.length, 2)
 })
 
-test('渠道发送失败：落库照做、turn/end 仍发出且 ok=false', async () => {
+test('渠道发送失败：只剩用户消息，turn/end 仍发出且 ok=false', async () => {
   const h = await boot({ chunks: ['好。'], failSend: '渠道离线' })
 
   h.ctx.events.emit(EVENTS.inbound, inbound('在吗'))
@@ -491,16 +504,15 @@ test('渠道发送失败：落库照做、turn/end 仍发出且 ok=false', async
     error: '渠道发送失败：渠道离线',
   })
   assert.equal(h.state.sent.length, 0)
+  // 助手消息由 qm/outbound 落库，投递失败就没有这一条；用户消息在入站时已经写下
+  await waitFor(() => h.state.messages().length === 1, '只有用户消息')
   assert.deepEqual(
     h.state.messages().map((row) => [row.role, row.text]),
-    [
-      ['user', '在吗'],
-      ['assistant', '好。'],
-    ],
+    [['user', '在吗']],
   )
 })
 
-test('落库失败：回复照发、turn/end 仍发出且 ok=false', async () => {
+test('落库失败：回复照发、turn/end 仍为 ok（落库不再属于回合职责）', async () => {
   const h = await boot({ chunks: ['好。'], failInsert: '磁盘只读' })
 
   h.ctx.events.emit(EVENTS.inbound, inbound('在吗'))
@@ -508,10 +520,9 @@ test('落库失败：回复照发、turn/end 仍发出且 ok=false', async () =>
 
   assert.deepEqual(h.ends[0], {
     sessionId: 's_conv-1',
-    ok: false,
+    ok: true,
     text: '好。',
     userText: '在吗',
-    error: '写入会话记录失败：磁盘只读',
   })
   assert.equal(h.state.messages().length, 0)
   assert.equal(h.state.sent.length, 1)

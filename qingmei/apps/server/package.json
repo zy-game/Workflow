@@ -13,6 +13,7 @@
     "@qingmei/provider-dsh-acp": "workspace:*",
     "@qingmei/provider-store-sqlite": "workspace:*",
     "@qingmei/qm-agent": "workspace:*",
+    "@qingmei/qm-history": "workspace:*",
     "@qingmei/qm-reminder": "workspace:*",
     "@qingmei/provider-schedule-sqlite": "workspace:*",
     "@qingmei/host-mcp": "workspace:*",

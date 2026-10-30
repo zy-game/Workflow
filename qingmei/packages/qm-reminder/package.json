@@ -10,5 +10,10 @@
   "dependencies": {
     "cordis": "4.0.0-rc.12",
     "@qingmei/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@qingmei/provider-store-sqlite": "workspace:*",
+    "@qingmei/qm-history": "workspace:*",
+    "@qingmei/service-channel": "workspace:*"
   }
 }

@@ -13,5 +13,8 @@
     "cordis": "4.0.0-rc.12",
     "@qingmei/core": "workspace:*",
     "@qingmei/service-channel": "workspace:*"
+  },
+  "devDependencies": {
+    "@qingmei/qm-history": "workspace:*"
   }
 }

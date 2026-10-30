@@ -2,7 +2,10 @@
  * @qingmei/qm-agent —— P1 对话代理。
  *
  * 一个回合：qm/inbound 进 → 读历史并组装上下文 → 流式取模型输出（边收边广播）
- * → 落库 user/assistant 两条消息 → 报 qm/turn/end → 把完整回复回投到来源渠道。
+ * → 把完整回复回投到来源渠道 → 报 qm/turn/end。
+ *
+ * 落库不在这里：用户消息由 qm-history 订阅 qm/inbound 写，助手消息由它订阅
+ * qm/outbound（渠道投递成功后）写。本插件只读 qm_message 组装上下文。
  *
  * 并发策略：同一 sessionId 的回合串行排队，不同 sessionId 各自独立。
  */
@@ -10,7 +13,6 @@ import type { Context } from 'cordis'
 import {
   EVENTS,
   textOf,
-  uid,
   type ChatMessage,
   type ChannelService,
   type GatewayService,
@@ -86,6 +88,8 @@ interface StoredMessage extends Row {
   session_id: string
   role: 'user' | 'assistant'
   text: string
+  /** 入站消息的平台 id，用于把「本轮消息」从历史里摘出去 */
+  platform_message_id?: string
   created_at: number
 }
 
@@ -103,14 +107,6 @@ export function apply(ctx: Context, config: AgentConfig): void {
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
 
-  /** 本插件写入的时间戳单调递增，避免同一毫秒内的两条消息排序不稳定 */
-  let lastCreatedAt = 0
-
-  function nextCreatedAt(): number {
-    lastCreatedAt = Math.max(Date.now(), lastCreatedAt + 1)
-    return lastCreatedAt
-  }
-
   // core 没有扩展 cordis 的 Events 接口，应用级事件名统一走 events 服务；
   // 它与 ctx.on / ctx.emit 是同一条总线，订阅同样随本插件卸载而释放。
   function publishChunk(sessionId: string, text: string): void {
@@ -119,14 +115,25 @@ export function apply(ctx: Context, config: AgentConfig): void {
     gateway.publish({ type: 'chunk', data: chunk })
   }
 
-  async function loadHistory(sessionId: string): Promise<ChatMessage[]> {
+  /**
+   * 取本会话「本轮之前」的历史。
+   *
+   * 用户消息在 qm/inbound 时就被 qm-history 落库了，所以历史里可能已经有本轮这条，
+   * 甚至已经有排在后面的消息。按 platformMessageId 找到本轮那条，截断到它之前，
+   * 再由调用方把当前 userText 补在最后——上下文才和「此刻」对齐。
+   */
+  async function loadHistory(sessionId: string, platformMessageId: string): Promise<ChatMessage[]> {
     const rows = await store.collection<StoredMessage>(MESSAGE_COLLECTION).find({
       where: { session_id: sessionId },
       order: [{ field: 'created_at', dir: 'desc' }],
-      limit: HISTORY_LIMIT,
+      // 多取一条：历史里可能已经有本轮这条，截掉之后仍要凑满 HISTORY_LIMIT
+      limit: HISTORY_LIMIT + 1,
     })
     // store 只保证「按 created_at 降序取最近 N 条」，回读时翻回时间正序
-    return rows.reverse().map((row) => ({ role: row.role, content: row.text }))
+    const ordered = rows.reverse()
+    const cut = ordered.findIndex((row) => row.platform_message_id === platformMessageId)
+    const past = cut >= 0 ? ordered.slice(0, cut) : ordered
+    return past.slice(-HISTORY_LIMIT).map((row) => ({ role: row.role, content: row.text }))
   }
 
   async function streamReply(
@@ -145,30 +152,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
     return text
   }
 
-  async function persistTurn(sessionId: string, userText: string, reply: string): Promise<void> {
-    const collection = store.collection<StoredMessage>(MESSAGE_COLLECTION)
-    // 两条消息必须同生共死：只写进 user 而没有 assistant，历史里会留下无回复的孤儿。
-    await store.transaction(async () => {
-      await collection.insert({
-        id: uid('msg'),
-        session_id: sessionId,
-        role: 'user',
-        text: userText,
-        created_at: nextCreatedAt(),
-      })
-      await collection.insert({
-        id: uid('msg'),
-        session_id: sessionId,
-        role: 'assistant',
-        text: reply,
-        created_at: nextCreatedAt(),
-      })
-    })
-  }
-
   async function runTurn(message: InboundMessage): Promise<void> {
     const sessionId = sessionIdOf(message)
     const userText = textOf(message.blocks)
+    // 轮到这条消息了：先报 turn/start，qm-history 按这个顺序写用户消息
+    ctx.events.emit(EVENTS.turnStart, { sessionId, message })
     /** 回合里所有可上报的失败，按发生顺序累积；非空即 ok=false */
     const problems: string[] = []
     const controller = new AbortController()
@@ -215,7 +203,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       } else {
         const messages: ChatMessage[] = [
           { role: 'system', content: memoryText ? `${persona}\n\n【已知记忆】\n${memoryText}` : persona },
-          ...(await loadHistory(sessionId)),
+          ...(await loadHistory(sessionId, message.platformMessageId)),
           { role: 'user', content: userText },
         ]
         reply = await streamReply(sessionId, messages, controller.signal)
@@ -226,13 +214,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
       reply = `${FALLBACK_PREFIX}${problems[0]}`
     }
 
-    // 先过滤再落库/发送：用户看到的与历史里存的都必须是干净的
+    // 先过滤再发送：用户看到的与历史里存的都必须是干净的
     reply = sanitizeReply(reply)
-
-    try {
-      await persistTurn(sessionId, userText, reply)
-    } catch (error) {      problems.push(`写入会话记录失败：${messageOf(error)}`)
-    }
 
     try {
       const result = await channel.send({

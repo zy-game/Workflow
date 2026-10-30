@@ -1,7 +1,7 @@
 # NEXT · 下个会话从这里开始
 
-> 写于 2026-10-30，M2-cron + Web 日程页完成并已部署。仓库全量测试 108/108（`node --test`）。
-> 新会话第一句建议：「读 qingmei/NEXT.md，做技术债 1」。
+> 写于 2026-10-30，技术债 1（消息落库统一）完成并已部署。仓库全量测试 123/123（`node --test`）。
+> 新会话第一句建议：「读 qingmei/NEXT.md，做技术债 2」。
 
 ## 1. 现在是什么状态
 
@@ -9,6 +9,7 @@
 Web/QQ ─▶ gateway ─▶ qm-agent ─┬─▶ harness（DSH 0.2.1 / ACP）  对话车道
                                 └─▶ llm（OpenAI 兼容 / sub2api） 降级 + 后台抽取
 memory（事实）· mcp（memory/schedule 工具）· schedule（at / everyMs / cron）· channel · store
+qm-history（qm_message 的唯一写入方）
 ```
 
 已可用的能力：
@@ -21,29 +22,32 @@ memory（事实）· mcp（memory/schedule 工具）· schedule（at / everyMs /
   - 时区换算用 `Intl.DateTimeFormat` 反推 UTC：夏令时跳过的本地时间不触发，
     重复的本地时间只触发一次
 - 停机错过的：默认补发一次后重排；`missedPolicy: 'skip'` 则直接跳到下一次
-- 提醒到点后投递到 Web 并写入会话历史
+- 提醒到点后投递到 Web 并自动进会话历史（走 `qm/outbound`，不需要自己落库）
 - **Web 日程面板**：顶栏「日程」→ 列出全部提醒（按 nextAt 排序、按各自时区显示时间、
   带 cron 规则与 id），可逐条取消，已触发的一次性提醒保留最近 5 条
   - 接口 `GET /api/v1/schedules`、`DELETE /api/v1/schedules/<id>`
+- **消息落库只有一个写方**：`qm-history`
+  - `qm/turn/start` → 用户消息；`qm/outbound`（渠道投递成功后）→ 助手消息
+  - `qm-agent` 只读 `qm_message` 组装上下文，`qm-reminder` 只投递不落库
 - 人格白名单 + 输出卫生（内部工具名/路径不外泄）
 
 ## 2. 下一步
 
-1. **技术债 1：主动消息统一落库**。`qm-agent` 与 `qm-reminder` 各写一次 `qm_message`，
-   改成 `ChannelService.send` 成功后发 `qm/outbound`，由 `qm-history` 统一落库。
-2. **技术债 2：MCP 工具表去硬编码**。`host-mcp` 的 TOOLS 数组手写 schema，
-   新增工具要同步改 schema/描述/dispatch 三处；改成「工具定义 + handler」注册表。
-3. **日程编辑与暂停**。契约里 `pause/resume` 还没有实现；面板目前只有「取消」。
-4. 技术债见第 3 节；cron 细节见第 5 节，改之前先读。
+1. **技术债 2：MCP 工具表去硬编码**。`host-mcp` 的 TOOLS 数组手写 schema，
+   新增工具要同步改 schema/描述/dispatch 三处；改成「工具定义 + handler」注册表，
+   顺手把 `tools/list` 与 `tools/call` 用同一份定义驱动。
+2. **日程编辑与暂停**。契约里 `pause/resume` 还没有实现；面板目前只有「取消」。
+3. 技术债见第 3 节；落库链路见第 5 节，改之前先读。
 
 ## 3. 已知技术债（按优先级）
 
-1. **落库双份**：`qm-agent` 与 `qm-reminder` 各写一次 `qm_message`。应改为 `ChannelService.send` 成功后发 `qm/outbound`，由 `qm-history` 统一落库。
-2. **工具列表是写死的**：`host-mcp` 的 TOOLS 数组手写 schema，新增工具要同步改三处（schema/描述/dispatch）。
-3. **没有 tsc**：仓库只有 cordis 依赖，类型正确性靠审阅；若要补，加 typescript 并跑 `tsc --noEmit`。
-4. **tick 是全表扫描**：每秒 `find()` 一遍 `qm_schedule` 再在 JS 里比时间，日程多了要按 `next_at` 建索引或缩小查询。
-5. **前端没有构建与类型检查**：`apps/web/public/app.js` 是零构建原生模块，只靠
+1. **工具列表是写死的**：`host-mcp` 的 TOOLS 数组手写 schema，新增工具要同步改三处（schema/描述/dispatch）。
+2. **没有 tsc**：仓库只有 cordis 依赖，类型正确性靠审阅；若要补，加 typescript 并跑 `tsc --noEmit`。
+3. **tick 是全表扫描**：每秒 `find()` 一遍 `qm_schedule` 再在 JS 里比时间，日程多了要按 `next_at` 建索引或缩小查询。
+4. **前端没有构建与类型检查**：`apps/web/public/app.js` 是零构建原生模块，只靠
    `apps/web/test/ui-contract.test.ts` 守 DOM id 与接口路径。
+5. **历史表没有索引**：`qm_history` 每次 `find()` 都是全表扫（store 是通用 JSON 表），
+   长对话后要按 `session_id + created_at` 建真实列或加二级索引。
 6. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
 
 ## 4. 运维速查（139.155.78.241，用户 ubuntu，密钥 company.pem）
@@ -51,6 +55,7 @@ memory（事实）· mcp（memory/schedule 工具）· schedule（at / everyMs /
 ```bash
 # 本地
 cd E:/Workflow/qingmei && node --test          # 全量测试
+node scripts/smoke.mjs                        # 端到端：起服务→发消息→落库→重启后还在
 tar -czf ../qingmei-m2.tgz -C . --exclude=node_modules --exclude=data --exclude=.git .
 
 # 上传 + 部署
@@ -70,25 +75,34 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
-### M2-cron（上一次会话）
+### 落库统一（技术债 1）
 
 | 文件 | 改了什么 |
 | --- | --- |
-| `packages/core/src/cron.ts` | 新增：`parseCron` / `nextCronTime` / `systemTimeZone` |
-| `packages/core/src/index.ts` | `ScheduleInput` 加 `cron` / `timezone` / `missedPolicy`；`Scheduled` 同步 |
+| `packages/core/src/index.ts` | `EVENTS` 加 `turnStart` / `outbound`；新增 `TurnStart`、`OutboundRecord` |
+| `packages/service-channel` | `send` 成功后 `await events.parallel(qm/outbound, …)`，订阅者写完才返回；订阅者抛错不影响发送结果 |
+| `packages/qm-history`（新） | `qm_message` 唯一写方：`turn/start` 写用户消息、`outbound` 写助手消息；时间戳在收到事件时定序 |
+| `packages/qm-agent` | 删掉落库与事务，只读历史；`loadHistory` 按当前消息的 `platform_message_id` 截断到「本轮之前」 |
+| `packages/qm-reminder` | 只投递，不再依赖 store |
+| 配置 | `qingmei.yml` / `qingmei.prod.yml` / `apps/server/package.json` 加 `@qingmei/qm-history` |
+| 测试 | `qm-history`(5)、`qm-reminder`(4)、`service-channel`(6)；`qm-agent` 改用真实 ChannelHub + 假适配器 |
+
+语义变化（有意为之）：
+
+- 助手消息只在**投递成功**后落库。发送失败时历史里只剩用户消息，不再记录用户没看到的回复。
+- 落库失败不再算回合失败（`turn/end.ok` 仍为 true），由 `service-channel` 记 warn 日志。
+- 用户消息在**回合真正开始**（排队轮到它）时落库，而不是到达时——否则连发两条消息时，
+  第二条的用户行会排到第一条的回复前面。
+
+### 之前两轮（M2-cron / Web 日程页）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/cron.ts` | `parseCron` / `nextCronTime` / `systemTimeZone` |
 | `packages/provider-schedule-sqlite` | 三类规则统一推进；cron 到点重排；`skip` 策略；`defaultTimezone` |
-| `packages/host-mcp` | `schedule_create` 加 `cron` / `timezone` / `missedPolicy`；`seconds` 改为一次性；`schedule_list` 带 id |
-| 测试 | `core/test/cron.test.ts`(12)、`provider-schedule-sqlite/test/schedule.test.ts`(10)、`host-mcp/test/mcp.test.ts`(5)、`host-gateway/test/http.test.ts`(14)、`apps/web/test/ui-contract.test.ts`(2) |
-
-### Web 日程页（本次）
-
-| 文件 | 改了什么 |
-| --- | --- |
-| `packages/host-gateway/src/index.ts` | `GET /api/v1/schedules`、`DELETE /api/v1/schedules/<id>`，无 schedule 服务时 503 |
-| `apps/web/public/index.html` | 顶栏「日程」按钮 + 日程面板（列表/刷新/关闭/空态/错误态） |
-| `apps/web/public/app.js` | 拉列表、按各自时区渲染、逐条取消；回合结束后自动刷新 |
-| `apps/web/public/style.css` | `.app` 由 grid 改 flex（面板插在标题栏与消息之间），新增面板样式 |
-| `apps/web/test/ui-contract.test.ts` | 守 DOM id 与接口路径两处契约 |
+| `packages/host-mcp` | `schedule_create` 加 `cron` / `timezone` / `missedPolicy`；`schedule_list` 带 id |
+| `packages/host-gateway` | `GET /api/v1/schedules`、`DELETE /api/v1/schedules/<id>` |
+| `apps/web/public/*` | 顶栏「日程」面板：列出/刷新/取消，跨时区显示 |
 
 `Scheduled.firedAt` 的语义：一次性行到点后写入（退休标志）；周期行恒为 `null`，
 否则 `schedule_list` 与日程面板按 `firedAt === null` 过滤时会把周期提醒过滤掉。
@@ -124,3 +138,8 @@ sudo journalctl -u qingmei -n 50 --no-pager
 14. **部署验收要看数据，不只看 healthz**：这次 healthz 200、日志干净，
     但库里在每秒滚动。验收至少加一条：`GET /api/v1/schedules` 与
     `qm_message` 计数在 10 秒内不变。
+15. **事件顺序 ≠ 到达顺序**：入站就落库会让「连发两条」的第二条排在第一条的回复前面。
+    用户消息要等回合真正开始（`qm/turn/start`）再写；读历史时再按 `platform_message_id`
+    截断到本轮之前，才能兼容「本轮消息已经在库里」的情况。
+16. **`ctx.events.parallel()` 是唯一能等监听器跑完的派发方式**：`emit` 不等 promise，
+    想让「发送成功 → 落库完成」有先后保证，必须 `await parallel`。

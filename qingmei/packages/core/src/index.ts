@@ -55,6 +55,11 @@ export interface SendResult {
   error?: string
 }
 
+/** qm/outbound 的载荷：投递成功的出站消息 */
+export interface OutboundRecord extends OutboundEnvelope {
+  platformMessageId?: string
+}
+
 export interface ChannelCapabilities {
   markdown: boolean
   card: boolean
@@ -79,6 +84,10 @@ export interface ChannelAdapter {
 
 export const EVENTS = {
   inbound: 'qm/inbound',
+  /** 回合真正开始处理某条入站消息（排队轮到它时） */
+  turnStart: 'qm/turn/start',
+  /** 渠道发送成功后发出：落库、审计等收尾动作订阅它 */
+  outbound: 'qm/outbound',
   turnRequest: 'qm/turn/request',
   turnChunk: 'qm/turn/chunk',
   turnEnd: 'qm/turn/end',
@@ -136,6 +145,12 @@ export interface TurnRequest {
   sessionId: string
   inbound: InboundMessage
   history: ChatMessage[]
+}
+
+/** qm/turn/start 的载荷：某个回合开始处理这条消息 */
+export interface TurnStart {
+  sessionId: string
+  message: InboundMessage
 }
 
 export interface TurnChunk {

@@ -47,6 +47,9 @@ importers:
       '@qingmei/qm-agent':
         specifier: workspace:*
         version: link:../../packages/qm-agent
+      '@qingmei/qm-history':
+        specifier: workspace:*
+        version: link:../../packages/qm-history
       '@qingmei/qm-memory-extract':
         specifier: workspace:*
         version: link:../../packages/qm-memory-extract
@@ -211,6 +214,23 @@ importers:
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/qm-history':
+        specifier: workspace:*
+        version: link:../qm-history
+
+  packages/qm-history:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
 
   packages/qm-memory-extract:
     dependencies:
@@ -229,6 +249,16 @@ importers:
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/qm-history':
+        specifier: workspace:*
+        version: link:../qm-history
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
 
   packages/service-channel:
     dependencies:

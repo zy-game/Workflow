@@ -42,6 +42,9 @@
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
 
+# qm_message 的唯一写入方：对话、提醒、以后所有主动消息都经它落库
+- name: '@qingmei/qm-history'
+
 # 回合结束后异步抽取事实；走 llm 车道，不阻塞回复
 - name: '@qingmei/provider-schedule-sqlite'
   config:

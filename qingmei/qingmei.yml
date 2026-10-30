@@ -26,6 +26,9 @@
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短。'
 
+# qm_message 的唯一写入方：qm-agent 只读历史，落库都走这里
+- name: '@qingmei/qm-history'
+
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 
