@@ -22,6 +22,15 @@
     model: 'deepseek-v4-flash'
     maxTokens: 800
 
+# 对话车道：内嵌 DSH。密钥通过 env 传给子进程，不写进配置。
+- name: '@qingmei/provider-dsh-acp'
+  config:
+    command: '/usr/local/bin/dsh'
+    args: ['--profile', 'acp']
+    cwd: './workspace'
+    env:
+      QM_DSH_API_KEY: { $env: 'QM_DSH_API_KEY' }
+
 - name: '@qingmei/qm-agent'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'

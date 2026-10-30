@@ -212,6 +212,40 @@ export abstract class LlmService extends Service {
   abstract chat(req: ChatRequest): AsyncIterable<ChatStreamChunk>
 }
 
+// ────────────────────────────────────────────── Harness（内嵌 agent runtime）
+
+export interface HarnessRequest {
+  /** 会话键：同一会话复用同一个外部 agent 会话 */
+  conversationId: string
+  text: string
+  cwd?: string
+  signal?: AbortSignal
+}
+
+export type HarnessEvent =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; name: string; status: string }
+  | { type: 'done'; stopReason: string }
+  | { type: 'error'; message: string }
+
+/**
+ * 外部 agent runtime（DSH / ZCode…）的抽象。
+ *
+ * 与 LlmService 的分界：llm 只产出文本；harness 拥有自己的会话、工具与上下文压缩。
+ * 对话车道用 harness，后台结构化任务（抽取/分类）仍用 llm。
+ */
+export abstract class HarnessService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'harness')
+  }
+  /** 能否在当前环境拉起并握手；false 时调用方应降级到 llm */
+  abstract available(): Promise<boolean>
+  /** 跑一轮对话；按事件流返回，结束时必然发出 done 或 error */
+  abstract run(req: HarnessRequest): AsyncIterable<HarnessEvent>
+  /** 关闭某个会话的外部资源 */
+  abstract close(conversationId: string): Promise<void>
+}
+
 // ────────────────────────────────────────────── 工具函数
 
 const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz'
@@ -294,6 +328,7 @@ export const SERVICES = {
   channel: 'channel',
   gateway: 'gateway',
   llm: 'llm',
+  harness: 'harness',
 } as const
 
 /**

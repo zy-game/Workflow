@@ -90,6 +90,12 @@ initialize → session/new(cwd) → session/prompt → session/update(agent_mess
   这属于人格层，随 ACP client 一起做。
 - ACP 的 `session/request_permission` 将接到青梅的 `permission` 服务（手机确认）。
 
+**已落地（同日）**：`@qingmei/provider-dsh-acp` 实现 `HarnessService`，`qm-agent` 优先走 harness、
+失败才回落 llm。部署后实测回复由 DSH 产生（会列出它自己的工具与工作区策略）。
+
+由此暴露的产品问题：DSH 会把内部工具清单与工作区路径说给用户听。正式版需要在人格层
+和输出层做"内部信息不出圈"，这属于 A 类（硬边界）而不是提示词问题。
+
 ## 6. 复现清单
 
 ```bash

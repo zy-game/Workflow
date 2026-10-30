@@ -10,6 +10,7 @@
     "@qingmei/host-gateway": "workspace:*",
     "@qingmei/provider-llm-echo": "workspace:*",
     "@qingmei/provider-llm-openai": "workspace:*",
+    "@qingmei/provider-dsh-acp": "workspace:*",
     "@qingmei/provider-store-sqlite": "workspace:*",
     "@qingmei/qm-agent": "workspace:*",
     "@qingmei/service-channel": "workspace:*",
@@ -20,3 +21,4 @@
     "js-yaml": "^5.5.0"
   }
 }
+

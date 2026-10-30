@@ -23,6 +23,9 @@ importers:
       '@qingmei/host-gateway':
         specifier: workspace:*
         version: link:../../packages/host-gateway
+      '@qingmei/provider-dsh-acp':
+        specifier: workspace:*
+        version: link:../../packages/provider-dsh-acp
       '@qingmei/provider-llm-echo':
         specifier: workspace:*
         version: link:../../packages/provider-llm-echo
@@ -86,6 +89,15 @@ importers:
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/provider-dsh-acp:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12

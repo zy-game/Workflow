@@ -14,6 +14,7 @@ import {
   type ChatMessage,
   type ChannelService,
   type GatewayService,
+  type HarnessService,
   type InboundMessage,
   type Row,
   type StoreService,
@@ -55,6 +56,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
   const store = requireService<StoreService>(ctx, 'store')
   const channel = requireService<ChannelService>(ctx, 'channel')
   const gateway = requireService<GatewayService>(ctx, 'gateway')
+  /** harness 是可选车道：存在就优先用，不存在或不可用则回落 llm */
+  const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
@@ -131,12 +134,40 @@ export function apply(ctx: Context, config: AgentConfig): void {
     let reply = ''
 
     try {
-      const messages: ChatMessage[] = [
-        { role: 'system', content: persona },
-        ...(await loadHistory(sessionId)),
-        { role: 'user', content: userText },
-      ]
-      reply = await streamReply(sessionId, messages, controller.signal)
+      // 车道选择：装了 harness 且能握手，就用它（有自己的会话/工具/压缩）；
+      // 否则回落 llm，并把降级记进 problems，避免静默换脑。
+      let mode: 'harness' | 'llm' = 'llm'
+      if (harness) {
+        const ok = await harness.available().catch(() => false)
+        if (ok) mode = 'harness'
+        else problems.push('harness 不可用，已降级到 llm')
+      }
+
+      if (mode === 'harness' && harness) {
+        for await (const event of harness.run({
+          conversationId: sessionId,
+          text: userText,
+          signal: controller.signal,
+        })) {
+          if (event.type === 'text') {
+            reply += event.text
+            publishChunk(sessionId, event.text)
+          } else if (event.type === 'error') {
+            problems.push(event.message)
+          }
+        }
+        if (!reply) {
+          problems.push('harness 没有返回文本')
+          reply = `${FALLBACK_PREFIX}${problems[0]}`
+        }
+      } else {
+        const messages: ChatMessage[] = [
+          { role: 'system', content: persona },
+          ...(await loadHistory(sessionId)),
+          { role: 'user', content: userText },
+        ]
+        reply = await streamReply(sessionId, messages, controller.signal)
+      }
     } catch (error) {
       controller.abort()
       problems.push(messageOf(error))
