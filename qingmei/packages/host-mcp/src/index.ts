@@ -6,7 +6,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Context } from 'cordis'
-import { McpService, type MemoryRecord, type MemoryService } from '@qingmei/core'
+import { McpService, type MemoryRecord, type MemoryService, type ScheduleService } from '@qingmei/core'
 
 export interface McpConfig {
   host?: string
@@ -17,7 +17,7 @@ export interface McpConfig {
 }
 
 export const name = 'host-mcp'
-export const inject = ['memory']
+export const inject = ['memory', 'schedule']
 
 const PROTOCOL_VERSION = '2024-11-05'
 
@@ -48,18 +48,39 @@ const TOOLS = [
       required: ['subject', 'predicate', 'object'],
     },
   },
+  {
+    name: 'schedule_create',
+    description: '创建提醒。seconds 之后触发；用于“几分钟后提醒我”这类请求。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: '提醒内容' },
+        seconds: { type: 'number', description: '多少秒后提醒，默认 60' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'schedule_list',
+    description: '列出所有未触发的提醒。',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ]
 
 export class McpHost extends McpService {
   private readonly server: Server
   private readonly options: Required<McpConfig>
   private readonly memory: MemoryService
+  private readonly schedule: ScheduleService
 
   constructor(ctx: Context, config: McpConfig = {}) {
     super(ctx)
     const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
     if (!memory) throw new Error('[host-mcp] 缺少 memory 服务')
     this.memory = memory
+    const schedule = ctx.reflect.get('schedule', false) as ScheduleService | undefined
+    if (!schedule) throw new Error('[host-mcp] 缺少 schedule 服务')
+    this.schedule = schedule
     this.options = {
       host: config.host ?? '127.0.0.1',
       port: config.port ?? 7420,
@@ -167,6 +188,27 @@ export class McpHost extends McpService {
         const result = await this.memory.ingest([record])
         const action = result.created.length > 0 ? '已记住' : '已更新'
         return { content: [{ type: 'text', text: action }], isError: false }
+      }
+      if (tool === 'schedule_create') {
+        const text = String(args.text ?? '').trim()
+        if (!text) throw new Error('text 不能为空')
+        const seconds = Number(args.seconds ?? 60)
+        const item = await this.schedule.create({
+          text,
+          everyMs: Math.max(1, seconds) * 1000,
+        })
+        return {
+          content: [{ type: 'text', text: `已设定：${item.nextAt.toISOString()} 提醒「${text}」` }],
+          isError: false,
+        }
+      }
+      if (tool === 'schedule_list') {
+        const items = await this.schedule.list()
+        const active = items.filter((item) => item.firedAt === null)
+        const text = active.length
+          ? active.map((item) => `- ${item.nextAt.toISOString()} ${item.text}`).join('\n')
+          : '没有待触发的提醒。'
+        return { content: [{ type: 'text', text }], isError: false }
       }
       throw new Error(`未知工具：${tool}`)
     }

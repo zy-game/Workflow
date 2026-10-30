@@ -82,7 +82,38 @@ export const EVENTS = {
   turnEnd: 'qm/turn/end',
   channelOnline: 'qm/channel/online',
   channelOffline: 'qm/channel/offline',
+  scheduleDue: 'qm/schedule/due',
 } as const
+
+// ────────────────────────────────────────────── 日程
+
+export interface ScheduleInput {
+  text: string
+  /** 一次性：绝对时间；与 everyMs 二选一 */
+  at?: Date
+  everyMs?: number
+  channel?: ChannelId
+  conversationId?: string
+}
+
+export interface Scheduled {
+  id: string
+  text: string
+  channel: ChannelId
+  conversationId: string
+  nextAt: Date
+  everyMs: number | null
+  firedAt: Date | null
+}
+
+export abstract class ScheduleService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'schedule')
+  }
+  abstract create(input: ScheduleInput): Promise<Scheduled>
+  abstract list(): Promise<Scheduled[]>
+  abstract cancel(id: string): Promise<boolean>
+}
 
 export interface TurnRequest {
   sessionId: string

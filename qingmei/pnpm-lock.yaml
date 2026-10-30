@@ -38,6 +38,9 @@ importers:
       '@qingmei/provider-memory-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-memory-sqlite
+      '@qingmei/provider-schedule-sqlite':
+        specifier: workspace:*
+        version: link:../../packages/provider-schedule-sqlite
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-store-sqlite
@@ -47,6 +50,9 @@ importers:
       '@qingmei/qm-memory-extract':
         specifier: workspace:*
         version: link:../../packages/qm-memory-extract
+      '@qingmei/qm-reminder':
+        specifier: workspace:*
+        version: link:../../packages/qm-reminder
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../../packages/service-channel
@@ -163,6 +169,15 @@ importers:
         specifier: workspace:*
         version: link:../provider-store-sqlite
 
+  packages/provider-schedule-sqlite:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
   packages/provider-store-sqlite:
     dependencies:
       '@qingmei/core':
@@ -194,6 +209,15 @@ importers:
         version: 4.0.0-rc.12
 
   packages/qm-memory-extract:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/qm-reminder:
     dependencies:
       '@qingmei/core':
         specifier: workspace:*

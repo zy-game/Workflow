@@ -43,6 +43,12 @@
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
 
 # 回合结束后异步抽取事实；走 llm 车道，不阻塞回复
+- name: '@qingmei/provider-schedule-sqlite'
+  config:
+    tickMs: 1000
+
+- name: '@qingmei/qm-reminder'
+
 - name: '@qingmei/host-mcp'
   config:
     host: '127.0.0.1'
@@ -62,4 +68,5 @@
     port: 7410
     token: { $env: 'QM_TOKEN' }
     webRoot: './apps/web/public'
+
 
