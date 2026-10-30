@@ -181,6 +181,24 @@ test('tick：固定间隔按「现在」重排，停机再久也只补一次', a
   }
 })
 
+test('tick：旧版遗留的固定间隔行（fired_at 有值）保持退休，不会被复活', async () => {
+  const { schedule, fired, rows, dispose } = await setup()
+  try {
+    const item = await schedule.create({ text: '旧行', everyMs: 5_000 })
+    // 模拟老代码留下的行：触发过一次并写了 fired_at
+    await rows.update(item.id, { next_at: Date.now() - 60_000, fired_at: Date.now() - 60_000 })
+
+    await schedule.tick()
+    assert.equal(fired.length, 0)
+
+    const [after] = await schedule.list()
+    assert.ok(after)
+    assert.ok(after.firedAt instanceof Date)
+  } finally {
+    await dispose()
+  }
+})
+
 test('tick：固定间隔的下一轮到点后继续触发', async () => {
   const { schedule, fired, rows, dispose } = await setup()
   try {

@@ -141,20 +141,21 @@ export class SqliteSchedule extends ScheduleService {
   }
 
   private async advance(row: ScheduleRow, now: number): Promise<void> {
+    // fired_at 只有一次性行会写；旧版 every_ms 行也写过一次，同样按退休处理。
+    // 新周期行（cron / everyMs）从不写 fired_at，所以这条不会误伤重排。
+    if (row.fired_at !== null) return
+    if (row.next_at > now) return
+
     const cron = row.cron ?? null
     const everyMs = row.every_ms && row.every_ms > 0 ? row.every_ms : null
 
     // 一次性：发过就退休
     if (cron === null && everyMs === null) {
-      if (row.fired_at !== null) return
-      if (row.next_at > now) return
       this.ctx.events.emit(EVENTS.scheduleDue, toScheduled(row))
       await this.collection.update(row.id, { fired_at: now })
       return
     }
 
-    if (row.next_at > now) return
-    // 周期行不写 fired_at：它一直是「待触发」，否则会从 schedule_list 里消失
     if (cron !== null) {
       const timezone = row.timezone ?? undefined
       const next = nextCronTime(cron, new Date(now), timezone).getTime()
