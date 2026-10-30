@@ -43,6 +43,44 @@ const HISTORY_LIMIT = 20
 /** 出错时给用户看的固定开头 */
 const FALLBACK_PREFIX = '我这边出了点问题：'
 
+/**
+ * 输出卫生：用户不该看到内部工具名、MCP 前缀、绝对路径与权限策略。
+ * 这是 A 类边界，不能只靠人格提示词。
+ */
+const INTERNAL_PATTERNS: RegExp[] = [
+  /mcp__[A-Za-z0-9_]+/g,
+  /\/(?:opt|home|var|usr|root)\/[^\s，。；、)]*/g,
+  /\bworkspace-(?:write|read)\b/gi,
+]
+
+const TOOL_NAMES = [
+  'bash',
+  'pwsh',
+  'glob',
+  'grep',
+  'read_image',
+  'subagent',
+  'subagent_fork',
+  'workflow',
+  'todo_write',
+  'create_goal',
+  'update_goal',
+  'exit_plan_mode',
+  'job_list',
+  'job_output',
+  'job_kill',
+  'send_message',
+  'interrupt_agent',
+  'list_agents',
+]
+
+export function sanitizeReply(text: string): string {
+  let out = text
+  for (const pattern of INTERNAL_PATTERNS) out = out.replace(pattern, '（内部信息已隐藏）')
+  for (const name of TOOL_NAMES) out = out.split(`\`${name}\``).join('某个工具')
+  return out
+}
+
 /** qm_message 的 P1 行形状（docs/04 的完整字段在 P1 里只保留对话所需的最小集） */
 interface StoredMessage extends Row {
   session_id: string
@@ -188,10 +226,12 @@ export function apply(ctx: Context, config: AgentConfig): void {
       reply = `${FALLBACK_PREFIX}${problems[0]}`
     }
 
+    // 先过滤再落库/发送：用户看到的与历史里存的都必须是干净的
+    reply = sanitizeReply(reply)
+
     try {
       await persistTurn(sessionId, userText, reply)
-    } catch (error) {
-      problems.push(`写入会话记录失败：${messageOf(error)}`)
+    } catch (error) {      problems.push(`写入会话记录失败：${messageOf(error)}`)
     }
 
     try {
