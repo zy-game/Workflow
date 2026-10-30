@@ -16,6 +16,7 @@ import {
   type Row,
   type Scheduled,
   type ScheduleInput,
+  type SchedulePatch,
   type StoreService,
 } from '@qingmei/core'
 
@@ -120,6 +121,59 @@ export class SqliteSchedule extends ScheduleService {
 
   async cancel(id: string): Promise<boolean> {
     return this.collection.delete(id)
+  }
+
+  /**
+   * 改内容或规则。规则字段（at / everyMs / cron）最多给一个，给了就整体替换：
+   * 旧规则留下的 cron / timezone / every_ms 会被一起清掉，nextAt 从「现在」重算。
+   */
+  async update(id: string, patch: SchedulePatch): Promise<Scheduled | null> {
+    const row = await this.collection.get(id)
+    if (!row || row.fired_at !== null) return null
+
+    const changes: Partial<ScheduleRow> = {}
+    if (patch.text !== undefined) {
+      const text = patch.text.trim()
+      if (!text) throw new Error('提醒内容不能为空')
+      changes.text = text
+    }
+
+    const ruleFields = [patch.at !== undefined, patch.everyMs !== undefined, patch.cron !== undefined]
+    if (ruleFields.filter(Boolean).length > 1) {
+      throw new Error('at / everyMs / cron 只能给一个')
+    }
+    const now = Date.now()
+    if (patch.cron !== undefined) {
+      const cron = patch.cron.trim()
+      if (!cron) throw new Error('cron 不能为空')
+      const timezone = patch.timezone?.trim() || row.timezone || this.defaultTimezone
+      Object.assign(changes, {
+        cron,
+        timezone,
+        every_ms: null,
+        next_at: nextCronTime(cron, new Date(now), timezone).getTime(),
+      })
+    } else if (patch.at !== undefined) {
+      const nextAt = patch.at.getTime()
+      if (!Number.isFinite(nextAt)) throw new Error('at 不是有效时间')
+      Object.assign(changes, { cron: null, timezone: null, every_ms: null, next_at: nextAt })
+    } else if (patch.everyMs !== undefined) {
+      const everyMs = patch.everyMs
+      if (!Number.isFinite(everyMs) || everyMs <= 0) throw new Error('everyMs 必须是正数')
+      Object.assign(changes, { cron: null, timezone: null, every_ms: everyMs, next_at: now + everyMs })
+    } else if (patch.timezone !== undefined && row.cron) {
+      // 只改时区：cron 的触发点要跟着换到新时区
+      const timezone = patch.timezone.trim() || this.defaultTimezone
+      Object.assign(changes, {
+        timezone,
+        next_at: nextCronTime(row.cron, new Date(now), timezone).getTime(),
+      })
+    }
+    if (patch.missedPolicy !== undefined) changes.missed_policy = patch.missedPolicy
+
+    if (Object.keys(changes).length > 0) await this.collection.update(id, changes)
+    const updated = await this.collection.get(id)
+    return updated ? toScheduled(updated) : null
   }
 
   async pause(id: string): Promise<boolean> {

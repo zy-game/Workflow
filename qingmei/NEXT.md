@@ -1,8 +1,8 @@
 # NEXT · 下个会话从这里开始
 
-> 写于 2026-10-30，技术债 1/2 与日程暂停·继续完成并已部署。
-> 仓库全量测试 132/132（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
-> 新会话第一句建议：「读 qingmei/NEXT.md，做日程编辑」。
+> 写于 2026-10-30，技术债 1/2、日程暂停·继续、日程编辑完成并已部署。
+> 仓库全量测试 136/136（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
+> 新会话第一句建议：「读 qingmei/NEXT.md，做历史表索引」。
 
 ## 1. 现在是什么状态
 
@@ -26,7 +26,10 @@ qm-history（qm_message 的唯一写入方）
 - **暂停 / 继续**：`schedule_pause` / `schedule_resume`（服务 `pause(id)` / `resume(id)`）
   - 暂停只保留 `nextAt`，tick 跳过；继续时周期日程从「现在」重排，一次性保持原时间
   - 已触发的一次性提醒不会被 resume 复活（返回 false）
-  - 接口 `POST /api/v1/schedules/<id>/pause|resume`，面板上每行一个「暂停/继续」+「取消」
+  - 接口 `POST /api/v1/schedules/<id>/pause|resume`，面板上每行「暂停/继续」+「取消」
+- **编辑**：`schedule_update`（服务 `update(id, patch)`）
+  - 只给 `text` 就只改文案，`nextAt` 不变；给了 `cron` / `at` / `everyMs` 就整体替换规则并重排
+  - 接口 `PATCH /api/v1/schedules/<id>`；面板行内编辑：内容 + 规则（cron 表达式与时区 / 间隔秒数 / 本地时间）
 - 提醒到点后投递到 Web 并自动进会话历史（走 `qm/outbound`，不需要自己落库）
 - **Web 日程面板**：顶栏「日程」→ 列出全部提醒（按 nextAt 排序、按各自时区显示时间、
   带 cron 规则与 id），可逐条取消，已触发的一次性提醒保留最近 5 条
@@ -38,9 +41,11 @@ qm-history（qm_message 的唯一写入方）
 
 ## 2. 下一步
 
-1. **日程编辑**：现在只能建/停/删，改文本、改时间、改 cron 规则都得删了重建。
-   做法：`ScheduleService.update(id, patch)` + `PATCH /api/v1/schedules/<id>` + 面板行内编辑。
-2. **历史表没有索引**（见第 3 节第 4 条）：对话长了以后 `qm_message` 全表扫会变慢。
+1. **历史表索引**（第 3 节第 4 条）：对话长了以后 `qm_message` 全表扫会变慢。
+   现在 `qm-agent` 每次回合都 `find({ where: { session_id }, order: created_at, limit: 21 })`，
+   而 store 只是 `(name, id, json)` 通用表 —— 要么给 store 加「投影列 + 索引」，要么给历史单独做表。
+2. **日程编辑的边角**：现在不能改 `missedPolicy` 之外的「暂停状态」（用 pause/resume），
+   也不支持把一次性改成 cron 之外的组合校验提示（后端会报错，前端只显示原文）。
 3. 技术债见第 3 节；落库链路见第 5 节，改之前先读。
 
 ## 3. 已知技术债（按优先级）
@@ -77,6 +82,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 日程编辑
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/index.ts` | 新增 `SchedulePatch`；`ScheduleService.update(id, patch)` |
+| `packages/provider-schedule-sqlite` | `update` 实现：只改文本不动 nextAt；给规则就整体替换（清掉旧 cron/timezone/every_ms）并从「现在」重排；已结束的行拒绝修改 |
+| `packages/host-gateway` | `PATCH /api/v1/schedules/<id>`，空 patch / 非对象 body 返回 400 |
+| `packages/host-mcp` | 工具 `schedule_update`（id + text / cron / timezone / at / seconds / missedPolicy） |
+| `apps/web/public/*` | 行内编辑表单（内容 + 规则）；「编辑 / 暂停·继续 / 取消」三个动作 |
+| 测试 | provider 3 条（文本不动 nextAt、换规则重排、非法/未知/已结束）、gateway 5 条、MCP 2 条 |
 
 ### 日程暂停 / 继续
 
@@ -167,3 +183,5 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
     截断到本轮之前，才能兼容「本轮消息已经在库里」的情况。
 16. **`ctx.events.parallel()` 是唯一能等监听器跑完的派发方式**：`emit` 不等 promise，
     想让「发送成功 → 落库完成」有先后保证，必须 `await parallel`。
+17. **前端验证脚本要自己重置状态**：CDP 脚本跑第二遍时，上一遍的暂停/编辑都还在库里，
+    断言会莫名其妙地失败。要么每轮重建临时库，要么开头先 `DELETE` 清干净。

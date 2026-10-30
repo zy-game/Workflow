@@ -395,21 +395,161 @@ function renderSchedules(items) {
     row.append(main)
 
     if (!item.firedAt && typeof item.id === 'string' && item.id) {
+      const actions = document.createElement('div')
+      actions.className = 'schedule-actions'
+
+      const edit = document.createElement('button')
+      edit.type = 'button'
+      edit.className = 'schedule-action'
+      edit.textContent = '编辑'
+      edit.addEventListener('click', () => openScheduleEditor(item, row))
+      actions.append(edit)
+
       const toggle = document.createElement('button')
       toggle.type = 'button'
       toggle.className = 'schedule-action'
       toggle.textContent = paused ? '继续' : '暂停'
       toggle.addEventListener('click', () => void setSchedulePaused(item.id, !paused, toggle))
-      row.append(toggle)
+      actions.append(toggle)
 
       const cancel = document.createElement('button')
       cancel.type = 'button'
       cancel.className = 'schedule-cancel'
       cancel.textContent = '取消'
       cancel.addEventListener('click', () => void cancelSchedule(item.id, cancel))
-      row.append(cancel)
+      actions.append(cancel)
+
+      row.append(actions)
     }
     list.append(row)
+  }
+}
+
+/** datetime-local 需要本地时区的 YYYY-MM-DDTHH:mm（不带秒） */
+function localDateTimeValue(iso) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function labelledField(label, input) {
+  const wrap = document.createElement('label')
+  wrap.className = 'schedule-field'
+  const caption = document.createElement('span')
+  caption.className = 'schedule-field-label'
+  caption.textContent = label
+  wrap.append(caption, input)
+  return wrap
+}
+
+function editorInput(type, value) {
+  const input = document.createElement('input')
+  input.type = type
+  input.className = 'schedule-input'
+  input.value = value
+  return input
+}
+
+/**
+ * 行内编辑：内容 + 规则。
+ *
+ * 规则字段随日程类型变：cron 行编辑表达式与时区，固定间隔行编辑秒数，
+ * 一次性行编辑本地时间（datetime-local 按浏览器时区解释）。
+ */
+function openScheduleEditor(item, row) {
+  const form = document.createElement('form')
+  form.className = 'schedule-edit'
+  form.autocomplete = 'off'
+
+  const textInput = editorInput('text', typeof item.text === 'string' ? item.text : '')
+  form.append(labelledField('内容', textInput))
+
+  let buildRule = () => ({})
+  if (typeof item.cron === 'string' && item.cron) {
+    const cronInput = editorInput('text', item.cron)
+    const tzInput = editorInput('text', item.timezone ?? '')
+    const pair = document.createElement('div')
+    pair.className = 'schedule-field-pair'
+    pair.append(cronInput, tzInput)
+    form.append(labelledField('规则（cron）与时区', pair))
+    buildRule = () => ({ cron: cronInput.value.trim(), timezone: tzInput.value.trim() })
+  } else if (Number.isFinite(item.everyMs) && item.everyMs > 0) {
+    const secondsInput = editorInput('number', String(Math.round(item.everyMs / 1000)))
+    form.append(labelledField('间隔（秒）', secondsInput))
+    buildRule = () => ({ everyMs: Number(secondsInput.value) * 1000 })
+  } else {
+    const whenInput = editorInput('datetime-local', localDateTimeValue(item.nextAt))
+    form.append(labelledField('时间（本地）', whenInput))
+    buildRule = () => ({ at: new Date(whenInput.value).toISOString() })
+  }
+
+  const actions = document.createElement('div')
+  actions.className = 'schedule-actions'
+
+  const save = document.createElement('button')
+  save.type = 'submit'
+  save.className = 'schedule-action is-primary'
+  save.textContent = '保存'
+
+  const cancel = document.createElement('button')
+  cancel.type = 'button'
+  cancel.className = 'schedule-cancel'
+  cancel.textContent = '取消'
+  cancel.addEventListener('click', () => void loadSchedules())
+
+  actions.append(save, cancel)
+  form.append(actions)
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    void saveScheduleEdit(item.id, textInput.value, buildRule(), save)
+  })
+
+  row.replaceChildren(form)
+  textInput.focus()
+}
+
+async function saveScheduleEdit(id, text, rulePatch, button) {
+  const body = { text: String(text ?? '').trim(), ...rulePatch }
+  if (!body.text) {
+    showSchedulesError('提醒内容不能为空')
+    return
+  }
+  if (body.cron !== undefined && !body.cron) {
+    showSchedulesError('cron 不能为空')
+    return
+  }
+  if (body.everyMs !== undefined && !(body.everyMs > 0)) {
+    showSchedulesError('间隔必须是正数')
+    return
+  }
+  if (body.at !== undefined && Number.isNaN(Date.parse(body.at))) {
+    showSchedulesError('时间格式不对')
+    return
+  }
+
+  button.disabled = true
+  button.textContent = '保存中…'
+  try {
+    const res = await fetch(`${ENDPOINTS.schedules}/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify(body),
+    })
+    if (res.status === 404) {
+      showSchedulesError('这条提醒已经结束，改不了了')
+    } else if (!res.ok) {
+      const detail = await res.json().catch(() => null)
+      throw new Error(detail?.error || `保存失败（HTTP ${res.status}）`)
+    } else {
+      showSchedulesError('')
+    }
+    void loadSchedules()
+  } catch (error) {
+    showSchedulesError(error instanceof TypeError ? '无法连接服务' : error.message || '保存失败')
+    button.disabled = false
+    button.textContent = '保存'
   }
 }
 

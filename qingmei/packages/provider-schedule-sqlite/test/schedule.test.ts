@@ -199,6 +199,67 @@ test('tick：旧版遗留的固定间隔行（fired_at 有值）保持退休，�
   }
 })
 
+test('update：只改文本时下一次触发不变', async () => {
+  const { schedule, dispose } = await setup()
+  try {
+    const item = await schedule.create({ text: '喝水', cron: '0 9 * * *', timezone: 'UTC' })
+    const updated = await schedule.update(item.id, { text: '喝一大杯水' })
+    assert.ok(updated)
+    assert.equal(updated.text, '喝一大杯水')
+    assert.equal(updated.nextAt.getTime(), item.nextAt.getTime())
+  } finally {
+    await dispose()
+  }
+})
+
+test('update：换规则会清掉旧规则并从现在重排', async () => {
+  const { schedule, dispose } = await setup()
+  try {
+    const item = await schedule.create({ text: '喝水', at: new Date(Date.now() + 3_600_000) })
+    assert.equal(item.cron, null)
+
+    const toCron = await schedule.update(item.id, { cron: '0 9 * * *', timezone: 'Asia/Shanghai' })
+    assert.ok(toCron)
+    assert.equal(toCron.cron, '0 9 * * *')
+    assert.equal(toCron.timezone, 'Asia/Shanghai')
+    assert.equal(toCron.everyMs, null)
+    assert.ok(toCron.nextAt.getTime() > Date.now())
+
+    const toOnce = await schedule.update(item.id, { at: new Date(Date.now() + 60_000) })
+    assert.ok(toOnce)
+    assert.equal(toOnce.cron, null)
+    assert.equal(toOnce.timezone, null)
+
+    const toEvery = await schedule.update(item.id, { everyMs: 120_000 })
+    assert.ok(toEvery)
+    assert.equal(toEvery.everyMs, 120_000)
+    assert.equal(toEvery.cron, null)
+    assert.ok(toEvery.nextAt.getTime() > Date.now())
+  } finally {
+    await dispose()
+  }
+})
+
+test('update：非法规则报错，未知/已结束的 id 返回 null', async () => {
+  const { schedule, dispose } = await setup()
+  try {
+    const item = await schedule.create({ text: '喝水', cron: '0 9 * * *', timezone: 'UTC' })
+    await assert.rejects(schedule.update(item.id, { cron: '0 9 * *' }), /5 段/)
+    await assert.rejects(schedule.update(item.id, { everyMs: 0 }), /必须是正数/)
+    await assert.rejects(schedule.update(item.id, { at: new Date(), everyMs: 1000 }), /只能给一个/)
+    await assert.rejects(schedule.update(item.id, { text: '  ' }), /不能为空/)
+
+    assert.equal(await schedule.update('r_nope', { text: 'x' }), null)
+
+    // 已触发的一次性提醒不能再改
+    const once = await schedule.create({ text: '开会', at: new Date(Date.now() - 1_000) })
+    await schedule.tick()
+    assert.equal(await schedule.update(once.id, { text: '改名' }), null)
+  } finally {
+    await dispose()
+  }
+})
+
 test('pause：暂停后不再触发，重复暂停幂等，未知 id 返回 false', async () => {
   const { schedule, fired, rows, dispose } = await setup()
   try {

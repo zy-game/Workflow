@@ -134,6 +134,16 @@ export interface Scheduled {
   firedAt: Date | null
 }
 
+/** 修改已有日程：给了规则字段就整体替换规则，并「从现在」重算下一次触发 */
+export interface SchedulePatch {
+  text?: string
+  at?: Date
+  everyMs?: number
+  cron?: string
+  timezone?: string
+  missedPolicy?: MissedPolicy
+}
+
 export abstract class ScheduleService extends Service {
   constructor(ctx: Context) {
     super(ctx, 'schedule')
@@ -145,6 +155,8 @@ export abstract class ScheduleService extends Service {
   abstract pause(id: string): Promise<boolean>
   /** 继续：周期日程从「现在」重排下一次；一次性日程保持原时间。返回 false 表示没有这条日程 */
   abstract resume(id: string): Promise<boolean>
+  /** 改内容或规则；规则变了就从「现在」重排。返回 null 表示没有这条日程或它已经结束 */
+  abstract update(id: string, patch: SchedulePatch): Promise<Scheduled | null>
 }
 
 export interface TurnRequest {

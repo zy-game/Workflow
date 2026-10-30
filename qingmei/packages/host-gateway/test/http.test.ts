@@ -13,6 +13,7 @@ import {
   type Query,
   type Row,
   type ScheduleInput,
+  type SchedulePatch,
   type Scheduled,
 } from '@qingmei/core'
 import * as GatewayPlugin from '@qingmei/service-gateway'
@@ -312,6 +313,42 @@ test('GET /api/v1/schedules 列出日程，DELETE 取消后消失', async () => 
     const unauth = await fetch(`${info.url}/api/v1/schedules`)
     assert.equal(unauth.status, 401)
 
+    const unauthPatch = await fetch(`${info.url}/api/v1/schedules/r_cron`, { method: 'PATCH', body: '{}' })
+    assert.equal(unauthPatch.status, 401)
+
+    const patched = await fetch(`${info.url}/api/v1/schedules/r_cron`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: '改名后的喝水' }),
+    })
+    assert.equal(patched.status, 200)
+    const patchedBody = (await patched.json()) as { ok: boolean; item: Scheduled }
+    assert.equal(patchedBody.ok, true)
+    assert.equal(patchedBody.item.id, 'r_cron')
+    assert.equal(patchedBody.item.text, '改名后的喝水')
+
+    const emptyPatch = await fetch(`${info.url}/api/v1/schedules/r_cron`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: '{}',
+    })
+    assert.equal(emptyPatch.status, 400)
+
+    const badPatch = await fetch(`${info.url}/api/v1/schedules/r_cron`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: 'not-json',
+    })
+    assert.equal(badPatch.status, 400)
+
+    const missingPatch = await fetch(`${info.url}/api/v1/schedules/r_nope`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'x' }),
+    })
+    assert.equal(missingPatch.status, 404)
+    assert.deepEqual(await missingPatch.json(), { ok: false, error: '这条提醒不存在或已经结束' })
+
     const missing = await fetch(`${info.url}/api/v1/schedules/r_nope`, { method: 'DELETE', headers })
     assert.equal(missing.status, 404)
     assert.deepEqual(await missing.json(), { ok: false, error: '没有找到这条提醒' })
@@ -516,5 +553,12 @@ class FakeSchedule extends ScheduleService {
     item.pausedAt = null
     this.resumed.push(id)
     return true
+  }
+
+  async update(id: string, patch: SchedulePatch): Promise<Scheduled | null> {
+    const item = this.items.find((entry) => entry.id === id)
+    if (!item || item.firedAt) return null
+    if (patch.text !== undefined) item.text = patch.text
+    return item
   }
 }

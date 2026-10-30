@@ -9,6 +9,7 @@ import {
   type RecallResult,
   type Scheduled,
   type ScheduleInput,
+  type SchedulePatch,
 } from '@qingmei/core'
 import { createTools, scheduleInputFrom, type HostTool } from '../src/index.ts'
 
@@ -43,6 +44,7 @@ class FakeSchedule extends ScheduleService {
   readonly cancelled: string[] = []
   readonly paused: string[] = []
   readonly resumed: string[] = []
+  readonly updated: { id: string; patch: SchedulePatch }[] = []
   items: Scheduled[] = []
   nextAt = new Date('2026-10-31T01:00:00.000Z')
 
@@ -96,6 +98,28 @@ class FakeSchedule extends ScheduleService {
     this.resumed.push(id)
     return true
   }
+
+  async update(id: string, patch: SchedulePatch): Promise<Scheduled | null> {
+    const item = this.items.find((entry) => entry.id === id)
+    if (!item) return null
+    if (patch.text !== undefined) item.text = patch.text
+    if (patch.cron !== undefined) {
+      item.cron = patch.cron
+      item.timezone = patch.timezone ?? item.timezone
+      item.everyMs = null
+    }
+    if (patch.at !== undefined) {
+      item.nextAt = patch.at
+      item.cron = null
+      item.everyMs = null
+    }
+    if (patch.everyMs !== undefined) {
+      item.everyMs = patch.everyMs
+      item.cron = null
+    }
+    this.updated.push({ id, patch })
+    return item
+  }
 }
 
 function setup() {
@@ -127,6 +151,7 @@ test('注册表覆盖全部工具，且 schema 与 handler 一一对应', () => 
       'memory_remember',
       'schedule_create',
       'schedule_cancel',
+      'schedule_update',
       'schedule_pause',
       'schedule_resume',
       'schedule_list',
@@ -206,6 +231,23 @@ test('schedule_cancel：命中与未命中两种话术', async () => {
   assert.equal(textOf(await call('schedule_cancel', { id })), '已取消')
   assert.deepEqual(schedule.cancelled, [id])
   assert.equal(textOf(await call('schedule_cancel', { id })), '没有找到这条提醒')
+})
+
+test('schedule_update：只改文本，或整体替换规则', async () => {
+  const { schedule, call } = setup()
+  await call('schedule_create', { text: '喝水', cron: '0 9 * * *', timezone: 'Asia/Shanghai' })
+  const id = schedule.items[0]!.id
+
+  const renamed = await call('schedule_update', { id, text: '喝一大杯水' })
+  assert.match(textOf(renamed), /喝一大杯水/)
+  assert.deepEqual(schedule.updated[0]!.patch, { text: '喝一大杯水' })
+
+  const reruled = await call('schedule_update', { id, cron: '30 7 * * *', timezone: 'Asia/Shanghai' })
+  assert.match(textOf(reruled), /每次 30 7 \* \* \*/)
+  assert.deepEqual(schedule.updated[1]!.patch, { cron: '30 7 * * *', timezone: 'Asia/Shanghai' })
+
+  await assert.rejects(call('schedule_update', { id }), /没有可修改的字段/)
+  await assert.rejects(call('schedule_update', { id: 'r_nope', text: 'x' }), /不存在或已经结束/)
 })
 
 test('schedule_pause / schedule_resume：命中与未命中两种话术', async () => {

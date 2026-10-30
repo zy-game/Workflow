@@ -32,8 +32,10 @@ test('app.js 请求的日程接口与网关注册的路由一致', async () => {
 
   assert.match(script, /schedules: '\.\/api\/v1\/schedules'/, 'app.js 应把日程接口写在 ENDPOINTS 里')
   assert.match(script, /method: 'DELETE'/, '取消日程应使用 DELETE')
+  assert.match(script, /method: 'PATCH'/, '编辑日程应使用 PATCH')
   assert.match(script, /'pause' : 'resume'/, '暂停/继续应打到 /pause 与 /resume')
   assert.match(gateway, /pathname === '\/api\/v1\/schedules'/, '网关应注册 GET /api/v1/schedules')
-  assert.match(gateway, /pathname\.startsWith\('\/api\/v1\/schedules\/'\)/, '网关应注册 DELETE /api/v1/schedules/<id>')
+  assert.match(gateway, /pathname\.startsWith\('\/api\/v1\/schedules\/'\) && method === 'PATCH'/, '网关应注册 PATCH')
+  assert.match(gateway, /pathname\.startsWith\('\/api\/v1\/schedules\/'\) && method === 'DELETE'/, '网关应注册 DELETE')
   assert.match(gateway, /\(pause\|resume\)/, '网关应识别 /pause 与 /resume')
 })

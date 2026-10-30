@@ -13,6 +13,7 @@ import {
   type MemoryService,
   type Scheduled,
   type ScheduleInput,
+  type SchedulePatch,
   type ScheduleService,
 } from '@qingmei/core'
 
@@ -137,6 +138,35 @@ export function createTools(deps: ToolDeps): HostTool[] {
       async call(args) {
         const ok = await deps.schedule.cancel(String(args.id ?? ''))
         return textResult(ok ? '已取消' : '没有找到这条提醒')
+      },
+    },
+    {
+      name: 'schedule_update',
+      description:
+        '按 id 修改提醒的内容或规则（cron / at / seconds 三选一）。只给 text 就只改文案；给了规则会从现在重排下一次。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '日程 id' },
+          text: { type: 'string', description: '新的提醒内容' },
+          cron: { type: 'string', description: '新的五段式 cron' },
+          timezone: { type: 'string', description: '新的 IANA 时区' },
+          at: { type: 'string', description: '新的绝对时间（ISO 8601），一次性' },
+          seconds: { type: 'number', description: '改成「多少秒后」的一次性提醒' },
+          missedPolicy: {
+            type: 'string',
+            enum: ['fire-once', 'skip'],
+            description: '停机期间错过多次时补发一次还是跳过',
+          },
+        },
+        required: ['id'],
+      },
+      async call(args) {
+        const id = String(args.id ?? '').trim()
+        if (!id) throw new Error('id 不能为空')
+        const item = await deps.schedule.update(id, schedulePatchFrom(args))
+        if (!item) throw new Error('这条提醒不存在或已经结束')
+        return textResult(`已修改：${describeWhen(item)} 提醒「${item.text}」`)
       },
     },
     {
@@ -322,6 +352,27 @@ export function scheduleInputFrom(text: string, args: Record<string, unknown>): 
   const seconds = Number(args.seconds ?? 60)
   const delayMs = (Number.isFinite(seconds) && seconds > 0 ? seconds : 60) * 1000
   return { text, at: new Date(Date.now() + delayMs) }
+}
+
+/**
+ * 把工具参数折成 SchedulePatch（只带显式给出的字段）。
+ *
+ * 一个字段都没有就报错：静默什么都不改比报错更难查。
+ */
+export function schedulePatchFrom(args: Record<string, unknown>): SchedulePatch {
+  const patch: SchedulePatch = {}
+  if (typeof args.text === 'string') patch.text = args.text
+  if (typeof args.cron === 'string' && args.cron.trim()) patch.cron = args.cron.trim()
+  if (typeof args.timezone === 'string' && args.timezone.trim()) patch.timezone = args.timezone.trim()
+  const atRaw = typeof args.at === 'string' ? Date.parse(args.at) : Number.NaN
+  if (Number.isFinite(atRaw)) patch.at = new Date(atRaw)
+  const seconds = Number(args.seconds)
+  if (Number.isFinite(seconds) && seconds > 0) patch.everyMs = seconds * 1000
+  if (args.missedPolicy === 'skip' || args.missedPolicy === 'fire-once') {
+    patch.missedPolicy = args.missedPolicy
+  }
+  if (Object.keys(patch).length === 0) throw new Error('没有可修改的字段')
+  return patch
 }
 
 function describeWhen(item: Scheduled): string {

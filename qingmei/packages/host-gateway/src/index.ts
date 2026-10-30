@@ -21,6 +21,7 @@ import {
   type InboundMessage,
   type MemoryService,
   type Row,
+  type SchedulePatch,
   type ScheduleService,
   type StoreService,
 } from '@qingmei/core'
@@ -327,6 +328,26 @@ async function routeRequest(
       sendJson(res, 200, { ok: true, cancelled: true })
       return
     }
+    if (pathname.startsWith('/api/v1/schedules/') && method === 'PATCH') {
+      const schedule = deps.ctx.reflect.get('schedule', false) as ScheduleService | undefined
+      if (!schedule) {
+        sendJson(res, 503, { ok: false, error: 'no schedule service' })
+        return
+      }
+      const id = scheduleIdOf(pathname)
+      if (!id) throw new HttpError(400, '缺少提醒 id')
+      const body = await readJsonBody(req)
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        throw new HttpError(400, '请求体必须是 JSON 对象')
+      }
+      const item = await schedule.update(id, schedulePatchFrom(body as Record<string, unknown>))
+      if (!item) {
+        sendJson(res, 404, { ok: false, error: '这条提醒不存在或已经结束' })
+        return
+      }
+      sendJson(res, 200, { ok: true, item })
+      return
+    }
     if (method === 'POST') {
       const action = scheduleActionOf(pathname)
       if (action) {
@@ -533,6 +554,29 @@ function scheduleActionOf(pathname: string): { id: string; action: 'pause' | 're
   }
   if (!id) return null
   return { id, action: match[2] as 'pause' | 'resume' }
+}
+
+/**
+ * 把 PATCH 请求体折成 SchedulePatch。
+ *
+ * 只接受显式给出的字段；一个字段都没有视为无效请求，避免「静默什么都没改」。
+ */
+function schedulePatchFrom(body: Record<string, unknown>): SchedulePatch {
+  const patch: SchedulePatch = {}
+  if (typeof body.text === 'string') patch.text = body.text
+  if (typeof body.cron === 'string' && body.cron.trim()) patch.cron = body.cron.trim()
+  if (typeof body.timezone === 'string' && body.timezone.trim()) patch.timezone = body.timezone.trim()
+  if (typeof body.at === 'string') {
+    const parsed = Date.parse(body.at)
+    if (!Number.isFinite(parsed)) throw new HttpError(400, 'at 不是有效时间')
+    patch.at = new Date(parsed)
+  }
+  if (typeof body.everyMs === 'number') patch.everyMs = body.everyMs
+  if (body.missedPolicy === 'skip' || body.missedPolicy === 'fire-once') {
+    patch.missedPolicy = body.missedPolicy
+  }
+  if (Object.keys(patch).length === 0) throw new HttpError(400, '没有可修改的字段')
+  return patch
 }
 
 async function dispatchGatewayRoute(
