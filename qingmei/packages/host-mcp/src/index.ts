@@ -56,8 +56,18 @@ const TOOLS = [
       properties: {
         text: { type: 'string', description: '提醒内容' },
         seconds: { type: 'number', description: '多少秒后提醒，默认 60' },
+        at: { type: 'string', description: '绝对时间（ISO 8601），与 seconds 二选一，优先' },
       },
       required: ['text'],
+    },
+  },
+  {
+    name: 'schedule_cancel',
+    description: '按 id 取消一条提醒。',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
     },
   },
   {
@@ -192,15 +202,23 @@ export class McpHost extends McpService {
       if (tool === 'schedule_create') {
         const text = String(args.text ?? '').trim()
         if (!text) throw new Error('text 不能为空')
+        // at 优先（ISO 时间，模型自己换算）；否则按 seconds 倒计时
+        const atRaw = typeof args.at === 'string' ? Date.parse(args.at) : Number.NaN
+        const at = Number.isFinite(atRaw) ? new Date(atRaw) : undefined
         const seconds = Number(args.seconds ?? 60)
         const item = await this.schedule.create({
           text,
-          everyMs: Math.max(1, seconds) * 1000,
+          ...(at ? { at } : { everyMs: Math.max(1, seconds) * 1000 }),
         })
         return {
           content: [{ type: 'text', text: `已设定：${item.nextAt.toISOString()} 提醒「${text}」` }],
           isError: false,
         }
+      }
+      if (tool === 'schedule_cancel') {
+        const id = String(args.id ?? '')
+        const ok = await this.schedule.cancel(id)
+        return { content: [{ type: 'text', text: ok ? '已取消' : '没有找到这条提醒' }], isError: false }
       }
       if (tool === 'schedule_list') {
         const items = await this.schedule.list()
