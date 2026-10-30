@@ -1,6 +1,6 @@
 # NEXT · 下个会话从这里开始
 
-> 写于 2026-10-30，M2-cron + Web 日程页完成并已部署。仓库全量测试 107/107（`node --test`）。
+> 写于 2026-10-30，M2-cron + Web 日程页完成并已部署。仓库全量测试 108/108（`node --test`）。
 > 新会话第一句建议：「读 qingmei/NEXT.md，做技术债 1」。
 
 ## 1. 现在是什么状态
@@ -78,7 +78,7 @@ sudo journalctl -u qingmei -n 50 --no-pager
 | `packages/core/src/index.ts` | `ScheduleInput` 加 `cron` / `timezone` / `missedPolicy`；`Scheduled` 同步 |
 | `packages/provider-schedule-sqlite` | 三类规则统一推进；cron 到点重排；`skip` 策略；`defaultTimezone` |
 | `packages/host-mcp` | `schedule_create` 加 `cron` / `timezone` / `missedPolicy`；`seconds` 改为一次性；`schedule_list` 带 id |
-| 测试 | `core/test/cron.test.ts`(12)、`provider-schedule-sqlite/test/schedule.test.ts`(9)、`host-mcp/test/mcp.test.ts`(5) |
+| 测试 | `core/test/cron.test.ts`(12)、`provider-schedule-sqlite/test/schedule.test.ts`(10)、`host-mcp/test/mcp.test.ts`(5)、`host-gateway/test/http.test.ts`(14)、`apps/web/test/ui-contract.test.ts`(2) |
 
 ### Web 日程页（本次）
 
@@ -115,3 +115,12 @@ sudo journalctl -u qingmei -n 50 --no-pager
     `chrome.exe --headless=new --remote-debugging-port=9333` + CDP（`/json/new` 要 PUT，
     然后 `Runtime.evaluate` 点按钮、`Page.captureScreenshot` 截图）来验证；
     本机 Chrome 在 `C:\Program Files\Google\Chrome\Application\chrome.exe`
+13. **改语义前先看历史数据**：上一版的 `every_ms` 行发过一次就会写 `fired_at`；
+    把周期行改成「不写 `fired_at`」之后，这些老行被当成活跃周期行复活，
+    生产上每 5 秒发一条提醒（106 条垃圾消息）。现在 `advance()` 第一条就是
+    「`fired_at` 有值就退休」——新周期行从不写它，所以不会误伤重排。
+    再遇到类似问题：先 `DELETE /api/v1/schedules/<id>` 止血，再改代码部署，
+    最后停服务清 `qm_message` 里的重复消息。
+14. **部署验收要看数据，不只看 healthz**：这次 healthz 200、日志干净，
+    但库里在每秒滚动。验收至少加一条：`GET /api/v1/schedules` 与
+    `qm_message` 计数在 10 秒内不变。
