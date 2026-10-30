@@ -128,7 +128,7 @@ export function createTools(deps: ToolDeps): HostTool[] {
     },
     {
       name: 'schedule_cancel',
-      description: '按 id 取消一条提醒。',
+      description: '按 id 取消一条提醒（永久删除）。只想暂时别响用 schedule_pause。',
       inputSchema: {
         type: 'object',
         properties: { id: { type: 'string' } },
@@ -140,8 +140,34 @@ export function createTools(deps: ToolDeps): HostTool[] {
       },
     },
     {
+      name: 'schedule_pause',
+      description: '按 id 暂停一条提醒：保留规则，但到点不再触发。',
+      inputSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+      async call(args) {
+        const ok = await deps.schedule.pause(String(args.id ?? ''))
+        return textResult(ok ? '已暂停' : '没有找到这条提醒')
+      },
+    },
+    {
+      name: 'schedule_resume',
+      description: '按 id 继续一条被暂停的提醒。周期提醒会从「现在」重新排下一次。',
+      inputSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+      async call(args) {
+        const ok = await deps.schedule.resume(String(args.id ?? ''))
+        return textResult(ok ? '已继续' : '这条提醒不存在或已经结束')
+      },
+    },
+    {
       name: 'schedule_list',
-      description: '列出所有未触发的提醒。',
+      description: '列出所有未触发的提醒（含已暂停的，暂停状态会标出来）。',
       inputSchema: { type: 'object', properties: {} },
       async call() {
         const items = await deps.schedule.list()
@@ -299,10 +325,11 @@ export function scheduleInputFrom(text: string, args: Record<string, unknown>): 
 }
 
 function describeWhen(item: Scheduled): string {
+  const paused = item.pausedAt ? '（已暂停）' : ''
   if (item.cron) {
-    return `每次 ${item.cron}（${item.timezone ?? '默认时区'}），下次 ${item.nextAt.toISOString()}`
+    return `${paused}每次 ${item.cron}（${item.timezone ?? '默认时区'}），下次 ${item.nextAt.toISOString()}`
   }
-  return item.nextAt.toISOString()
+  return `${paused}${item.nextAt.toISOString()}`
 }
 
 function readJson(req: IncomingMessage): Promise<unknown> {

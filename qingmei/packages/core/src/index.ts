@@ -129,6 +129,8 @@ export interface Scheduled {
   /** cron 使用的 IANA 时区；非 cron 为 null */
   timezone: string | null
   missedPolicy: MissedPolicy
+  /** 暂停时刻；null 表示正常推进 */
+  pausedAt: Date | null
   firedAt: Date | null
 }
 
@@ -139,6 +141,10 @@ export abstract class ScheduleService extends Service {
   abstract create(input: ScheduleInput): Promise<Scheduled>
   abstract list(): Promise<Scheduled[]>
   abstract cancel(id: string): Promise<boolean>
+  /** 暂停：保留 nextAt，但到点不再触发。返回 false 表示没有这条日程 */
+  abstract pause(id: string): Promise<boolean>
+  /** 继续：周期日程从「现在」重排下一次；一次性日程保持原时间。返回 false 表示没有这条日程 */
+  abstract resume(id: string): Promise<boolean>
 }
 
 export interface TurnRequest {

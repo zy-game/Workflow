@@ -199,6 +199,82 @@ test('tick：旧版遗留的固定间隔行（fired_at 有值）保持退休，�
   }
 })
 
+test('pause：暂停后不再触发，重复暂停幂等，未知 id 返回 false', async () => {
+  const { schedule, fired, rows, dispose } = await setup()
+  try {
+    const item = await schedule.create({ text: '喝水', cron: '0 9 * * *', timezone: 'UTC' })
+    assert.equal(item.pausedAt, null)
+
+    assert.equal(await schedule.pause(item.id), true)
+    await rows.update(item.id, { next_at: Date.now() - 60_000 })
+    await schedule.tick()
+    assert.equal(fired.length, 0, '暂停的行不该触发')
+
+    const [after] = await schedule.list()
+    assert.ok(after)
+    assert.ok(after.pausedAt instanceof Date)
+
+    assert.equal(await schedule.pause(item.id), true, '重复暂停应幂等')
+    assert.equal(await schedule.pause('r_nope'), false)
+    assert.equal(await schedule.resume('r_nope'), false)
+  } finally {
+    await dispose()
+  }
+})
+
+test('resume：周期提醒从「现在」重排，之后正常触发', async () => {
+  const { schedule, fired, rows, dispose } = await setup()
+  try {
+    const item = await schedule.create({ text: '喝水', cron: '0 9 * * *', timezone: 'UTC' })
+    await schedule.pause(item.id)
+    // 暂停期间时间流逝：下一次触发点已经过去
+    await rows.update(item.id, { next_at: Date.now() - 3 * DAY })
+
+    assert.equal(await schedule.resume(item.id), true)
+    const [after] = await schedule.list()
+    assert.ok(after)
+    assert.equal(after.pausedAt, null)
+    assert.ok(after.nextAt.getTime() > Date.now(), '恢复后不该立刻补发')
+
+    await rows.update(item.id, { next_at: Date.now() - 1_000 })
+    await schedule.tick()
+    assert.equal(fired.length, 1)
+  } finally {
+    await dispose()
+  }
+})
+
+test('resume：一次性提醒保持原时间，过期就立即触发', async () => {
+  const { schedule, fired, rows, dispose } = await setup()
+  try {
+    const item = await schedule.create({ text: '开会', at: new Date(Date.now() + 60_000) })
+    await schedule.pause(item.id)
+    await rows.update(item.id, { next_at: Date.now() - 1_000 })
+
+    assert.equal(await schedule.resume(item.id), true)
+    await schedule.tick()
+    assert.equal(fired.length, 1)
+  } finally {
+    await dispose()
+  }
+})
+
+test('resume：已经结束的一次性提醒不会复活', async () => {
+  const { schedule, fired, rows, dispose } = await setup()
+  try {
+    const item = await schedule.create({ text: '开会', at: new Date(Date.now() - 1_000) })
+    await schedule.tick()
+    assert.equal(fired.length, 1)
+
+    await rows.update(item.id, { paused_at: Date.now() })
+    assert.equal(await schedule.resume(item.id), false)
+    await schedule.tick()
+    assert.equal(fired.length, 1, '已触发的行不能因为 resume 再次触发')
+  } finally {
+    await dispose()
+  }
+})
+
 test('tick：固定间隔的下一轮到点后继续触发', async () => {
   const { schedule, fired, rows, dispose } = await setup()
   try {

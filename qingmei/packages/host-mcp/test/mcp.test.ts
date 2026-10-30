@@ -41,6 +41,8 @@ class FakeMemory extends MemoryService {
 class FakeSchedule extends ScheduleService {
   readonly created: ScheduleInput[] = []
   readonly cancelled: string[] = []
+  readonly paused: string[] = []
+  readonly resumed: string[] = []
   items: Scheduled[] = []
   nextAt = new Date('2026-10-31T01:00:00.000Z')
 
@@ -60,6 +62,7 @@ class FakeSchedule extends ScheduleService {
       cron: input.cron ?? null,
       timezone: input.timezone ?? null,
       missedPolicy: input.missedPolicy ?? 'fire-once',
+      pausedAt: null,
       firedAt: null,
     }
     this.items.push(item)
@@ -75,6 +78,22 @@ class FakeSchedule extends ScheduleService {
     this.items = this.items.filter((item) => item.id !== id)
     if (this.items.length === before) return false
     this.cancelled.push(id)
+    return true
+  }
+
+  async pause(id: string): Promise<boolean> {
+    const item = this.items.find((entry) => entry.id === id)
+    if (!item) return false
+    item.pausedAt = new Date('2026-10-30T12:00:00.000Z')
+    this.paused.push(id)
+    return true
+  }
+
+  async resume(id: string): Promise<boolean> {
+    const item = this.items.find((entry) => entry.id === id)
+    if (!item) return false
+    item.pausedAt = null
+    this.resumed.push(id)
     return true
   }
 }
@@ -103,7 +122,15 @@ test('注册表覆盖全部工具，且 schema 与 handler 一一对应', () => 
   const { tools } = setup()
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ['memory_recall', 'memory_remember', 'schedule_create', 'schedule_cancel', 'schedule_list'],
+    [
+      'memory_recall',
+      'memory_remember',
+      'schedule_create',
+      'schedule_cancel',
+      'schedule_pause',
+      'schedule_resume',
+      'schedule_list',
+    ],
   )
   for (const tool of tools) {
     assert.ok(tool.description.length > 0, `${tool.name} 缺少描述`)
@@ -179,6 +206,23 @@ test('schedule_cancel：命中与未命中两种话术', async () => {
   assert.equal(textOf(await call('schedule_cancel', { id })), '已取消')
   assert.deepEqual(schedule.cancelled, [id])
   assert.equal(textOf(await call('schedule_cancel', { id })), '没有找到这条提醒')
+})
+
+test('schedule_pause / schedule_resume：命中与未命中两种话术', async () => {
+  const { schedule, call } = setup()
+  await call('schedule_create', { text: '喝水', cron: '0 9 * * *' })
+  const id = schedule.items[0]!.id
+
+  assert.equal(textOf(await call('schedule_pause', { id })), '已暂停')
+  assert.deepEqual(schedule.paused, [id])
+  assert.match(textOf(await call('schedule_list')), /（已暂停）/)
+
+  assert.equal(textOf(await call('schedule_resume', { id })), '已继续')
+  assert.deepEqual(schedule.resumed, [id])
+  assert.doesNotMatch(textOf(await call('schedule_list')), /（已暂停）/)
+
+  assert.equal(textOf(await call('schedule_pause', { id: 'r_nope' })), '没有找到这条提醒')
+  assert.equal(textOf(await call('schedule_resume', { id: 'r_nope' })), '这条提醒不存在或已经结束')
 })
 
 test('schedule_list：列出待触发项并带 id 与规则', async () => {

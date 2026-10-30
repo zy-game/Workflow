@@ -370,8 +370,13 @@ function renderSchedules(items) {
   el.schedulesToggle.title = active.length ? `日程（${active.length} 条待触发）` : '日程'
 
   for (const item of [...active, ...done]) {
+    const paused = Boolean(item.pausedAt)
     const row = document.createElement('li')
-    row.className = item.firedAt ? 'schedule-item is-done' : 'schedule-item'
+    row.className = item.firedAt
+      ? 'schedule-item is-done'
+      : paused
+        ? 'schedule-item is-paused'
+        : 'schedule-item'
 
     const main = document.createElement('div')
     main.className = 'schedule-main'
@@ -382,14 +387,21 @@ function renderSchedules(items) {
 
     const meta = document.createElement('p')
     meta.className = 'schedule-meta'
-    meta.textContent = item.firedAt
-      ? `已触发 · ${ruleOf(item)}`
-      : `下次 ${formatWhen(item.nextAt, item.timezone)} · ${ruleOf(item)}`
+    if (item.firedAt) meta.textContent = `已触发 · ${ruleOf(item)}`
+    else if (paused) meta.textContent = `已暂停 · ${ruleOf(item)}`
+    else meta.textContent = `下次 ${formatWhen(item.nextAt, item.timezone)} · ${ruleOf(item)}`
 
     main.append(text, meta)
     row.append(main)
 
     if (!item.firedAt && typeof item.id === 'string' && item.id) {
+      const toggle = document.createElement('button')
+      toggle.type = 'button'
+      toggle.className = 'schedule-action'
+      toggle.textContent = paused ? '继续' : '暂停'
+      toggle.addEventListener('click', () => void setSchedulePaused(item.id, !paused, toggle))
+      row.append(toggle)
+
       const cancel = document.createElement('button')
       cancel.type = 'button'
       cancel.className = 'schedule-cancel'
@@ -426,8 +438,31 @@ async function loadSchedules() {
   }
 }
 
-async function cancelSchedule(id, button) {
+async function setSchedulePaused(id, paused, button) {
+  const label = button.textContent
   button.disabled = true
+  button.textContent = paused ? '暂停中…' : '继续中…'
+  try {
+    const res = await fetch(`${ENDPOINTS.schedules}/${encodeURIComponent(id)}/${paused ? 'pause' : 'resume'}`, {
+      method: 'POST',
+      headers: withAuth({ Accept: 'application/json' }),
+    })
+    if (res.status === 404) {
+      showSchedulesError(paused ? '这条提醒已经不在了' : '这条提醒不存在或已经结束')
+    } else if (!res.ok) {
+      throw new Error(res.status === 401 ? '令牌无效或已过期' : `操作失败（HTTP ${res.status}）`)
+    } else {
+      showSchedulesError('')
+    }
+    void loadSchedules()
+  } catch (error) {
+    showSchedulesError(error instanceof TypeError ? '无法连接服务' : error.message || '操作失败')
+    button.disabled = false
+    button.textContent = label
+  }
+}
+
+async function cancelSchedule(id, button) {  button.disabled = true
   button.textContent = '取消中…'
   try {
     const res = await fetch(`${ENDPOINTS.schedules}/${encodeURIComponent(id)}`, {

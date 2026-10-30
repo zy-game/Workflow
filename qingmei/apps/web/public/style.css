@@ -389,6 +389,14 @@ body {
   opacity: 0.55;
 }
 
+.schedule-item.is-paused {
+  border-style: dashed;
+}
+
+.schedule-item.is-paused .schedule-meta {
+  color: var(--warn);
+}
+
 .schedule-main {
   flex: 1;
   min-width: 0;
@@ -419,6 +427,29 @@ body {
   font: inherit;
   font-size: 0.8125rem;
   cursor: pointer;
+}
+
+.schedule-action {
+  flex: none;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.schedule-action:hover:not(:disabled) {
+  border-color: #3a4254;
+  color: var(--text);
+}
+
+.schedule-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .schedule-cancel:hover:not(:disabled) {

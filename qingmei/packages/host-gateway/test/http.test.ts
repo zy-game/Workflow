@@ -302,6 +302,7 @@ test('GET /api/v1/schedules 列出日程，DELETE 取消后消失', async () => 
       cron: '0 9 * * *',
       timezone: 'Asia/Shanghai',
       missedPolicy: 'fire-once',
+      pausedAt: null,
       firedAt: null,
     })
     // 已触发的一次性提醒仍然列出，但 firedAt 有值
@@ -317,6 +318,27 @@ test('GET /api/v1/schedules 列出日程，DELETE 取消后消失', async () => 
 
     const blank = await fetch(`${info.url}/api/v1/schedules/`, { method: 'DELETE', headers })
     assert.equal(blank.status, 400)
+
+    const unauthPause = await fetch(`${info.url}/api/v1/schedules/r_cron/pause`, { method: 'POST' })
+    assert.equal(unauthPause.status, 401)
+
+    const paused = await fetch(`${info.url}/api/v1/schedules/r_cron/pause`, { method: 'POST', headers })
+    assert.equal(paused.status, 200)
+    assert.deepEqual(await paused.json(), { ok: true, state: 'paused' })
+    assert.deepEqual(schedule.paused, ['r_cron'])
+
+    const resumed = await fetch(`${info.url}/api/v1/schedules/r_cron/resume`, { method: 'POST', headers })
+    assert.equal(resumed.status, 200)
+    assert.deepEqual(await resumed.json(), { ok: true, state: 'active' })
+    assert.deepEqual(schedule.resumed, ['r_cron'])
+
+    const pauseMissing = await fetch(`${info.url}/api/v1/schedules/r_nope/pause`, { method: 'POST', headers })
+    assert.equal(pauseMissing.status, 404)
+    assert.deepEqual(await pauseMissing.json(), { ok: false, error: '这条提醒不存在或已经结束' })
+
+    // 已触发的一次性提醒不能再暂停/继续
+    const pauseFired = await fetch(`${info.url}/api/v1/schedules/r_once/resume`, { method: 'POST', headers })
+    assert.equal(pauseFired.status, 404)
 
     const removed = await fetch(`${info.url}/api/v1/schedules/r_cron`, { method: 'DELETE', headers })
     assert.equal(removed.status, 200)
@@ -430,9 +452,11 @@ class HistoryStore extends StoreService {
   }
 }
 
-/** 只实现 host-gateway 读取/取消日程所需的最小日程服务。 */
+/** 只实现 host-gateway 读取/取消/暂停日程所需的最小日程服务。 */
 class FakeSchedule extends ScheduleService {
   readonly cancelled: string[] = []
+  readonly paused: string[] = []
+  readonly resumed: string[] = []
   private items: Scheduled[] = [
     {
       id: 'r_cron',
@@ -444,6 +468,7 @@ class FakeSchedule extends ScheduleService {
       cron: '0 9 * * *',
       timezone: 'Asia/Shanghai',
       missedPolicy: 'fire-once',
+      pausedAt: null,
       firedAt: null,
     },
     {
@@ -456,6 +481,7 @@ class FakeSchedule extends ScheduleService {
       cron: null,
       timezone: null,
       missedPolicy: 'fire-once',
+      pausedAt: null,
       firedAt: new Date('2026-10-29T23:00:01.000Z'),
     },
   ]
@@ -473,6 +499,22 @@ class FakeSchedule extends ScheduleService {
     if (index < 0) return false
     this.items = this.items.filter((item) => item.id !== id)
     this.cancelled.push(id)
+    return true
+  }
+
+  async pause(id: string): Promise<boolean> {
+    const item = this.items.find((entry) => entry.id === id)
+    if (!item || item.firedAt) return false
+    if (!item.pausedAt) item.pausedAt = new Date('2026-10-30T12:00:00.000Z')
+    this.paused.push(id)
+    return true
+  }
+
+  async resume(id: string): Promise<boolean> {
+    const item = this.items.find((entry) => entry.id === id)
+    if (!item || item.firedAt) return false
+    item.pausedAt = null
+    this.resumed.push(id)
     return true
   }
 }

@@ -327,6 +327,24 @@ async function routeRequest(
       sendJson(res, 200, { ok: true, cancelled: true })
       return
     }
+    if (method === 'POST') {
+      const action = scheduleActionOf(pathname)
+      if (action) {
+        const schedule = deps.ctx.reflect.get('schedule', false) as ScheduleService | undefined
+        if (!schedule) {
+          sendJson(res, 503, { ok: false, error: 'no schedule service' })
+          return
+        }
+        const ok =
+          action.action === 'pause' ? await schedule.pause(action.id) : await schedule.resume(action.id)
+        if (!ok) {
+          sendJson(res, 404, { ok: false, error: '这条提醒不存在或已经结束' })
+          return
+        }
+        sendJson(res, 200, { ok: true, state: action.action === 'pause' ? 'paused' : 'active' })
+        return
+      }
+    }
 
     await dispatchGatewayRoute(deps, req, res, url, method)
     return
@@ -499,6 +517,22 @@ function scheduleIdOf(pathname: string): string | null {
   } catch {
     return null
   }
+}
+
+/** 识别 /api/v1/schedules/<id>/pause|resume */
+function scheduleActionOf(pathname: string): { id: string; action: 'pause' | 'resume' } | null {
+  const prefix = '/api/v1/schedules/'
+  if (!pathname.startsWith(prefix)) return null
+  const match = /^(.+)\/(pause|resume)$/.exec(pathname.slice(prefix.length))
+  if (!match) return null
+  let id: string
+  try {
+    id = decodeURIComponent(match[1]!).trim()
+  } catch {
+    return null
+  }
+  if (!id) return null
+  return { id, action: match[2] as 'pause' | 'resume' }
 }
 
 async function dispatchGatewayRoute(

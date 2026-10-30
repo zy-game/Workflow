@@ -48,6 +48,7 @@ function due(text = '喝水'): Scheduled {
     cron: null,
     timezone: null,
     missedPolicy: 'fire-once',
+    pausedAt: null,
     firedAt: null,
   }
 }

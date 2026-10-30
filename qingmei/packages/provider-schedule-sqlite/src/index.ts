@@ -41,6 +41,7 @@ interface ScheduleRow extends Row {
   cron?: string | null
   timezone?: string | null
   missed_policy?: MissedPolicy
+  paused_at?: number | null
   fired_at: number | null
   created_at: number
 }
@@ -104,6 +105,7 @@ export class SqliteSchedule extends ScheduleService {
       cron,
       timezone,
       missed_policy: input.missedPolicy ?? 'fire-once',
+      paused_at: null,
       fired_at: null,
       created_at: now,
     }
@@ -118,6 +120,35 @@ export class SqliteSchedule extends ScheduleService {
 
   async cancel(id: string): Promise<boolean> {
     return this.collection.delete(id)
+  }
+
+  async pause(id: string): Promise<boolean> {
+    const row = await this.collection.get(id)
+    if (!row) return false
+    if (row.paused_at) return true
+    await this.collection.update(id, { paused_at: Date.now() })
+    return true
+  }
+
+  /**
+   * 继续：周期日程从「现在」重排，避免一恢复就补发一串；
+   * 一次性日程保持原时间（已经过期就下一轮 tick 立即触发）。
+   */
+  async resume(id: string): Promise<boolean> {
+    const row = await this.collection.get(id)
+    if (!row) return false
+    if (!row.paused_at) return true
+    if (row.fired_at !== null) return false
+
+    const now = Date.now()
+    const cron = row.cron ?? null
+    const everyMs = row.every_ms && row.every_ms > 0 ? row.every_ms : null
+    let nextAt = row.next_at
+    if (cron !== null) nextAt = nextCronTime(cron, new Date(now), row.timezone ?? undefined).getTime()
+    else if (everyMs !== null) nextAt = now + everyMs
+
+    await this.collection.update(id, { next_at: nextAt, paused_at: null })
+    return true
   }
 
   /** 扫一遍到期记录。公开是为了让测试按需推进，不依赖真实计时器。 */
@@ -144,6 +175,8 @@ export class SqliteSchedule extends ScheduleService {
     // fired_at 只有一次性行会写；旧版 every_ms 行也写过一次，同样按退休处理。
     // 新周期行（cron / everyMs）从不写 fired_at，所以这条不会误伤重排。
     if (row.fired_at !== null) return
+    // 暂停的行只保留 next_at，不推进也不触发
+    if (row.paused_at) return
     if (row.next_at > now) return
 
     const cron = row.cron ?? null
@@ -199,6 +232,7 @@ function toScheduled(row: ScheduleRow): Scheduled {
     cron: row.cron ?? null,
     timezone: row.timezone ?? null,
     missedPolicy: row.missed_policy ?? 'fire-once',
+    pausedAt: row.paused_at ? new Date(row.paused_at) : null,
     firedAt: row.fired_at === null ? null : new Date(row.fired_at),
   }
 }

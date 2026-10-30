@@ -1,15 +1,15 @@
 # NEXT · 下个会话从这里开始
 
-> 写于 2026-10-30，技术债 1（落库统一）与技术债 2（MCP 工具注册表）完成并已部署。
-> 仓库全量测试 127/127（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
-> 新会话第一句建议：「读 qingmei/NEXT.md，做日程编辑与暂停」。
+> 写于 2026-10-30，技术债 1/2 与日程暂停·继续完成并已部署。
+> 仓库全量测试 132/132（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
+> 新会话第一句建议：「读 qingmei/NEXT.md，做日程编辑」。
 
 ## 1. 现在是什么状态
 
 ```text
 Web/QQ ─▶ gateway ─▶ qm-agent ─┬─▶ harness（DSH 0.2.1 / ACP）  对话车道
                                 └─▶ llm（OpenAI 兼容 / sub2api） 降级 + 后台抽取
-memory（事实）· mcp（memory/schedule 工具）· schedule（at / everyMs / cron）· channel · store
+memory（事实）· mcp（memory/schedule 工具）· schedule（at / everyMs / cron / 暂停）· channel · store
 qm-history（qm_message 的唯一写入方）
 ```
 
@@ -23,6 +23,10 @@ qm-history（qm_message 的唯一写入方）
   - 时区换算用 `Intl.DateTimeFormat` 反推 UTC：夏令时跳过的本地时间不触发，
     重复的本地时间只触发一次
 - 停机错过的：默认补发一次后重排；`missedPolicy: 'skip'` 则直接跳到下一次
+- **暂停 / 继续**：`schedule_pause` / `schedule_resume`（服务 `pause(id)` / `resume(id)`）
+  - 暂停只保留 `nextAt`，tick 跳过；继续时周期日程从「现在」重排，一次性保持原时间
+  - 已触发的一次性提醒不会被 resume 复活（返回 false）
+  - 接口 `POST /api/v1/schedules/<id>/pause|resume`，面板上每行一个「暂停/继续」+「取消」
 - 提醒到点后投递到 Web 并自动进会话历史（走 `qm/outbound`，不需要自己落库）
 - **Web 日程面板**：顶栏「日程」→ 列出全部提醒（按 nextAt 排序、按各自时区显示时间、
   带 cron 规则与 id），可逐条取消，已触发的一次性提醒保留最近 5 条
@@ -34,8 +38,9 @@ qm-history（qm_message 的唯一写入方）
 
 ## 2. 下一步
 
-1. **日程编辑与暂停**。契约里 `pause/resume` 还没有实现；面板目前只有「取消」。
-2. **历史表没有索引**（见第 3 节第 5 条）：对话长了以后 `qm_message` 全表扫会变慢。
+1. **日程编辑**：现在只能建/停/删，改文本、改时间、改 cron 规则都得删了重建。
+   做法：`ScheduleService.update(id, patch)` + `PATCH /api/v1/schedules/<id>` + 面板行内编辑。
+2. **历史表没有索引**（见第 3 节第 4 条）：对话长了以后 `qm_message` 全表扫会变慢。
 3. 技术债见第 3 节；落库链路见第 5 节，改之前先读。
 
 ## 3. 已知技术债（按优先级）
@@ -72,6 +77,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 日程暂停 / 继续
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/index.ts` | `Scheduled` 加 `pausedAt`；`ScheduleService` 加抽象 `pause` / `resume` |
+| `packages/provider-schedule-sqlite` | 行加 `paused_at`；`pause` 幂等、`resume` 按规则重排（cron 用 `nextCronTime`，一次性保持原时间，已触发的不可复活）；tick 跳过暂停行 |
+| `packages/host-gateway` | `POST /api/v1/schedules/<id>/pause`、`/resume`（返回 `{ ok, state }`） |
+| `packages/host-mcp` | 两个新工具 `schedule_pause` / `schedule_resume`；`schedule_list` 标出「（已暂停）」 |
+| `apps/web/public/*` | 每行「暂停/继续」+「取消」；暂停行虚线边框 + 黄色「已暂停」 |
+| 测试 | provider 4 条（暂停不触发、幂等、恢复重排、已结束不复活）、gateway 3 条、MCP 2 条 |
 
 ### MCP 工具注册表（技术债 2）
 
