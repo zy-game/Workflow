@@ -19,6 +19,7 @@ import {
   type GatewayResponse,
   type GatewayService,
   type InboundMessage,
+  type MemoryService,
   type Row,
   type StoreService,
 } from '@qingmei/core'
@@ -284,6 +285,20 @@ async function routeRequest(
       const conversationId = url.searchParams.get('conversationId') ?? undefined
       const limit = parseLimit(url.searchParams.get('limit'))
       sendJson(res, 200, await readHistory(deps.ctx, conversationId, limit))
+      return
+    }
+    if (pathname === '/api/v1/memory' && method === 'GET') {
+      const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      const query = url.searchParams.get('q') ?? ''
+      const result = await memory.recall({
+        text: query,
+        limit: parseLimit(url.searchParams.get('limit')) ?? undefined,
+      })
+      sendJson(res, 200, { facts: result.facts, text: result.text })
       return
     }
 

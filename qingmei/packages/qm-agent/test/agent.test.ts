@@ -356,6 +356,7 @@ test('一次 inbound：chunk 事件、turn/end、store 两条消息、渠道回�
     sessionId: 's_conv-1',
     ok: true,
     text: '你好呀，我是青梅。',
+    userText: '在吗',
   })
 
   // 交给模型的上下文：system + 当前 user（无历史）
@@ -429,6 +430,7 @@ test('模型出错：兜底回复、turn/end 仍发出且 ok=false、历史照�
     sessionId: 's_conv-1',
     ok: false,
     text: expected,
+    userText: '帮我订个会议',
     error: '模型路由不可用',
   })
 
@@ -485,6 +487,7 @@ test('渠道发送失败：落库照做、turn/end 仍发出且 ok=false', async
     sessionId: 's_conv-1',
     ok: false,
     text: '好。',
+    userText: '在吗',
     error: '渠道发送失败：渠道离线',
   })
   assert.equal(h.state.sent.length, 0)
@@ -507,6 +510,7 @@ test('落库失败：回复照发、turn/end 仍发出且 ok=false', async () =>
     sessionId: 's_conv-1',
     ok: false,
     text: '好。',
+    userText: '在吗',
     error: '写入会话记录失败：磁盘只读',
   })
   assert.equal(h.state.messages().length, 0)

@@ -15,6 +15,13 @@
   config:
     path: './data/qm.db'
 
+- name: '@qingmei/service-memory'
+
+- name: '@qingmei/provider-memory-sqlite'
+  config:
+    limit: 8
+    minConfidence: 0.6
+
 - name: '@qingmei/provider-llm-openai'
   config:
     baseURL: { $env: 'QM_LLM_BASE_URL' }
@@ -35,6 +42,18 @@
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
 
+# 回合结束后异步抽取事实；走 llm 车道，不阻塞回复
+- name: '@qingmei/host-mcp'
+  config:
+    host: '127.0.0.1'
+    port: 7420
+    token: { $env: 'QM_MCP_TOKEN' }
+
+- name: '@qingmei/qm-memory-extract'
+  config:
+    minConfidence: 0.7
+    maxFacts: 5
+
 - name: '@qingmei/channel-web'
 
 - name: '@qingmei/host-gateway'
@@ -43,3 +62,4 @@
     port: 7410
     token: { $env: 'QM_TOKEN' }
     webRoot: './apps/web/public'
+

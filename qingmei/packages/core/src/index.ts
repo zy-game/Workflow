@@ -99,6 +99,8 @@ export interface TurnEnd {
   sessionId: string
   ok: boolean
   text: string
+  /** 本回合用户说了什么：记忆抽取要用，避免再查库 */
+  userText?: string
   error?: string
 }
 
@@ -244,6 +246,61 @@ export abstract class HarnessService extends Service {
   abstract run(req: HarnessRequest): AsyncIterable<HarnessEvent>
   /** 关闭某个会话的外部资源 */
   abstract close(conversationId: string): Promise<void>
+}
+
+// ────────────────────────────────────────────── 记忆
+
+export interface MemoryRecord {
+  kind: 'fact' | 'episode'
+  /** fact 用：主体 / 关系 / 客体 */
+  subject: string
+  predicate: string
+  object: string
+  /** 0..1 */
+  confidence: number
+  sensitivity: 'public' | 'private' | 'secret'
+  origin: { kind: 'channel' | 'harness' | 'self' | 'doc' | 'manual'; id: string }
+  occurredAt?: Date
+}
+
+export interface RecalledFact extends MemoryRecord {
+  id: string
+  createdAt: Date
+}
+
+export interface RecallQuery {
+  text: string
+  limit?: number
+}
+
+export interface RecallResult {
+  facts: RecalledFact[]
+  /** 已格式化、可直接拼进 prompt 的文本；无命中时为空串 */
+  text: string
+}
+
+export abstract class MemoryService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'memory')
+  }
+  /** 幂等写入：完全相同的三元组只合并，不重复 */
+  abstract ingest(records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }>
+  abstract recall(query: RecallQuery): Promise<RecallResult>
+  abstract forget(ids: string[]): Promise<number>
+}
+
+// ────────────────────────────────────────────── MCP
+
+/**
+ * 把青梅自己的能力以 MCP 服务器形式暴露给外部 agent runtime。
+ * harness 在 session/new 时读取 servers() 注入声明。
+ */
+export abstract class McpService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'mcp')
+  }
+  /** ACP 的 mcpServers 数组，形如 [{type:'http',name,url,headers}] */
+  abstract servers(): unknown[]
 }
 
 // ────────────────────────────────────────────── 工具函数

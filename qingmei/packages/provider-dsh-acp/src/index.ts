@@ -142,7 +142,10 @@ export class DshHarness extends HarnessService {
     const existing = this.sessions.get(conversationId)
     if (existing) return existing
     const base = path.resolve(cwd ?? this.config.cwd ?? process.cwd())
-    const sessionId = await client.newSession(base)
+    // 有 mcp 服务就把青梅自己的工具注入会话；没有则退回纯对话
+    const mcp = this.ctx.reflect.get('mcp', false) as { servers(): unknown[] } | undefined
+    const mcpServers = mcp?.servers() ?? []
+    const sessionId = await client.newSession(base, mcpServers)
     this.sessions.set(conversationId, sessionId)
     return sessionId
   }

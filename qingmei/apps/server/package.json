@@ -13,6 +13,10 @@
     "@qingmei/provider-dsh-acp": "workspace:*",
     "@qingmei/provider-store-sqlite": "workspace:*",
     "@qingmei/qm-agent": "workspace:*",
+    "@qingmei/host-mcp": "workspace:*",
+    "@qingmei/qm-memory-extract": "workspace:*",
+    "@qingmei/provider-memory-sqlite": "workspace:*",
+    "@qingmei/service-memory": "workspace:*",
     "@qingmei/service-channel": "workspace:*",
     "@qingmei/service-gateway": "workspace:*",
     "@qingmei/service-llm": "workspace:*",
@@ -21,4 +25,6 @@
     "js-yaml": "^5.5.0"
   }
 }
+
+
 

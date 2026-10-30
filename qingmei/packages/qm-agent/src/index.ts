@@ -16,6 +16,7 @@ import {
   type GatewayService,
   type HarnessService,
   type InboundMessage,
+  type MemoryService,
   type Row,
   type StoreService,
   type TurnChunk,
@@ -58,6 +59,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
   const gateway = requireService<GatewayService>(ctx, 'gateway')
   /** harness 是可选车道：存在就优先用，不存在或不可用则回落 llm */
   const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
+  /** memory 也是可选：有就注入召回结果，没有就跳过 */
+  const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
@@ -133,6 +136,16 @@ export function apply(ctx: Context, config: AgentConfig): void {
     const controller = new AbortController()
     let reply = ''
 
+    /** 召回失败不能影响对话：退化成"这次没有记忆" */
+    let memoryText = ''
+    if (memory) {
+      try {
+        memoryText = (await memory.recall({ text: userText })).text
+      } catch (error) {
+        problems.push(`记忆召回失败：${messageOf(error)}`)
+      }
+    }
+
     try {
       // 车道选择：装了 harness 且能握手，就用它（有自己的会话/工具/压缩）；
       // 否则回落 llm，并把降级记进 problems，避免静默换脑。
@@ -146,7 +159,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
       if (mode === 'harness' && harness) {
         for await (const event of harness.run({
           conversationId: sessionId,
-          text: userText,
+          // DSH 自己维护会话历史；把召回结果作为前缀附在这一轮输入上
+          text: memoryText ? `【已知记忆】\n${memoryText}\n\n${userText}` : userText,
           signal: controller.signal,
         })) {
           if (event.type === 'text') {
@@ -162,7 +176,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
         }
       } else {
         const messages: ChatMessage[] = [
-          { role: 'system', content: persona },
+          { role: 'system', content: memoryText ? `${persona}\n\n【已知记忆】\n${memoryText}` : persona },
           ...(await loadHistory(sessionId)),
           { role: 'user', content: userText },
         ]
@@ -192,7 +206,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
     }
 
     // 渠道结果也是回合结果的一部分，所以 turn/end 放在发送之后，ok/error 才是真实状态
-    const end: TurnEnd = { sessionId, ok: problems.length === 0, text: reply }
+    const end: TurnEnd = { sessionId, ok: problems.length === 0, text: reply, userText }
     if (problems.length > 0) end.error = problems.join('；')
     ctx.events.emit(EVENTS.turnEnd, end)
   }
