@@ -2,11 +2,19 @@
  * @qingmei/host-mcp —— 把青梅的能力以 MCP（Streamable HTTP）暴露给外部 agent。
  *
  * 只实现 MCP 的最小面：initialize / tools/list / tools/call。
- * 目前暴露两个工具：memory_recall / memory_remember。
+ * 目前暴露记忆与日程两组工具：memory_recall / memory_remember /
+ * schedule_create / schedule_cancel / schedule_list。
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Context } from 'cordis'
-import { McpService, type MemoryRecord, type MemoryService, type ScheduleService } from '@qingmei/core'
+import {
+  McpService,
+  type MemoryRecord,
+  type MemoryService,
+  type Scheduled,
+  type ScheduleInput,
+  type ScheduleService,
+} from '@qingmei/core'
 
 export interface McpConfig {
   host?: string
@@ -50,13 +58,22 @@ const TOOLS = [
   },
   {
     name: 'schedule_create',
-    description: '创建提醒。seconds 之后触发；用于“几分钟后提醒我”这类请求。',
+    description:
+      '创建提醒。cron 表示按周期重复（五段式“分 时 日 月 周”，可配 timezone），用于“每天九点”这类请求；' +
+      'at 表示绝对时间一次性触发；只给 seconds 表示多少秒后提醒一次。优先级 cron > at > seconds。',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: '提醒内容' },
+        cron: { type: 'string', description: '五段式 cron：分 时 日 月 周，如 0 9 * * 1-5' },
+        timezone: { type: 'string', description: 'IANA 时区，如 Asia/Shanghai；缺省用服务器配置的默认时区' },
+        missedPolicy: {
+          type: 'string',
+          enum: ['fire-once', 'skip'],
+          description: '停机期间错过多次时补发一次（默认）还是跳过',
+        },
+        at: { type: 'string', description: '绝对时间（ISO 8601），一次性' },
         seconds: { type: 'number', description: '多少秒后提醒，默认 60' },
-        at: { type: 'string', description: '绝对时间（ISO 8601），与 seconds 二选一，优先' },
       },
       required: ['text'],
     },
@@ -202,16 +219,9 @@ export class McpHost extends McpService {
       if (tool === 'schedule_create') {
         const text = String(args.text ?? '').trim()
         if (!text) throw new Error('text 不能为空')
-        // at 优先（ISO 时间，模型自己换算）；否则按 seconds 倒计时
-        const atRaw = typeof args.at === 'string' ? Date.parse(args.at) : Number.NaN
-        const at = Number.isFinite(atRaw) ? new Date(atRaw) : undefined
-        const seconds = Number(args.seconds ?? 60)
-        const item = await this.schedule.create({
-          text,
-          ...(at ? { at } : { everyMs: Math.max(1, seconds) * 1000 }),
-        })
+        const item = await this.schedule.create(scheduleInputFrom(text, args))
         return {
-          content: [{ type: 'text', text: `已设定：${item.nextAt.toISOString()} 提醒「${text}」` }],
+          content: [{ type: 'text', text: `已设定：${describeWhen(item)} 提醒「${text}」` }],
           isError: false,
         }
       }
@@ -224,7 +234,7 @@ export class McpHost extends McpService {
         const items = await this.schedule.list()
         const active = items.filter((item) => item.firedAt === null)
         const text = active.length
-          ? active.map((item) => `- ${item.nextAt.toISOString()} ${item.text}`).join('\n')
+          ? active.map((item) => `- ${describeWhen(item)} ${item.text}`).join('\n')
           : '没有待触发的提醒。'
         return { content: [{ type: 'text', text }], isError: false }
       }
@@ -232,6 +242,41 @@ export class McpHost extends McpService {
     }
     throw new Error(`未知方法：${method}`)
   }
+}
+
+/**
+ * 把工具参数折成 ScheduleInput。
+ *
+ * cron 优先，其次 ISO 时间，最后才是 seconds 倒计时。秒级请求一律换算成绝对时间，
+ * 走一次性路径——否则“60 秒后提醒我”会变成每 60 秒重复一次。
+ */
+export function scheduleInputFrom(text: string, args: Record<string, unknown>): ScheduleInput {
+  const cron = typeof args.cron === 'string' ? args.cron.trim() : ''
+  const timezone = typeof args.timezone === 'string' ? args.timezone.trim() : ''
+  const missedPolicy =
+    args.missedPolicy === 'skip' ? 'skip' : args.missedPolicy === 'fire-once' ? 'fire-once' : undefined
+  if (cron) {
+    return {
+      text,
+      cron,
+      ...(timezone ? { timezone } : {}),
+      ...(missedPolicy ? { missedPolicy } : {}),
+    }
+  }
+
+  const atRaw = typeof args.at === 'string' ? Date.parse(args.at) : Number.NaN
+  if (Number.isFinite(atRaw)) return { text, at: new Date(atRaw) }
+
+  const seconds = Number(args.seconds ?? 60)
+  const delayMs = (Number.isFinite(seconds) && seconds > 0 ? seconds : 60) * 1000
+  return { text, at: new Date(Date.now() + delayMs) }
+}
+
+function describeWhen(item: Scheduled): string {
+  if (item.cron) {
+    return `每次 ${item.cron}（${item.timezone ?? '默认时区'}），下次 ${item.nextAt.toISOString()}`
+  }
+  return item.nextAt.toISOString()
 }
 
 function readJson(req: IncomingMessage): Promise<unknown> {

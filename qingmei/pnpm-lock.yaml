@@ -177,6 +177,10 @@ importers:
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
 
   packages/provider-store-sqlite:
     dependencies:

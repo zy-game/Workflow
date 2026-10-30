@@ -6,6 +6,8 @@
  */
 import { Service, type Context } from 'cordis'
 
+export { nextCronTime, parseCron, systemTimeZone, type CronSpec } from './cron.ts'
+
 // ────────────────────────────────────────────── 基础类型
 
 export type ChannelId = 'qq' | 'feishu' | 'web' | 'watch'
@@ -87,11 +89,21 @@ export const EVENTS = {
 
 // ────────────────────────────────────────────── 日程
 
+/** 停机期间错过多次时的处理方式：补发一次（默认）或跳过 */
+export type MissedPolicy = 'fire-once' | 'skip'
+
 export interface ScheduleInput {
   text: string
-  /** 一次性：绝对时间；与 everyMs 二选一 */
+  /** 一次性：绝对时间。与 everyMs / cron 三选一 */
   at?: Date
+  /** 固定间隔重复。与 at / cron 三选一 */
   everyMs?: number
+  /** 五段式 cron：分 时 日 月 周。与 at / everyMs 三选一 */
+  cron?: string
+  /** IANA 时区，如 Asia/Shanghai；缺省用 provider 配置的默认时区（未配置时用进程时区）。仅 cron 有意义 */
+  timezone?: string
+  /** 停机期间错过多次时：补发一次（默认）或跳过。仅 cron 有意义 */
+  missedPolicy?: MissedPolicy
   channel?: ChannelId
   conversationId?: string
 }
@@ -103,6 +115,11 @@ export interface Scheduled {
   conversationId: string
   nextAt: Date
   everyMs: number | null
+  /** 周期规则；一次性与固定间隔为 null */
+  cron: string | null
+  /** cron 使用的 IANA 时区；非 cron 为 null */
+  timezone: string | null
+  missedPolicy: MissedPolicy
   firedAt: Date | null
 }
 

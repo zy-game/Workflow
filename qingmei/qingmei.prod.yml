@@ -46,6 +46,8 @@
 - name: '@qingmei/provider-schedule-sqlite'
   config:
     tickMs: 1000
+    # cron 没带时区时按东八区算，服务器时区是 UTC 也不会偏 8 小时
+    defaultTimezone: 'Asia/Shanghai'
 
 - name: '@qingmei/qm-reminder'
 

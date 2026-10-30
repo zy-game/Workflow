@@ -1,68 +1,43 @@
 # NEXT · 下个会话从这里开始
 
-> 写于 2026-10-30，提交 `ccb8a75f`。当前仓库与服务器一致，测试 77/77。
-> 新会话第一句建议：「读 qingmei/NEXT.md，做 M2-cron」。
+> 写于 2026-10-30，M2-cron 完成。仓库全量测试 103/103（`node --test`）。
+> 新会话第一句建议：「读 qingmei/NEXT.md，做 M2-日程页」。
 
 ## 1. 现在是什么状态
 
 ```text
 Web/QQ ─▶ gateway ─▶ qm-agent ─┬─▶ harness（DSH 0.2.1 / ACP）  对话车道
                                 └─▶ llm（OpenAI 兼容 / sub2api） 降级 + 后台抽取
-memory（事实）· mcp（memory/schedule 工具）· channel · store
+memory（事实）· mcp（memory/schedule 工具）· schedule（at / everyMs / cron）· channel · store
 ```
 
 已可用的能力：
 
 - 说一句话 → 抽取事实 → 重启后仍能召回；DSH 也会主动调 `memory_recall`
-- 建提醒：`schedule_create`（`at` 绝对时间 或 `seconds` 倒计时）、`schedule_list`、`schedule_cancel`
+- 建提醒：一次性（`at`）、固定间隔（`everyMs`）、cron（`cron` + `timezone`）
+  - `schedule_create` 的 `seconds` 会换算成一次性绝对时间，不会变成无限重复
+  - cron 未带时区时用 provider 的 `defaultTimezone`（生产配的是 `Asia/Shanghai`）
+- cron 语义：`*` `n` `a-b` `a,b` `*/n` `a-b/n`；周 0/7 都是周日；日与周同时限定时取「或」
+  - 时区换算用 `Intl.DateTimeFormat` 反推 UTC：夏令时跳过的本地时间不触发，
+    重复的本地时间只触发一次
+- 停机错过的：默认补发一次后重排；`missedPolicy: 'skip'` 则直接跳到下一次
 - 提醒到点后投递到 Web 并写入会话历史
 - 人格白名单 + 输出卫生（内部工具名/路径不外泄）
 
-## 2. 本次要做：M2-cron
+## 2. 下一步
 
-**目标**：支持「每天九点」「工作日八点半」这类 cron 提醒，且时区正确。
-
-### 契约（packages/core）
-
-```ts
-interface ScheduleInput {
-  text: string
-  at?: Date
-  everyMs?: number
-  cron?: string          // 五段式：分 时 日 月 周
-  timezone?: string      // IANA，如 Asia/Shanghai；缺省用进程时区
-  missedPolicy?: 'fire-once' | 'skip'
-}
-```
-
-### 实现要点
-
-- 下一次触发时间用 `Intl.DateTimeFormat` 取目标时区本地时间再反推 UTC，**不要手写时区偏移**
-- 解析支持：`*`、`n`、`a-b`、`a,b`、`*/n`、`a-b/n`
-- 周字段：0 与 7 都是周日；日与周同时限定时按 cron 惯例取「或」
-- 重启期间错过的：默认补发一次，然后按下一周期重排
-
-### 必须有的测试（少一条都不算完成）
-
-1. `*/15 * * * *`：连续五次 nextAt 间隔 15 分钟
-2. `0 9 * * 1-5`：跨周末时跳到周一
-3. `0 0 31 * *`：无 31 号的月份跳过
-4. 闰日 `0 0 29 2 *`
-5. DST：`Europe/Berlin` 春令时切换当天不重复、不漏
-6. 跨时区：同一 cron 在 `UTC` 与 `Asia/Shanghai` 的 nextAt 相差 8 小时
-7. 非法表达式（4 段、字段越界）直接报错，不静默
-
-### 接入
-
-- `host-mcp.schedule_create` 增加 `cron` / `timezone` 参数（与 `at`/`seconds` 三选一）
-- 日程页（Web）列出、取消 —— 可放到 cron 之后单独做
+1. **日程页（Web）**：列出 / 取消。数据层已就绪（`ctx.schedule.list()` / `cancel(id)`），
+   缺的是 `host-gateway` 上的 HTTP 路由与 `apps/web/public` 的页面；路由写法参照现有路由注册。
+2. **部署 M2**：见第 4 节。`qingmei.prod.yml` 已加 `defaultTimezone: 'Asia/Shanghai'`。
+3. 技术债见第 3 节；cron 细节见第 5 节，改之前先读。
 
 ## 3. 已知技术债（按优先级）
 
 1. **落库双份**：`qm-agent` 与 `qm-reminder` 各写一次 `qm_message`。应改为 `ChannelService.send` 成功后发 `qm/outbound`，由 `qm-history` 统一落库。
 2. **工具列表是写死的**：`host-mcp` 的 TOOLS 数组手写 schema，新增工具要同步改三处（schema/描述/dispatch）。
 3. **没有 tsc**：仓库只有 cordis 依赖，类型正确性靠审阅；若要补，加 typescript 并跑 `tsc --noEmit`。
-4. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
+4. **tick 是全表扫描**：每秒 `find()` 一遍 `qm_schedule` 再在 JS 里比时间，日程多了要按 `next_at` 建索引或缩小查询。
+5. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
 
 ## 4. 运维速查（139.155.78.241，用户 ubuntu，密钥 company.pem）
 
@@ -85,7 +60,20 @@ sudo journalctl -u qingmei -n 50 --no-pager
 密钥都在 `/etc/qingmei/env`（0600）：`QM_TOKEN` / `QM_LLM_*` / `QM_DSH_API_KEY` / `QM_MCP_TOKEN`。
 访问地址：`https://139.155.78.241:8710/?token=<QM_TOKEN>`。
 
-## 5. 环境里踩过的坑（别再踩）
+## 5. 本次改动的落点（cron）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/cron.ts` | 新增：`parseCron` / `nextCronTime` / `systemTimeZone` |
+| `packages/core/src/index.ts` | `ScheduleInput` 加 `cron` / `timezone` / `missedPolicy`；`Scheduled` 加 `cron` / `timezone` / `missedPolicy`；重导出 cron 函数 |
+| `packages/provider-schedule-sqlite` | 三类规则统一推进；cron 到点重排；`skip` 策略；`defaultTimezone` 配置 |
+| `packages/host-mcp` | `schedule_create` 加 `cron` / `timezone` / `missedPolicy`；`seconds` 改为一次性 |
+| 测试 | `core/test/cron.test.ts`(12)、`provider-schedule-sqlite/test/schedule.test.ts`(9)、`host-mcp/test/mcp.test.ts`(5) |
+
+`Scheduled.firedAt` 的语义：一次性行到点后写入（退休标志）；周期行恒为 `null`，
+否则 `schedule_list` 按 `firedAt === null` 过滤时会把周期提醒过滤掉。
+
+## 6. 环境里踩过的坑（别再踩）
 
 1. `ctx.plugin()` 是异步的：必须 `await`，否则服务是 `undefined`
 2. `node --test <目录>` 不展开目录；仓库根直接 `node --test`
@@ -94,3 +82,9 @@ sudo journalctl -u qingmei -n 50 --no-pager
 5. ACP 的 `cwd` 必须是绝对路径
 6. `service-*` 门面包也必须有 `apply`，否则 cordis 拒收、服务重启循环
 7. GitHub 直连会被重置，推送要加 `-c http.proxy=http://127.0.0.1:7897`
+8. **注释里不能直接写 cron 的 `*/n`**：`*/` 会提前闭合块注释，TS 报
+   `ERR_INVALID_TYPESCRIPT_SYNTAX`。写成「区间接步长」绕开
+9. **store 是无 schema 的 JSON**：新增字段后，老记录里是 `undefined` 而不是 `null`，
+   读的时候一律 `row.x ?? 默认值`
+10. 跨包测试要真的用上别的 provider，得先把它写进 `devDependencies` 再
+    `pnpm install --offline` —— workspace 链接来自 lockfile，手建 junction 不算数
