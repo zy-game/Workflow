@@ -17,18 +17,45 @@
     <div class="app">
       <header class="topbar">
         <h1 class="brand">青梅 · <span class="brand-phase">P1</span></h1>
-        <span
-          id="status"
-          class="status"
-          data-state="connecting"
-          role="status"
-          aria-live="polite"
-          title="连接中…"
-        >
-          <span class="status-dot" aria-hidden="true"></span>
-          <span id="status-text" class="status-text">连接中…</span>
-        </span>
+        <div class="topbar-actions">
+          <button
+            id="schedules-toggle"
+            class="ghost"
+            type="button"
+            aria-expanded="false"
+            aria-controls="schedules"
+            title="查看日程"
+          >
+            日程
+          </button>
+          <span
+            id="status"
+            class="status"
+            data-state="connecting"
+            role="status"
+            aria-live="polite"
+            title="连接中…"
+          >
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="status-text" class="status-text">连接中…</span>
+          </span>
+        </div>
       </header>
+
+      <section id="schedules" class="schedules" hidden aria-labelledby="schedules-title">
+        <div class="schedules-head">
+          <h2 id="schedules-title" class="schedules-title">日程</h2>
+          <div class="schedules-tools">
+            <button id="schedules-refresh" class="ghost" type="button">刷新</button>
+            <button id="schedules-close" class="ghost" type="button">关闭</button>
+          </div>
+        </div>
+        <p id="schedules-empty" class="schedules-empty">
+          还没有日程。在对话里说一句「每天九点提醒我喝水」就行。
+        </p>
+        <p id="schedules-error" class="schedules-error" role="alert" hidden></p>
+        <ul id="schedules-list" class="schedules-list"></ul>
+      </section>
 
       <main id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text" aria-label="对话">
         <p id="empty" class="empty">说点什么吧。P1 先跑通一条最小闭环。</p>

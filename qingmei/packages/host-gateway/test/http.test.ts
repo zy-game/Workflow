@@ -6,11 +6,14 @@ import path from 'node:path'
 import { Context, type Fiber } from 'cordis'
 import {
   StoreService,
+  ScheduleService,
   type Collection,
   type GatewayEvent,
   type InboundMessage,
   type Query,
   type Row,
+  type ScheduleInput,
+  type Scheduled,
 } from '@qingmei/core'
 import * as GatewayPlugin from '@qingmei/service-gateway'
 import type { GatewayHub } from '@qingmei/service-gateway'
@@ -261,6 +264,77 @@ test('GET /api/v1/messages 从 qm_message 读取历史并按会话裁剪', async
   }
 })
 
+test('GET /api/v1/schedules 无 schedule 服务时 503', async () => {
+  const res = await fetch(`${base}/api/v1/schedules`, { headers: auth })
+  assert.equal(res.status, 503)
+  assert.deepEqual(await res.json(), { ok: false, error: 'no schedule service' })
+})
+
+test('GET /api/v1/schedules 列出日程，DELETE 取消后消失', async () => {
+  const scheduleCtx = new Context()
+  await scheduleCtx.plugin(GatewayPlugin)
+  const schedule = new FakeSchedule(scheduleCtx)
+
+  const scheduleHost = scheduleCtx.plugin(HostGateway, {
+    host: '127.0.0.1',
+    port: 0,
+    token: 'schedule-token',
+    webRoot,
+  })
+  await scheduleHost
+  const info = getServerInfo(scheduleCtx)
+  assert.ok(info)
+  const headers = { authorization: 'Bearer schedule-token' }
+
+  try {
+    const res = await fetch(`${info.url}/api/v1/schedules`, { headers })
+    assert.equal(res.status, 200)
+    const body = (await res.json()) as { ok: boolean; items: Record<string, unknown>[] }
+    assert.equal(body.ok, true)
+    assert.equal(body.items.length, 2)
+    assert.deepEqual(body.items[0], {
+      id: 'r_cron',
+      text: '每天九点喝水',
+      channel: 'web',
+      conversationId: 'owner',
+      nextAt: '2026-10-31T01:00:00.000Z',
+      everyMs: null,
+      cron: '0 9 * * *',
+      timezone: 'Asia/Shanghai',
+      missedPolicy: 'fire-once',
+      firedAt: null,
+    })
+    // 已触发的一次性提醒仍然列出，但 firedAt 有值
+    assert.equal(body.items[1]?.id, 'r_once')
+    assert.equal(body.items[1]?.firedAt, '2026-10-29T23:00:01.000Z')
+
+    const unauth = await fetch(`${info.url}/api/v1/schedules`)
+    assert.equal(unauth.status, 401)
+
+    const missing = await fetch(`${info.url}/api/v1/schedules/r_nope`, { method: 'DELETE', headers })
+    assert.equal(missing.status, 404)
+    assert.deepEqual(await missing.json(), { ok: false, error: '没有找到这条提醒' })
+
+    const blank = await fetch(`${info.url}/api/v1/schedules/`, { method: 'DELETE', headers })
+    assert.equal(blank.status, 400)
+
+    const removed = await fetch(`${info.url}/api/v1/schedules/r_cron`, { method: 'DELETE', headers })
+    assert.equal(removed.status, 200)
+    assert.deepEqual(await removed.json(), { ok: true, cancelled: true })
+    assert.deepEqual(schedule.cancelled, ['r_cron'])
+
+    const after = (await (await fetch(`${info.url}/api/v1/schedules`, { headers })).json()) as {
+      items: { id: string }[]
+    }
+    assert.deepEqual(
+      after.items.map((item) => item.id),
+      ['r_once'],
+    )
+  } finally {
+    await scheduleHost.dispose()
+  }
+})
+
 test('channel-web 的 send 把信封作为 assistant 事件广播', async () => {
   const gateway = ctx.gateway as GatewayHub
   const events: GatewayEvent[] = []
@@ -353,5 +427,52 @@ class HistoryStore extends StoreService {
         return rows.length
       },
     }
+  }
+}
+
+/** 只实现 host-gateway 读取/取消日程所需的最小日程服务。 */
+class FakeSchedule extends ScheduleService {
+  readonly cancelled: string[] = []
+  private items: Scheduled[] = [
+    {
+      id: 'r_cron',
+      text: '每天九点喝水',
+      channel: 'web',
+      conversationId: 'owner',
+      nextAt: new Date('2026-10-31T01:00:00.000Z'),
+      everyMs: null,
+      cron: '0 9 * * *',
+      timezone: 'Asia/Shanghai',
+      missedPolicy: 'fire-once',
+      firedAt: null,
+    },
+    {
+      id: 'r_once',
+      text: '开会',
+      channel: 'web',
+      conversationId: 'owner',
+      nextAt: new Date('2026-10-29T23:00:00.000Z'),
+      everyMs: null,
+      cron: null,
+      timezone: null,
+      missedPolicy: 'fire-once',
+      firedAt: new Date('2026-10-29T23:00:01.000Z'),
+    },
+  ]
+
+  async create(_input: ScheduleInput): Promise<Scheduled> {
+    throw new Error('测试日程服务不支持 create')
+  }
+
+  async list(): Promise<Scheduled[]> {
+    return [...this.items]
+  }
+
+  async cancel(id: string): Promise<boolean> {
+    const index = this.items.findIndex((item) => item.id === id)
+    if (index < 0) return false
+    this.items = this.items.filter((item) => item.id !== id)
+    this.cancelled.push(id)
+    return true
   }
 }

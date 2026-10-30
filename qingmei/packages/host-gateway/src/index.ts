@@ -21,6 +21,7 @@ import {
   type InboundMessage,
   type MemoryService,
   type Row,
+  type ScheduleService,
   type StoreService,
 } from '@qingmei/core'
 import type { GatewayHub } from '@qingmei/service-gateway'
@@ -301,6 +302,31 @@ async function routeRequest(
       sendJson(res, 200, { facts: result.facts, text: result.text })
       return
     }
+    if (pathname === '/api/v1/schedules' && method === 'GET') {
+      const schedule = deps.ctx.reflect.get('schedule', false) as ScheduleService | undefined
+      if (!schedule) {
+        sendJson(res, 503, { ok: false, error: 'no schedule service' })
+        return
+      }
+      // Scheduled 里的 Date 直接由 JSON.stringify 序列化成 ISO 字符串
+      sendJson(res, 200, { ok: true, items: await schedule.list() })
+      return
+    }
+    if (pathname.startsWith('/api/v1/schedules/') && method === 'DELETE') {
+      const schedule = deps.ctx.reflect.get('schedule', false) as ScheduleService | undefined
+      if (!schedule) {
+        sendJson(res, 503, { ok: false, error: 'no schedule service' })
+        return
+      }
+      const id = scheduleIdOf(pathname)
+      if (!id) throw new HttpError(400, '缺少提醒 id')
+      if (!(await schedule.cancel(id))) {
+        sendJson(res, 404, { ok: false, error: '没有找到这条提醒' })
+        return
+      }
+      sendJson(res, 200, { ok: true, cancelled: true })
+      return
+    }
 
     await dispatchGatewayRoute(deps, req, res, url, method)
     return
@@ -462,6 +488,17 @@ function parseLimit(raw: string | null): number {
   const value = Number.parseInt(raw, 10)
   if (!Number.isFinite(value)) return DEFAULT_LIMIT
   return Math.min(MAX_LIMIT, Math.max(1, value))
+}
+
+/** 从 /api/v1/schedules/<id> 取 id；空串或非法百分号编码返回 null */
+function scheduleIdOf(pathname: string): string | null {
+  const raw = pathname.slice('/api/v1/schedules/'.length)
+  if (raw === '') return null
+  try {
+    return decodeURIComponent(raw).trim() || null
+  } catch {
+    return null
+  }
 }
 
 async function dispatchGatewayRoute(

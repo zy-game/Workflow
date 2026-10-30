@@ -233,8 +233,9 @@ export class McpHost extends McpService {
       if (tool === 'schedule_list') {
         const items = await this.schedule.list()
         const active = items.filter((item) => item.firedAt === null)
+        // 带上 id：没有 id，模型就无法用 schedule_cancel 取消已有日程
         const text = active.length
-          ? active.map((item) => `- ${describeWhen(item)} ${item.text}`).join('\n')
+          ? active.map((item) => `- [${item.id}] ${describeWhen(item)} ${item.text}`).join('\n')
           : '没有待触发的提醒。'
         return { content: [{ type: 'text', text }], isError: false }
       }

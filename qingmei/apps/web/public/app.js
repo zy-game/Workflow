@@ -6,6 +6,7 @@ const ENDPOINTS = {
   health: './healthz',
   events: './api/v1/events',
   messages: './api/v1/messages',
+  schedules: './api/v1/schedules',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -21,6 +22,13 @@ const el = {
   send: document.getElementById('send'),
   status: document.getElementById('status'),
   statusText: document.getElementById('status-text'),
+  schedulesToggle: document.getElementById('schedules-toggle'),
+  schedules: document.getElementById('schedules'),
+  schedulesList: document.getElementById('schedules-list'),
+  schedulesEmpty: document.getElementById('schedules-empty'),
+  schedulesError: document.getElementById('schedules-error'),
+  schedulesRefresh: document.getElementById('schedules-refresh'),
+  schedulesClose: document.getElementById('schedules-close'),
 }
 
 const state = {
@@ -34,6 +42,8 @@ const state = {
   failed: false,
   retryAt: 0,
   retryTimer: 0,
+  schedulesOpen: false,
+  schedulesLoading: false,
 }
 
 // ── 令牌 ─────────────────────────────────────
@@ -296,6 +306,8 @@ function handleAssistant(payload) {
   turn.node.classList.remove('is-streaming')
   state.current = null
   if (stick) el.messages.scrollTop = el.messages.scrollHeight
+  // 回合结束后刷新日程面板：用户可能刚在对话里加了提醒
+  if (state.schedulesOpen) void loadSchedules()
 }
 
 function appendNotice(message) {
@@ -307,6 +319,142 @@ function appendNotice(message) {
   note.textContent = message
   el.messages.append(note)
   if (stick) stickToBottom(true)
+}
+
+// ── 日程 ─────────────────────────────────────
+
+/** 按日程自己的时区显示时间；时区参数不可用时退回本机时区 */
+function formatWhen(iso, timezone) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  const options = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }
+  try {
+    return new Intl.DateTimeFormat('zh-CN', timezone ? { ...options, timeZone: timezone } : options).format(date)
+  } catch {
+    return new Intl.DateTimeFormat('zh-CN', options).format(date)
+  }
+}
+
+function humanGap(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '—'
+  if (ms < 60_000) return `${Math.round(ms / 1000)} 秒`
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)} 分钟`
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)} 小时`
+  return `${Math.round(ms / 86_400_000)} 天`
+}
+
+function ruleOf(item) {
+  if (typeof item?.cron === 'string' && item.cron) {
+    return `cron ${item.cron}${item.timezone ? ` · ${item.timezone}` : ''}`
+  }
+  if (Number.isFinite(item?.everyMs) && item.everyMs > 0) return `每 ${humanGap(item.everyMs)}`
+  return '一次性'
+}
+
+function renderSchedules(items) {
+  const list = el.schedulesList
+  list.replaceChildren()
+
+  const ordered = [...items].sort((a, b) => Date.parse(a.nextAt) - Date.parse(b.nextAt))
+  const active = ordered.filter((item) => !item.firedAt)
+  // 已触发的一次性提醒保留最近 5 条，方便确认“提醒过了”
+  const done = ordered.filter((item) => item.firedAt).slice(-5)
+  el.schedulesEmpty.hidden = ordered.length > 0
+  el.schedulesToggle.title = active.length ? `日程（${active.length} 条待触发）` : '日程'
+
+  for (const item of [...active, ...done]) {
+    const row = document.createElement('li')
+    row.className = item.firedAt ? 'schedule-item is-done' : 'schedule-item'
+
+    const main = document.createElement('div')
+    main.className = 'schedule-main'
+
+    const text = document.createElement('p')
+    text.className = 'schedule-text'
+    text.textContent = typeof item.text === 'string' ? item.text : '（无内容）'
+
+    const meta = document.createElement('p')
+    meta.className = 'schedule-meta'
+    meta.textContent = item.firedAt
+      ? `已触发 · ${ruleOf(item)}`
+      : `下次 ${formatWhen(item.nextAt, item.timezone)} · ${ruleOf(item)}`
+
+    main.append(text, meta)
+    row.append(main)
+
+    if (!item.firedAt && typeof item.id === 'string' && item.id) {
+      const cancel = document.createElement('button')
+      cancel.type = 'button'
+      cancel.className = 'schedule-cancel'
+      cancel.textContent = '取消'
+      cancel.addEventListener('click', () => void cancelSchedule(item.id, cancel))
+      row.append(cancel)
+    }
+    list.append(row)
+  }
+}
+
+function showSchedulesError(message) {
+  el.schedulesError.textContent = message || ''
+  el.schedulesError.hidden = !message
+}
+
+async function loadSchedules() {
+  if (!state.token || state.schedulesLoading) return
+  state.schedulesLoading = true
+  showSchedulesError('')
+  try {
+    const res = await fetch(ENDPOINTS.schedules, {
+      headers: withAuth({ Accept: 'application/json' }),
+      cache: 'no-store',
+    })
+    if (res.status === 401 || res.status === 403) throw new Error('令牌无效或已过期')
+    if (!res.ok) throw new Error(`读取日程失败（HTTP ${res.status}）`)
+    const body = await res.json()
+    renderSchedules(Array.isArray(body?.items) ? body.items : [])
+  } catch (error) {
+    showSchedulesError(error instanceof TypeError ? '无法连接服务' : error.message || '读取日程失败')
+  } finally {
+    state.schedulesLoading = false
+  }
+}
+
+async function cancelSchedule(id, button) {
+  button.disabled = true
+  button.textContent = '取消中…'
+  try {
+    const res = await fetch(`${ENDPOINTS.schedules}/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: withAuth({ Accept: 'application/json' }),
+    })
+    if (res.status === 404) {
+      showSchedulesError('这条提醒已经不在了')
+    } else if (!res.ok) {
+      throw new Error(res.status === 401 ? '令牌无效或已过期' : `取消失败（HTTP ${res.status}）`)
+    } else {
+      showSchedulesError('')
+      button.closest('.schedule-item')?.remove()
+    }
+    void loadSchedules()
+  } catch (error) {
+    showSchedulesError(error instanceof TypeError ? '无法连接服务' : error.message || '取消失败')
+    button.disabled = false
+    button.textContent = '取消'
+  }
+}
+
+function setSchedulesOpen(open) {
+  state.schedulesOpen = open
+  el.schedules.hidden = !open
+  el.schedulesToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) void loadSchedules()
 }
 
 // ── 发送 ─────────────────────────────────────
@@ -430,6 +578,13 @@ function bindEvents() {
     state.reconnectAttempt = 0
     connect()
   })
+
+  el.schedulesToggle?.addEventListener('click', () => setSchedulesOpen(!state.schedulesOpen))
+  el.schedulesRefresh?.addEventListener('click', () => void loadSchedules())
+  el.schedulesClose?.addEventListener('click', () => setSchedulesOpen(false))
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.schedulesOpen) setSchedulesOpen(false)
+  })
 }
 
 async function start() {
@@ -441,6 +596,7 @@ async function start() {
     setStatus('offline', '缺少令牌')
     el.input.disabled = true
     el.input.placeholder = '请用带 ?token= 的链接打开'
+    if (el.schedulesToggle) el.schedulesToggle.disabled = true
     updateSendButton()
     appendNotice('地址里缺少 token，请用网关生成的带 ?token= 的链接重新打开。')
     return
