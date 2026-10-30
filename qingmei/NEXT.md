@@ -1,7 +1,8 @@
 # NEXT · 下个会话从这里开始
 
-> 写于 2026-10-30，技术债 1（消息落库统一）完成并已部署。仓库全量测试 123/123（`node --test`）。
-> 新会话第一句建议：「读 qingmei/NEXT.md，做技术债 2」。
+> 写于 2026-10-30，技术债 1（落库统一）与技术债 2（MCP 工具注册表）完成并已部署。
+> 仓库全量测试 127/127（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
+> 新会话第一句建议：「读 qingmei/NEXT.md，做日程编辑与暂停」。
 
 ## 1. 现在是什么状态
 
@@ -33,22 +34,19 @@ qm-history（qm_message 的唯一写入方）
 
 ## 2. 下一步
 
-1. **技术债 2：MCP 工具表去硬编码**。`host-mcp` 的 TOOLS 数组手写 schema，
-   新增工具要同步改 schema/描述/dispatch 三处；改成「工具定义 + handler」注册表，
-   顺手把 `tools/list` 与 `tools/call` 用同一份定义驱动。
-2. **日程编辑与暂停**。契约里 `pause/resume` 还没有实现；面板目前只有「取消」。
+1. **日程编辑与暂停**。契约里 `pause/resume` 还没有实现；面板目前只有「取消」。
+2. **历史表没有索引**（见第 3 节第 5 条）：对话长了以后 `qm_message` 全表扫会变慢。
 3. 技术债见第 3 节；落库链路见第 5 节，改之前先读。
 
 ## 3. 已知技术债（按优先级）
 
-1. **工具列表是写死的**：`host-mcp` 的 TOOLS 数组手写 schema，新增工具要同步改三处（schema/描述/dispatch）。
-2. **没有 tsc**：仓库只有 cordis 依赖，类型正确性靠审阅；若要补，加 typescript 并跑 `tsc --noEmit`。
-3. **tick 是全表扫描**：每秒 `find()` 一遍 `qm_schedule` 再在 JS 里比时间，日程多了要按 `next_at` 建索引或缩小查询。
-4. **前端没有构建与类型检查**：`apps/web/public/app.js` 是零构建原生模块，只靠
+1. **没有 tsc**：仓库只有 cordis 依赖，类型正确性靠审阅；若要补，加 typescript 并跑 `tsc --noEmit`。
+2. **tick 是全表扫描**：每秒 `find()` 一遍 `qm_schedule` 再在 JS 里比时间，日程多了要按 `next_at` 建索引或缩小查询。
+3. **前端没有构建与类型检查**：`apps/web/public/app.js` 是零构建原生模块，只靠
    `apps/web/test/ui-contract.test.ts` 守 DOM id 与接口路径。
-5. **历史表没有索引**：`qm_history` 每次 `find()` 都是全表扫（store 是通用 JSON 表），
+4. **历史表没有索引**：`qm_history` 每次 `find()` 都是全表扫（store 是通用 JSON 表），
    长对话后要按 `session_id + created_at` 建真实列或加二级索引。
-6. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
+5. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
 
 ## 4. 运维速查（139.155.78.241，用户 ubuntu，密钥 company.pem）
 
@@ -74,6 +72,16 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### MCP 工具注册表（技术债 2）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/host-mcp/src/index.ts` | `createTools({ memory, schedule })` 返回 `HostTool[]`（name/description/inputSchema/call）；`tools/list` 与 `tools/call` 读同一份；未知工具按查表报错 |
+| `packages/host-mcp/test/mcp.test.ts` | 用假服务直接测每个工具的入参、话术与副作用（不再只测 `scheduleInputFrom`） |
+
+新增工具的做法：在 `createTools` 里加一项，不再需要同步三处。工具定义是纯数据，
+handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory: fake, schedule: fake })`。
 
 ### 落库统一（技术债 1）
 

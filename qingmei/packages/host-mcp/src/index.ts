@@ -2,8 +2,8 @@
  * @qingmei/host-mcp —— 把青梅的能力以 MCP（Streamable HTTP）暴露给外部 agent。
  *
  * 只实现 MCP 的最小面：initialize / tools/list / tools/call。
- * 目前暴露记忆与日程两组工具：memory_recall / memory_remember /
- * schedule_create / schedule_cancel / schedule_list。
+ * 工具是「一份定义 + 一个 handler」的注册表（见 createTools）：
+ * tools/list 与 tools/call 读同一份，新增工具只改一处。
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Context } from 'cordis'
@@ -29,85 +29,152 @@ export const inject = ['memory', 'schedule']
 
 const PROTOCOL_VERSION = '2024-11-05'
 
-const TOOLS = [
-  {
-    name: 'memory_recall',
-    description: '召回青梅记住的、与查询相关的事实。回答用户问题前应先查一次。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: '要查询的内容，用用户的原话或关键词' },
-        limit: { type: 'number', description: '最多返回几条，默认 5' },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'memory_remember',
-    description: '把一条值得长期记住的事实写入青梅的记忆。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        subject: { type: 'string' },
-        predicate: { type: 'string' },
-        object: { type: 'string' },
-        confidence: { type: 'number' },
-      },
-      required: ['subject', 'predicate', 'object'],
-    },
-  },
-  {
-    name: 'schedule_create',
-    description:
-      '创建提醒。cron 表示按周期重复（五段式“分 时 日 月 周”，可配 timezone），用于“每天九点”这类请求；' +
-      'at 表示绝对时间一次性触发；只给 seconds 表示多少秒后提醒一次。优先级 cron > at > seconds。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        text: { type: 'string', description: '提醒内容' },
-        cron: { type: 'string', description: '五段式 cron：分 时 日 月 周，如 0 9 * * 1-5' },
-        timezone: { type: 'string', description: 'IANA 时区，如 Asia/Shanghai；缺省用服务器配置的默认时区' },
-        missedPolicy: {
-          type: 'string',
-          enum: ['fire-once', 'skip'],
-          description: '停机期间错过多次时补发一次（默认）还是跳过',
+export interface ToolResult {
+  content: { type: 'text'; text: string }[]
+  isError: boolean
+}
+
+export interface HostTool {
+  name: string
+  description: string
+  /** JSON Schema（MCP tools/list 直接透出） */
+  inputSchema: Record<string, unknown>
+  call(args: Record<string, unknown>): Promise<ToolResult>
+}
+
+export interface ToolDeps {
+  memory: MemoryService
+  schedule: ScheduleService
+}
+
+/** 工具注册表：新增能力只在这里加一项，schema、描述、处理逻辑都在一处 */
+export function createTools(deps: ToolDeps): HostTool[] {
+  return [
+    {
+      name: 'memory_recall',
+      description: '召回青梅记住的、与查询相关的事实。回答用户问题前应先查一次。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '要查询的内容，用用户的原话或关键词' },
+          limit: { type: 'number', description: '最多返回几条，默认 5' },
         },
-        at: { type: 'string', description: '绝对时间（ISO 8601），一次性' },
-        seconds: { type: 'number', description: '多少秒后提醒，默认 60' },
+        required: ['query'],
       },
-      required: ['text'],
+      async call(args) {
+        const query = String(args.query ?? '').trim()
+        if (!query) throw new Error('query 不能为空')
+        const result = await deps.memory.recall({ text: query, limit: Number(args.limit ?? 5) })
+        return textResult(result.text || '没有找到相关记忆。')
+      },
     },
-  },
-  {
-    name: 'schedule_cancel',
-    description: '按 id 取消一条提醒。',
-    inputSchema: {
-      type: 'object',
-      properties: { id: { type: 'string' } },
-      required: ['id'],
+    {
+      name: 'memory_remember',
+      description: '把一条值得长期记住的事实写入青梅的记忆。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          subject: { type: 'string' },
+          predicate: { type: 'string' },
+          object: { type: 'string' },
+          confidence: { type: 'number' },
+        },
+        required: ['subject', 'predicate', 'object'],
+      },
+      async call(args) {
+        const record: MemoryRecord = {
+          kind: 'fact',
+          subject: String(args.subject ?? '').trim(),
+          predicate: String(args.predicate ?? '').trim(),
+          object: String(args.object ?? '').trim(),
+          confidence: Number(args.confidence ?? 0.8),
+          sensitivity: 'private',
+          origin: { kind: 'harness', id: 'mcp' },
+        }
+        if (!record.subject || !record.predicate || !record.object) {
+          throw new Error('subject/predicate/object 都不能为空')
+        }
+        const result = await deps.memory.ingest([record])
+        return textResult(result.created.length > 0 ? '已记住' : '已更新')
+      },
     },
-  },
-  {
-    name: 'schedule_list',
-    description: '列出所有未触发的提醒。',
-    inputSchema: { type: 'object', properties: {} },
-  },
-]
+    {
+      name: 'schedule_create',
+      description:
+        '创建提醒。cron 表示按周期重复（五段式“分 时 日 月 周”，可配 timezone），用于“每天九点”这类请求；' +
+        'at 表示绝对时间一次性触发；只给 seconds 表示多少秒后提醒一次。优先级 cron > at > seconds。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: '提醒内容' },
+          cron: { type: 'string', description: '五段式 cron：分 时 日 月 周，如 0 9 * * 1-5' },
+          timezone: { type: 'string', description: 'IANA 时区，如 Asia/Shanghai；缺省用服务器配置的默认时区' },
+          missedPolicy: {
+            type: 'string',
+            enum: ['fire-once', 'skip'],
+            description: '停机期间错过多次时补发一次（默认）还是跳过',
+          },
+          at: { type: 'string', description: '绝对时间（ISO 8601），一次性' },
+          seconds: { type: 'number', description: '多少秒后提醒，默认 60' },
+        },
+        required: ['text'],
+      },
+      async call(args) {
+        const text = String(args.text ?? '').trim()
+        if (!text) throw new Error('text 不能为空')
+        const item = await deps.schedule.create(scheduleInputFrom(text, args))
+        return textResult(`已设定：${describeWhen(item)} 提醒「${text}」`)
+      },
+    },
+    {
+      name: 'schedule_cancel',
+      description: '按 id 取消一条提醒。',
+      inputSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+      async call(args) {
+        const ok = await deps.schedule.cancel(String(args.id ?? ''))
+        return textResult(ok ? '已取消' : '没有找到这条提醒')
+      },
+    },
+    {
+      name: 'schedule_list',
+      description: '列出所有未触发的提醒。',
+      inputSchema: { type: 'object', properties: {} },
+      async call() {
+        const items = await deps.schedule.list()
+        const active = items.filter((item) => item.firedAt === null)
+        // 带上 id：没有 id，模型就无法用 schedule_cancel 取消已有日程
+        const text = active.length
+          ? active.map((item) => `- [${item.id}] ${describeWhen(item)} ${item.text}`).join('\n')
+          : '没有待触发的提醒。'
+        return textResult(text)
+      },
+    },
+  ]
+}
+
+function textResult(text: string): ToolResult {
+  return { content: [{ type: 'text', text }], isError: false }
+}
 
 export class McpHost extends McpService {
   private readonly server: Server
   private readonly options: Required<McpConfig>
-  private readonly memory: MemoryService
-  private readonly schedule: ScheduleService
+  private readonly tools: HostTool[]
+  private readonly toolsByName: Map<string, HostTool>
 
   constructor(ctx: Context, config: McpConfig = {}) {
     super(ctx)
     const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
     if (!memory) throw new Error('[host-mcp] 缺少 memory 服务')
-    this.memory = memory
     const schedule = ctx.reflect.get('schedule', false) as ScheduleService | undefined
     if (!schedule) throw new Error('[host-mcp] 缺少 schedule 服务')
-    this.schedule = schedule
+
+    this.tools = createTools({ memory, schedule })
+    this.toolsByName = new Map(this.tools.map((tool) => [tool.name, tool]))
     this.options = {
       host: config.host ?? '127.0.0.1',
       port: config.port ?? 7420,
@@ -187,59 +254,17 @@ export class McpHost extends McpService {
       }
     }
     if (method === 'ping') return {}
-    if (method === 'tools/list') return { tools: TOOLS }
+    if (method === 'tools/list') {
+      return {
+        tools: this.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+      }
+    }
     if (method === 'tools/call') {
-      const tool = String(params.name ?? '')
+      const name = String(params.name ?? '')
+      const tool = this.toolsByName.get(name)
+      if (!tool) throw new Error(`未知工具：${name}`)
       const args = (params.arguments ?? {}) as Record<string, unknown>
-      if (tool === 'memory_recall') {
-        const query = String(args.query ?? '').trim()
-        if (!query) throw new Error('query 不能为空')
-        const limit = Number(args.limit ?? 5)
-        const result = await this.memory.recall({ text: query, limit })
-        const text = result.text || '没有找到相关记忆。'
-        return { content: [{ type: 'text', text }], isError: false }
-      }
-      if (tool === 'memory_remember') {
-        const record: MemoryRecord = {
-          kind: 'fact',
-          subject: String(args.subject ?? '').trim(),
-          predicate: String(args.predicate ?? '').trim(),
-          object: String(args.object ?? '').trim(),
-          confidence: Number(args.confidence ?? 0.8),
-          sensitivity: 'private',
-          origin: { kind: 'harness', id: 'mcp' },
-        }
-        if (!record.subject || !record.predicate || !record.object) {
-          throw new Error('subject/predicate/object 都不能为空')
-        }
-        const result = await this.memory.ingest([record])
-        const action = result.created.length > 0 ? '已记住' : '已更新'
-        return { content: [{ type: 'text', text: action }], isError: false }
-      }
-      if (tool === 'schedule_create') {
-        const text = String(args.text ?? '').trim()
-        if (!text) throw new Error('text 不能为空')
-        const item = await this.schedule.create(scheduleInputFrom(text, args))
-        return {
-          content: [{ type: 'text', text: `已设定：${describeWhen(item)} 提醒「${text}」` }],
-          isError: false,
-        }
-      }
-      if (tool === 'schedule_cancel') {
-        const id = String(args.id ?? '')
-        const ok = await this.schedule.cancel(id)
-        return { content: [{ type: 'text', text: ok ? '已取消' : '没有找到这条提醒' }], isError: false }
-      }
-      if (tool === 'schedule_list') {
-        const items = await this.schedule.list()
-        const active = items.filter((item) => item.firedAt === null)
-        // 带上 id：没有 id，模型就无法用 schedule_cancel 取消已有日程
-        const text = active.length
-          ? active.map((item) => `- [${item.id}] ${describeWhen(item)} ${item.text}`).join('\n')
-          : '没有待触发的提醒。'
-        return { content: [{ type: 'text', text }], isError: false }
-      }
-      throw new Error(`未知工具：${tool}`)
+      return await tool.call(args)
     }
     throw new Error(`未知方法：${method}`)
   }
