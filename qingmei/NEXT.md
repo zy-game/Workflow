@@ -89,7 +89,7 @@ sudo journalctl -u qingmei -n 50 --no-pager
 | --- | --- |
 | `packages/core/src/index.ts` | 新增 `SchedulePatch`；`ScheduleService.update(id, patch)` |
 | `packages/provider-schedule-sqlite` | `update` 实现：只改文本不动 nextAt；给规则就整体替换（清掉旧 cron/timezone/every_ms）并从「现在」重排；已结束的行拒绝修改 |
-| `packages/host-gateway` | `PATCH /api/v1/schedules/<id>`，空 patch / 非对象 body 返回 400 |
+| `packages/host-gateway` | `PATCH /api/v1/schedules/<id>`；空 patch / 非对象 body / 非法 cron 返回 400（`InvalidScheduleError` → `HttpError(400)`） |
 | `packages/host-mcp` | 工具 `schedule_update`（id + text / cron / timezone / at / seconds / missedPolicy） |
 | `apps/web/public/*` | 行内编辑表单（内容 + 规则）；「编辑 / 暂停·继续 / 取消」三个动作 |
 | 测试 | provider 3 条（文本不动 nextAt、换规则重排、非法/未知/已结束）、gateway 5 条、MCP 2 条 |

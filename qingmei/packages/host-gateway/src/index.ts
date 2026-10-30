@@ -11,6 +11,7 @@ import path from 'node:path'
 import { Context } from 'cordis'
 import {
   EVENTS,
+  InvalidScheduleError,
   listenerCount,
   uid,
   type ChannelService,
@@ -340,7 +341,14 @@ async function routeRequest(
       if (typeof body !== 'object' || body === null || Array.isArray(body)) {
         throw new HttpError(400, '请求体必须是 JSON 对象')
       }
-      const item = await schedule.update(id, schedulePatchFrom(body as Record<string, unknown>))
+      let item: Awaited<ReturnType<ScheduleService['update']>>
+      try {
+        item = await schedule.update(id, schedulePatchFrom(body as Record<string, unknown>))
+      } catch (error) {
+        // 参数问题（cron 写错、规则冲突）是 400，不是 500
+        if (error instanceof InvalidScheduleError) throw new HttpError(400, error.message)
+        throw error
+      }
       if (!item) {
         sendJson(res, 404, { ok: false, error: '这条提醒不存在或已经结束' })
         return

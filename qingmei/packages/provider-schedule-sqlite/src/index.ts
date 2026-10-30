@@ -8,6 +8,7 @@
 import type { Context } from 'cordis'
 import {
   EVENTS,
+  InvalidScheduleError,
   ScheduleService,
   nextCronTime,
   systemTimeZone,
@@ -72,10 +73,10 @@ export class SqliteSchedule extends ScheduleService {
 
   async create(input: ScheduleInput): Promise<Scheduled> {
     const text = input.text?.trim()
-    if (!text) throw new Error('提醒内容不能为空')
-    if (input.at && input.cron) throw new Error('at 与 cron 只能二选一')
-    if (input.at && input.everyMs !== undefined) throw new Error('at 与 everyMs 只能二选一')
-    if (input.cron && input.everyMs !== undefined) throw new Error('cron 与 everyMs 只能二选一')
+    if (!text) throw new InvalidScheduleError('提醒内容不能为空')
+    if (input.at && input.cron) throw new InvalidScheduleError('at 与 cron 只能二选一')
+    if (input.at && input.everyMs !== undefined) throw new InvalidScheduleError('at 与 everyMs 只能二选一')
+    if (input.cron && input.everyMs !== undefined) throw new InvalidScheduleError('cron 与 everyMs 只能二选一')
 
     const now = Date.now()
     const cron = input.cron?.trim() || null
@@ -83,16 +84,16 @@ export class SqliteSchedule extends ScheduleService {
     const timezone = cron ? input.timezone?.trim() || this.defaultTimezone : null
     const everyMs = cron || input.at ? null : (input.everyMs ?? DEFAULT_EVERY_MS)
     if (everyMs !== null && (!Number.isFinite(everyMs) || everyMs <= 0)) {
-      throw new Error('everyMs 必须是正数')
+      throw new InvalidScheduleError('everyMs 必须是正数')
     }
 
     let nextAt: number
     if (cron) {
       // 表达式与时区都在这里校验：写不进去的规则不如直接报错
-      nextAt = nextCronTime(cron, new Date(now), timezone ?? undefined).getTime()
+      nextAt = nextTrigger(cron, now, timezone ?? undefined)
     } else if (input.at) {
       nextAt = input.at.getTime()
-      if (!Number.isFinite(nextAt)) throw new Error('at 不是有效时间')
+      if (!Number.isFinite(nextAt)) throw new InvalidScheduleError('at 不是有效时间')
     } else {
       nextAt = now + everyMs!
     }
@@ -134,39 +135,39 @@ export class SqliteSchedule extends ScheduleService {
     const changes: Partial<ScheduleRow> = {}
     if (patch.text !== undefined) {
       const text = patch.text.trim()
-      if (!text) throw new Error('提醒内容不能为空')
+      if (!text) throw new InvalidScheduleError('提醒内容不能为空')
       changes.text = text
     }
 
     const ruleFields = [patch.at !== undefined, patch.everyMs !== undefined, patch.cron !== undefined]
     if (ruleFields.filter(Boolean).length > 1) {
-      throw new Error('at / everyMs / cron 只能给一个')
+      throw new InvalidScheduleError('at / everyMs / cron 只能给一个')
     }
     const now = Date.now()
     if (patch.cron !== undefined) {
       const cron = patch.cron.trim()
-      if (!cron) throw new Error('cron 不能为空')
+      if (!cron) throw new InvalidScheduleError('cron 不能为空')
       const timezone = patch.timezone?.trim() || row.timezone || this.defaultTimezone
       Object.assign(changes, {
         cron,
         timezone,
         every_ms: null,
-        next_at: nextCronTime(cron, new Date(now), timezone).getTime(),
+        next_at: nextTrigger(cron, now, timezone),
       })
     } else if (patch.at !== undefined) {
       const nextAt = patch.at.getTime()
-      if (!Number.isFinite(nextAt)) throw new Error('at 不是有效时间')
+      if (!Number.isFinite(nextAt)) throw new InvalidScheduleError('at 不是有效时间')
       Object.assign(changes, { cron: null, timezone: null, every_ms: null, next_at: nextAt })
     } else if (patch.everyMs !== undefined) {
       const everyMs = patch.everyMs
-      if (!Number.isFinite(everyMs) || everyMs <= 0) throw new Error('everyMs 必须是正数')
+      if (!Number.isFinite(everyMs) || everyMs <= 0) throw new InvalidScheduleError('everyMs 必须是正数')
       Object.assign(changes, { cron: null, timezone: null, every_ms: everyMs, next_at: now + everyMs })
     } else if (patch.timezone !== undefined && row.cron) {
       // 只改时区：cron 的触发点要跟着换到新时区
       const timezone = patch.timezone.trim() || this.defaultTimezone
       Object.assign(changes, {
         timezone,
-        next_at: nextCronTime(row.cron, new Date(now), timezone).getTime(),
+        next_at: nextTrigger(row.cron, now, timezone),
       })
     }
     if (patch.missedPolicy !== undefined) changes.missed_policy = patch.missedPolicy
@@ -198,7 +199,7 @@ export class SqliteSchedule extends ScheduleService {
     const cron = row.cron ?? null
     const everyMs = row.every_ms && row.every_ms > 0 ? row.every_ms : null
     let nextAt = row.next_at
-    if (cron !== null) nextAt = nextCronTime(cron, new Date(now), row.timezone ?? undefined).getTime()
+    if (cron !== null) nextAt = nextTrigger(cron, now, row.timezone ?? undefined)
     else if (everyMs !== null) nextAt = now + everyMs
 
     await this.collection.update(id, { next_at: nextAt, paused_at: null })
@@ -293,6 +294,20 @@ function toScheduled(row: ScheduleRow): Scheduled {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 校验 cron 并算出下一次触发。
+ *
+ * cron 解析/时区错误一律改写成 InvalidScheduleError，
+ * 接口层据此返回 400，而不是把「用户写错表达式」记成服务端 500。
+ */
+function nextTrigger(cron: string, now: number, timezone?: string): number {
+  try {
+    return nextCronTime(cron, new Date(now), timezone).getTime()
+  } catch (error) {
+    throw new InvalidScheduleError(messageOf(error))
+  }
 }
 
 export function apply(ctx: Context, config: ScheduleConfig = {}): void {

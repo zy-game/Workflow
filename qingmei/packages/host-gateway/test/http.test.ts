@@ -7,6 +7,7 @@ import { Context, type Fiber } from 'cordis'
 import {
   StoreService,
   ScheduleService,
+  InvalidScheduleError,
   type Collection,
   type GatewayEvent,
   type InboundMessage,
@@ -349,6 +350,15 @@ test('GET /api/v1/schedules 列出日程，DELETE 取消后消失', async () => 
     assert.equal(missingPatch.status, 404)
     assert.deepEqual(await missingPatch.json(), { ok: false, error: '这条提醒不存在或已经结束' })
 
+    // 参数不合法是 400，不是 500
+    const badRule = await fetch(`${info.url}/api/v1/schedules/r_cron`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ cron: '0 9 * *' }),
+    })
+    assert.equal(badRule.status, 400)
+    assert.deepEqual(await badRule.json(), { ok: false, error: 'cron 表达式必须是 5 段' })
+
     const missing = await fetch(`${info.url}/api/v1/schedules/r_nope`, { method: 'DELETE', headers })
     assert.equal(missing.status, 404)
     assert.deepEqual(await missing.json(), { ok: false, error: '没有找到这条提醒' })
@@ -558,6 +568,9 @@ class FakeSchedule extends ScheduleService {
   async update(id: string, patch: SchedulePatch): Promise<Scheduled | null> {
     const item = this.items.find((entry) => entry.id === id)
     if (!item || item.firedAt) return null
+    if (patch.cron !== undefined && patch.cron.trim().split(/\s+/).length !== 5) {
+      throw new InvalidScheduleError('cron 表达式必须是 5 段')
+    }
     if (patch.text !== undefined) item.text = patch.text
     return item
   }

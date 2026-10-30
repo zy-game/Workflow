@@ -134,6 +134,14 @@ export interface Scheduled {
   firedAt: Date | null
 }
 
+/** 日程参数不合法（内容为空、cron 写错、规则冲突…）。调用方应映射成 400 而不是 500 */
+export class InvalidScheduleError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidScheduleError'
+  }
+}
+
 /** 修改已有日程：给了规则字段就整体替换规则，并「从现在」重算下一次触发 */
 export interface SchedulePatch {
   text?: string
