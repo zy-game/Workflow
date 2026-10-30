@@ -226,7 +226,35 @@ HTTP 200
 
 未改 `packages/*` 的业务源码与测试断言：所有包测试全部通过，未发现功能 bug。
 
-## 8. 相关文档
+## 8. 部署（139.155.78.241）
+
+| 项 | 值 |
+| --- | --- |
+| 服务 | `qingmei.service`（systemd，`Restart=always`，开机自启） |
+| 代码 | `/opt/qingmei`（Node 24.9 + pnpm 10.13.1） |
+| 配置 | `/opt/qingmei/qingmei.yml`（由 `qingmei.prod.yml` 拷贝） |
+| 密钥 | `/etc/qingmei/env`（0600）：`QM_TOKEN` / `QM_LLM_BASE_URL` / `QM_LLM_KEY` |
+| 反代 | nginx `listen 8710 ssl` → `127.0.0.1:7410`，`proxy_buffering off`（SSE） |
+| 数据库 | `/opt/qingmei/data/qm.db` |
+
+模型走本机 sub2api（OpenAI 兼容）：`http://127.0.0.1:8081/v1`，模型 `deepseek-v4-flash`，
+key 在 sub2api 后台创建并绑定 `ds组`；青梅侧用 `provider-llm-openai` 对接，密钥只从环境变量读。
+
+```bash
+sudo systemctl status qingmei
+sudo systemctl restart qingmei
+sudo journalctl -u qingmei -f
+```
+
+> 端口说明：7411 被腾讯云安全组挡住，因此反代复用原先 workflow 的 8710（安全组已放行）。
+
+## 9. 模型提供方
+
+- `@qingmei/provider-llm-echo`：离线回声，测试与冒烟默认用它。
+- `@qingmei/provider-llm-openai`：任何 OpenAI 兼容端点（`/chat/completions`，支持 SSE）。
+  配置 `{ baseURL, apiKey, model, maxTokens?, temperature?, timeoutMs? }`，密钥建议写 `{ $env: 'QM_LLM_KEY' }`。
+
+## 10. 相关文档
 
 - [总体方案](docs/00-总体方案.md)
 - [架构总览](docs/01-架构总览.md)

@@ -1,0 +1,36 @@
+# 青梅 · 生产组合（接真实模型）
+#
+# 与 qingmei.yml 的差别只有模型提供方：本文件用 OpenAI 兼容端点，
+# 密钥从环境变量读（systemd EnvironmentFile 或 shell export），不进仓库。
+#
+# 用法：
+#   QM_LLM_KEY=sk-... QM_TOKEN=... node apps/server/src/index.ts --config qingmei.prod.yml
+
+- name: '@qingmei/service-store'
+- name: '@qingmei/service-llm'
+- name: '@qingmei/service-channel'
+- name: '@qingmei/service-gateway'
+
+- name: '@qingmei/provider-store-sqlite'
+  config:
+    path: './data/qm.db'
+
+- name: '@qingmei/provider-llm-openai'
+  config:
+    baseURL: { $env: 'QM_LLM_BASE_URL' }
+    apiKey: { $env: 'QM_LLM_KEY' }
+    model: 'deepseek-v4-flash'
+    maxTokens: 800
+
+- name: '@qingmei/qm-agent'
+  config:
+    persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
+
+- name: '@qingmei/channel-web'
+
+- name: '@qingmei/host-gateway'
+  config:
+    host: '127.0.0.1'
+    port: 7410
+    token: { $env: 'QM_TOKEN' }
+    webRoot: './apps/web/public'

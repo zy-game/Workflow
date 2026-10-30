@@ -9,6 +9,7 @@
     "@qingmei/core": "workspace:*",
     "@qingmei/host-gateway": "workspace:*",
     "@qingmei/provider-llm-echo": "workspace:*",
+    "@qingmei/provider-llm-openai": "workspace:*",
     "@qingmei/provider-store-sqlite": "workspace:*",
     "@qingmei/qm-agent": "workspace:*",
     "@qingmei/service-channel": "workspace:*",

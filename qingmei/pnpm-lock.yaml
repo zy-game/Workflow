@@ -26,6 +26,9 @@ importers:
       '@qingmei/provider-llm-echo':
         specifier: workspace:*
         version: link:../../packages/provider-llm-echo
+      '@qingmei/provider-llm-openai':
+        specifier: workspace:*
+        version: link:../../packages/provider-llm-openai
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-store-sqlite
@@ -88,6 +91,18 @@ importers:
         version: 4.0.0-rc.12
 
   packages/provider-llm-echo:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      '@qingmei/service-llm':
+        specifier: workspace:*
+        version: link:../service-llm
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/provider-llm-openai:
     dependencies:
       '@qingmei/core':
         specifier: workspace:*
