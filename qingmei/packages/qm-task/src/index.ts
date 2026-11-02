@@ -163,6 +163,7 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
         const run = await task.create({
           prompt,
           ...(typeof body.title === 'string' && body.title.trim() ? { title: body.title.trim() } : {}),
+          ...(typeof body.project === 'string' && body.project.trim() ? { project: body.project.trim() } : {}),
           ...(typeof body.cwd === 'string' && body.cwd.trim() ? { cwd: body.cwd.trim() } : {}),
           harnessId,
         })

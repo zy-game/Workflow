@@ -717,7 +717,8 @@ function renderTasks(items) {
     meta.className = 'task-meta'
     const status = TASK_STATUS_TEXT[run.status] ?? run.status
     const tokens = run.usage && Number.isFinite(run.usage.totalTokens) ? ` · ${run.usage.totalTokens} tokens` : ''
-    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}${tokens}`
+    const project = typeof run.project === 'string' && run.project ? ` · ${run.project}` : ''
+    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}${project}${tokens}`
     row.append(title, meta)
 
     if (run.progress && typeof run.progress.phase === 'string') {

@@ -39,6 +39,7 @@ const DEFAULT_TOOL_RISK: Record<string, 'read' | 'write' | 'dangerous'> = {
   schedule_pause: 'write',
   schedule_resume: 'write',
   // 任务数据面：派发 / 上报进度 / 交付产物 / 收尾
+  qm_project_status: 'read',
   qm_dispatch_task: 'write',
   qm_report_progress: 'write',
   qm_publish_artifact: 'write',

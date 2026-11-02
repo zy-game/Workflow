@@ -119,6 +119,7 @@ interface NewSessionOptions {
 | `qm_request_approval` | 危险操作前要授权 | 走 permission + 渠道确认 |
 | `qm_memory_recall` / `qm_memory_remember` | 读写青梅记忆 | 受敏感度策略约束 |
 | `qm_schedule_query` / `qm_schedule_add` | 查/加日程提醒 | 写日程表 |
+| `qm_project_status` | 汇总项目最近 run/进度/产物/阻塞（项目审问的读取面） | 只读账本，标注数据截止时间 |
 | `qm_publish_artifact` | 交付产物（文件、链接、摘要） | 存 blob + 关联 TaskRun |
 | `qm_finish_task` | 收尾：结论、状态、未完成项、**结构化任务记忆** | 关闭 TaskRun + 写入记忆 |
 
@@ -130,7 +131,8 @@ interface NewSessionOptions {
 手机可召回的事实与教训。格式与合并规则见 [10 · 跨端统一记忆](10-跨端统一记忆.md) §5.1。
 
 > **当前落地（2026-11-02）**：上表是「子 agent 任务数据面」的目标工具集。已实现
-> `qm_dispatch_task` / `qm_report_progress` / `qm_publish_artifact` / `qm_finish_task`
+> `qm_dispatch_task` / `qm_report_progress` / `qm_publish_artifact` / `qm_finish_task` /
+> `qm_project_status`（项目审问的读取面：按项目汇总最近 run，标注数据截止，超过 2 小时提示）
 > 与对话车道的 `memory_*` / `schedule_*`（尚未统一 `qm_` 前缀）。
 > 另一条前提：ACP 的文件与命令工具需要客户端**声明能力并实现方法**
 > （`fs/*`、`terminal/*`），且 DSH profile 里不能 `disabled` 掉 `tool-fs` / `tool-bash`；

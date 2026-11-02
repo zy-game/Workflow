@@ -183,6 +183,7 @@ class FakeTask extends TaskService {
       taskId: id,
       title: prompt,
       prompt,
+      project: null,
       harnessId: 'dsh',
       sessionId: 'session-1',
       cwd: `/tmp/${id}`,
@@ -200,12 +201,13 @@ class FakeTask extends TaskService {
     return run
   }
 
-  async create(input: { prompt: string; title?: string; cwd?: string }): Promise<TaskRun> {
+  async create(input: { prompt: string; title?: string; project?: string; cwd?: string }): Promise<TaskRun> {
     const id = `run_create${++this.seq}`
     const run = this.seed(id, input.prompt)
     run.status = 'queued'
     run.startedAt = null
     if (input.title) run.title = input.title
+    if (input.project) run.project = input.project
     if (input.cwd) run.cwd = input.cwd
     return run
   }
@@ -389,6 +391,7 @@ test('注册表覆盖全部工具，且 schema 与 handler 一一对应', () => 
       'schedule_pause',
       'schedule_resume',
       'qm_dispatch_task',
+      'qm_project_status',
       'qm_publish_artifact',
       'qm_report_progress',
       'qm_finish_task',
@@ -720,4 +723,54 @@ test('当前全部工具在私聊里都能通过真实策略（新增工具忘�
     })
     assert.equal(decision.effect, 'allow', `${tool.name} 没在权限策略里登记，私聊也会被默认拒绝`)
   }
+})
+
+test('qm_dispatch_task：project 透传到账本', async () => {
+  const { task, call } = setup()
+  const result = await call('qm_dispatch_task', { prompt: '跑测试', project: '青梅' })
+  const runId = String(textOf(result)).match(/run_[a-z0-9]+/)?.[0] ?? ''
+  assert.ok(runId, '应返回 runId')
+  assert.equal(task.runs.get(runId)?.project, '青梅')
+})
+
+test('qm_project_status：只汇总该项目，标注数据截止，过滤别的项目', async () => {
+  const { task, call } = setup()
+  const mine = task.seed('run_1', '跑测试')
+  mine.project = '青梅'
+  mine.status = 'done'
+  mine.result = '全绿'
+  mine.finishedAt = new Date('2026-11-02T06:00:00.000Z')
+  task.seed('run_2', '别的项目：整理文档')
+
+  const result = textOf(await call('qm_project_status', { project: '青梅' }))
+  assert.match(result, /【项目：青梅】/)
+  assert.match(result, /run_1 完成/)
+  assert.match(result, /全绿/)
+  assert.ok(!result.includes('run_2'), '不该把别的项目混进来')
+})
+
+test('qm_project_status：没有记录时给出最近任务并问要不要盘点', async () => {
+  const { task, call } = setup()
+  task.seed('run_9', '最近的一件事')
+  const result = textOf(await call('qm_project_status', { project: '不存在的项目' }))
+  assert.match(result, /账本里没有「不存在的项目」/)
+  assert.match(result, /run_9/)
+  assert.match(result, /要不要我派人去盘点/)
+})
+
+test('qm_project_status：数据超过 2 小时要提示，阻塞与失败要单列', async () => {
+  const { task, call } = setup()
+  const old = task.seed('run_old', '旧任务')
+  old.project = '青梅'
+  old.status = 'failed'
+  old.error = '磁盘满了'
+  old.finishedAt = new Date(Date.now() - 3 * 3600_000)
+  const blocked = task.seed('run_blocked', '等确认的任务')
+  blocked.project = '青梅'
+  blocked.status = 'needs_approval'
+
+  const result = textOf(await call('qm_project_status', { project: '青梅' }))
+  assert.match(result, /数据已经超过 2 小时/)
+  assert.match(result, /阻塞：1 个任务在等人确认/)
+  assert.match(result, /失败：1 个/)
 })

@@ -150,6 +150,7 @@ function taskRun(overrides: Partial<TaskRun> = {}): TaskRun {
     taskId: 'run_1',
     title: '跑测试',
     prompt: '跑测试',
+    project: null,
     harnessId: 'dsh',
     sessionId: null,
     cwd: './data/workspaces/run_1',

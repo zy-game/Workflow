@@ -324,6 +324,7 @@ export function createTools(deps: ToolDeps): HostTool[] {
         properties: {
           prompt: { type: 'string', description: '要执行的任务，写给子 agent 看' },
           title: { type: 'string', description: '短标题，缺省取 prompt 前 40 字' },
+          project: { type: 'string', description: '归属项目；项目审问按它过滤' },
           cwd: { type: 'string', description: '工作目录；缺省用青梅分配的任务目录' },
         },
         required: ['prompt'],
@@ -334,10 +335,57 @@ export function createTools(deps: ToolDeps): HostTool[] {
         const run = await deps.task.create({
           prompt,
           ...(typeof args.title === 'string' && args.title.trim() ? { title: args.title.trim() } : {}),
+          ...(typeof args.project === 'string' && args.project.trim() ? { project: args.project.trim() } : {}),
           ...(typeof args.cwd === 'string' && args.cwd.trim() ? { cwd: args.cwd.trim() } : {}),
         })
         deps.runner.dispatch(run)
         return textResult(`已派出：${run.id}「${run.title}」，进度会记在任务账本里`)
+      },
+    },
+    {
+      name: 'qm_project_status',
+      description:
+        '看某个项目（或最近任务）的状态：从任务账本汇总最近的 run、进度、产物、阻塞与失败，并标注数据截止时间。' +
+        '主人问「项目 X 什么情况」「那个任务跑完没」时先调它；数据太旧就在回复里说明。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: '项目名；省略则看最近全部任务' },
+        },
+      },
+      async call(args) {
+        const project = typeof args.project === 'string' ? args.project.trim() : ''
+        const runs = await deps.task.list(50)
+        const matched = project
+          ? runs.filter((run) => matchesProject(run, project))
+          : runs.slice(0, 5)
+
+        if (project && matched.length === 0) {
+          const recent = runs.slice(0, 3).map((run) => `- ${run.id} ${statusText(run.status)} ${run.title}`)
+          return textResult(
+            `账本里没有「${project}」的记录。最近的任务：\n${recent.join('\n') || '（账本还是空的）'}\n` +
+              '要不要我派人去盘点一下？',
+          )
+        }
+
+        const cutoff = matched.reduce((latest, run) => {
+          const at = run.finishedAt ?? run.startedAt ?? run.createdAt
+          return at.getTime() > latest ? at.getTime() : latest
+        }, 0)
+        const lines = [
+          `【项目：${project || '最近任务'}】数据截止 ${formatWhen(new Date(cutoff))}`,
+          ...matched.slice(0, 5).map((run) => `- ${run.id} ${statusText(run.status)} ${run.title}${runDetail(run)}`),
+        ]
+
+        const blocked = matched.filter((run) => run.status === 'needs_approval')
+        if (blocked.length > 0) lines.push(`阻塞：${blocked.length} 个任务在等人确认（${blocked.map((run) => run.id).join('、')}）`)
+        const failed = matched.filter((run) => run.status === 'failed')
+        if (failed.length > 0) lines.push(`失败：${failed.length} 个（最近：${failed[0]!.title}）`)
+
+        if (Date.now() - cutoff > 2 * 3600_000) {
+          lines.push(`注：数据已经超过 2 小时，可能不是最新；需要我派人盘点吗？`)
+        }
+        return textResult(lines.join('\n'))
       },
     },
     {
@@ -456,6 +504,37 @@ export function createTools(deps: ToolDeps): HostTool[] {
       },
     },
   ]
+}
+
+const STATUS_TEXT: Record<string, string> = {
+  queued: '排队中',
+  running: '执行中',
+  needs_approval: '等确认',
+  done: '完成',
+  failed: '失败',
+  cancelled: '已取消',
+}
+
+function statusText(status: string): string {
+  return STATUS_TEXT[status] ?? status
+}
+
+function matchesProject(run: TaskRun, project: string): boolean {
+  const needle = project.toLowerCase()
+  return [run.project ?? '', run.title, run.prompt].some((value) => value.toLowerCase().includes(needle))
+}
+
+function runDetail(run: TaskRun): string {
+  const parts: string[] = []
+  if (run.progress?.phase) parts.push(`进度：${run.progress.phase}`)
+  if (run.artifacts.length > 0) parts.push(`产物 ${run.artifacts.length}`)
+  const outcome = run.result ?? run.error
+  if (outcome) parts.push(outcome.slice(0, 60))
+  return parts.length > 0 ? ` ｜ ${parts.join(' ｜ ')}` : ''
+}
+
+function formatWhen(at: Date): string {
+  return at.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 function textResult(text: string): ToolResult {
