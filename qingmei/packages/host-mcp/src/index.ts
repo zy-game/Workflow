@@ -560,7 +560,7 @@ function runDetail(run: TaskRun): string {
 
 function inventoryPrompt(project: string): string {
   return (
-    `只读盘点（不要修改任何文件、不要安装依赖）：项目「」的当前状态。` +
+    `只读盘点（不要修改任何文件、不要安装依赖）：项目「${project}」的当前状态。` +
     '查看当前目录的文件与最近变更（有 git 就用 git status/log），用不超过三行回答：现状、阻塞、建议下一步。' +
     '最后必须调用 qm_finish_task：status 用 done，summary 写这三行结论。'
   )

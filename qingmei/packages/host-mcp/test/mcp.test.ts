@@ -812,6 +812,8 @@ test('qm_project_status：数据过期且 harness 可用时，派只读盘点并
   assert.equal(created.project, '青梅')
   assert.equal(created.cwd, stale.cwd, '盘点沿用上一次 run 的目录')
   assert.match(created.prompt, /只读盘点/)
+  assert.match(created.prompt, /项目「青梅」/)
+  assert.match(created.prompt, /不要修改任何文件/)
 })
 
 test('qm_project_status：数据过期但 harness 不可用时降级成快照', async () => {
