@@ -51,6 +51,7 @@ interface TaskRow extends Row {
   kind?: string | null
   /** 0-9，老数据没有这一列 */
   priority?: number
+  depends_on_json?: string | null
   harness_id: string
   session_id: string | null
   cwd: string
@@ -98,6 +99,7 @@ export class SqliteTask extends TaskService {
       project: input.project?.trim() || null,
       kind: input.kind === 'inventory' ? 'inventory' : 'task',
       priority: clampPriority(input.priority),
+      depends_on_json: JSON.stringify(normalizeDependsOn(input.dependsOn)),
       harness_id: input.harnessId ?? this.harnessId,
       session_id: null,
       cwd: input.cwd ?? `${this.workspaceRoot}/${id}`,
@@ -275,6 +277,7 @@ function toRun(row: TaskRow): TaskRun {
     project: row.project?.trim() || null,
     kind: row.kind === 'inventory' ? 'inventory' : 'task',
     priority: clampPriority(row.priority),
+    dependsOn: parseDependsOn(row.depends_on_json),
     harnessId: row.harness_id,
     sessionId: row.session_id,
     cwd: row.cwd,
@@ -291,6 +294,20 @@ function toRun(row: TaskRow): TaskRun {
 }
 
 /** 缺省 5，夹在 0..9；老数据按 5 处理 */
+function normalizeDependsOn(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))]
+}
+
+function parseDependsOn(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  try {
+    return normalizeDependsOn(JSON.parse(raw))
+  } catch {
+    return []
+  }
+}
+
 function clampPriority(value: unknown): number {
   const priority = Number(value)
   if (!Number.isFinite(priority)) return 5

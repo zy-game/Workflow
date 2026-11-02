@@ -260,3 +260,14 @@ test('priority：缺省 5，越界夹到 0..9，并持久化', async () => {
     await h.dispose()
   }
 })
+
+test('dependsOn：去重、非字符串剔除、持久化', async () => {
+  const h = await setup()
+  try {
+    const run = await h.task.create({ prompt: '依赖', dependsOn: ['a', 'a', ' b ', ''] })
+    assert.deepEqual(run.dependsOn, ['a', 'b'])
+    assert.deepEqual((await h.task.get(run.id))?.dependsOn, ['a', 'b'])
+  } finally {
+    await h.dispose()
+  }
+})

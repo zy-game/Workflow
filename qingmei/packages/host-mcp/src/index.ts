@@ -333,6 +333,11 @@ export function createTools(deps: ToolDeps): HostTool[] {
             type: 'number',
             description: '0-9，越大越先跑；静默时段只有 >=8 的任务会启动（缺省 5）',
           },
+          dependsOn: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '前置 runId 列表；前置未完成时排队等待，前置失败则本任务失败',
+          },
         },
         required: ['prompt'],
       },
@@ -346,6 +351,9 @@ export function createTools(deps: ToolDeps): HostTool[] {
           ...(typeof args.cwd === 'string' && args.cwd.trim() ? { cwd: args.cwd.trim() } : {}),
           ...(args.priority !== undefined && Number.isFinite(Number(args.priority))
             ? { priority: Number(args.priority) }
+            : {}),
+          ...(Array.isArray(args.dependsOn)
+            ? { dependsOn: args.dependsOn.map((item) => String(item)).filter(Boolean) }
             : {}),
         })
         deps.runner.dispatch(run)

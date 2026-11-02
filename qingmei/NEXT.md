@@ -132,6 +132,19 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### A2 排期器：DAG 依赖
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `TaskRun.dependsOn` / `CreateTaskInput.dependsOn` |
+| `packages/provider-task-sqlite` | `depends_on_json` 持久化、去重 |
+| `packages/qm-task` | 依赖未完成留在队列；前置失败/取消/不存在或成环 → 本任务 failed；`pumpQueued` 修复入队竞态 |
+| `packages/host-mcp` / HTTP | `qm_dispatch_task` 与 `POST /api/v1/tasks` 支持 `dependsOn` |
+| `apps/web` | 任务卡显示「等 N 个前置」 |
+| 测试 | 288 全绿 |
+
+> 未做：抢占（低优需 checkpoint）。
+
 ### A5 投诉/回滚信号
 
 | 文件 | 改了什么 |

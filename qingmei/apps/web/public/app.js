@@ -728,7 +728,8 @@ function renderTasks(items) {
     const tokens = run.usage && Number.isFinite(run.usage.totalTokens) ? ` · ${run.usage.totalTokens} tokens` : ''
     const project = typeof run.project === 'string' && run.project ? ` · ${run.project}` : ''
     const priority = Number.isFinite(run.priority) && run.priority !== 5 ? ` · P${run.priority}` : ''
-    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}${project}${priority}${tokens}`
+    const depends = Array.isArray(run.dependsOn) && run.dependsOn.length > 0 ? ` · 等 ${run.dependsOn.length} 个前置` : ''
+    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}${project}${priority}${depends}${tokens}`
     row.append(title, meta)
 
     if (run.progress && typeof run.progress.phase === 'string') {

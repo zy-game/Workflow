@@ -657,6 +657,8 @@ export interface TaskRun {
   kind: 'task' | 'inventory'
   /** 0-9，越大越先跑；缺省 5 */
   priority: number
+  /** 前置 run id；未完成时排队等待，前置失败则本任务失败 */
+  dependsOn: string[]
   harnessId: string
   /** harness 侧会话 id，用于 resume */
   sessionId: string | null
@@ -682,6 +684,8 @@ export interface CreateTaskInput {
   kind?: 'task' | 'inventory'
   /** 0-9，越大越先跑；静默时段只有 >= urgentPriority 的任务会跑 */
   priority?: number
+  /** 前置 run id 列表 */
+  dependsOn?: string[]
   /** 不传则用 provider 的 workspaceRoot/<id> */
   cwd?: string
   harnessId?: string

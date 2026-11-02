@@ -61,6 +61,7 @@ export class TaskRunner extends TaskRunnerService {
   private readonly queue: TaskRun[] = []
   private readonly active = new Set<string>()
   private pumping = false
+  private pumpQueued = false
   private quietTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(ctx: Context, deps: RunnerDeps) {
@@ -76,7 +77,7 @@ export class TaskRunner extends TaskRunnerService {
 
   dispatch(run: TaskRun): void {
     this.queue.push(run)
-    this.pump()
+    void this.pump()
   }
 
   /** 当前占用与排队长度（诊断用） */
@@ -89,43 +90,107 @@ export class TaskRunner extends TaskRunnerService {
   }
 
   /**
-   * 并发容量 + 优先级 + 静默时间窗（docs/13 的「现在做哪个、什么时候做」）。
-   * 先按 priority 降序、再按到达顺序；静默时段只放行优先级 >= urgentPriority 的。
+   * 并发容量 + 优先级 + 静默时间窗 + DAG 依赖（docs/13 的「现在做哪个、什么时候做」）。
+   * 先按 priority 降序、再按到达顺序；依赖未完成的任务留在队列里等，不占并发。
    */
-  private pump(): void {
-    if (this.pumping) return
+  private async pump(): Promise<void> {
+    if (this.pumping) {
+      this.pumpQueued = true
+      return
+    }
     this.pumping = true
     try {
       while (this.active.size < this.deps.maxConcurrent) {
-        const run = this.pick()
+        const run = await this.pick()
         if (!run) break
         this.active.add(run.id)
         void this.execute(run).finally(() => {
           this.active.delete(run.id)
-          this.pump()
+          void this.pump()
         })
       }
     } finally {
       this.pumping = false
+      if (this.pumpQueued) {
+        this.pumpQueued = false
+        void this.pump()   
+      }
     }
   }
 
-  /** 取出下一个该跑的；静默时段没有紧急任务就安排窗后重试 */
-  private pick(): TaskRun | null {
+  /** 取出下一个该跑的；依赖未就绪/静默时段没有紧急任务就等或安排窗后重试 */
+  private async pick(): Promise<TaskRun | null> {
     if (this.queue.length === 0) return null
     this.queue.sort(
       (a, b) => (b.priority ?? 5) - (a.priority ?? 5) || a.createdAt.getTime() - b.createdAt.getTime(),
     )
 
     const quiet = this.deps.quietHours !== null && inQuietHours(new Date(), this.deps.quietHours)
-    if (!quiet) return this.queue.shift() ?? null
+    const candidates = quiet
+      ? this.queue.filter((run) => (run.priority ?? 5) >= this.deps.urgentPriority)
+      : [...this.queue]
 
-    const index = this.queue.findIndex((run) => (run.priority ?? 5) >= this.deps.urgentPriority)
-    if (index < 0) {
-      this.scheduleAfterQuiet()
-      return null
+    for (const candidate of candidates) {
+      const state = await this.dependencyState(candidate)
+      if (state === 'failed') return this.pick()
+      if (state === 'blocked') continue
+      this.remove(candidate.id)
+      return candidate
     }
-    return this.queue.splice(index, 1)[0] ?? null
+
+    if (quiet) this.scheduleAfterQuiet()
+    return null
+  }
+
+  /**
+   * 依赖状态：ready 可跑；blocked 等前置；failed 已把本任务标失败（不存在/失败/成环）。
+   */
+  private async dependencyState(run: TaskRun): Promise<'ready' | 'blocked' | 'failed'> {
+    if (run.dependsOn.length === 0) return 'ready'
+    if (await this.hasCycle(run)) {
+      this.remove(run.id)
+      await this.deps.task.finish(run.id, { status: 'failed', error: '依赖成环' })
+      return 'failed'
+    }
+
+    for (const dependencyId of run.dependsOn) {
+      const dependency = await this.deps.task.get(dependencyId)
+      if (!dependency) {
+        this.remove(run.id)
+        await this.deps.task.finish(run.id, { status: 'failed', error: `前置任务 ${dependencyId} 不存在` })
+        return 'failed'
+      }
+      if (dependency.status === 'failed' || dependency.status === 'cancelled') {
+        this.remove(run.id)
+        await this.deps.task.finish(run.id, {
+          status: 'failed',
+          error: `前置任务 ${dependencyId} ${dependency.status === 'cancelled' ? '被取消' : '失败'}`,
+        })
+        return 'failed'
+      }
+      if (dependency.status !== 'done') return 'blocked'
+    }
+    return 'ready'
+  }
+
+  /** 从依赖图里找回到 run 的环；缺的依赖交给 dependencyState 报错 */
+  private async hasCycle(run: TaskRun): Promise<boolean> {
+    const seen = new Set<string>()
+    const stack = [...run.dependsOn]
+    while (stack.length > 0) {
+      const id = stack.pop()!
+      if (id === run.id) return true
+      if (seen.has(id)) continue
+      seen.add(id)
+      const node = await this.deps.task.get(id)
+      if (node) stack.push(...node.dependsOn)
+    }
+    return false
+  }
+
+  private remove(id: string): void {
+    const index = this.queue.findIndex((run) => run.id === id)
+    if (index >= 0) this.queue.splice(index, 1)
   }
 
   /** 静默时段结束时再泵一次，否则队列会一直停到下一个事件 */
@@ -141,7 +206,7 @@ export class TaskRunner extends TaskRunnerService {
     const delay = Math.max(1_000, msUntilQuietEnd(new Date(), range))
     this.quietTimer = setTimeout(() => {
       this.quietTimer = null
-      this.pump()
+      void this.pump()
     }, delay)
     this.quietTimer.unref?.()
   }
@@ -277,6 +342,9 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           ...(typeof body.project === 'string' && body.project.trim() ? { project: body.project.trim() } : {}),
           ...(typeof body.cwd === 'string' && body.cwd.trim() ? { cwd: body.cwd.trim() } : {}),
           ...(Number.isFinite(Number(body.priority)) ? { priority: Number(body.priority) } : {}),
+          ...(Array.isArray(body.dependsOn)
+            ? { dependsOn: body.dependsOn.map((item) => String(item)).filter(Boolean) }
+            : {}),
           harnessId,
         })
         res.status(202).send({ ok: true, run })

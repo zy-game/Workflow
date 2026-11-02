@@ -422,3 +422,56 @@ test('POST /api/v1/tasks 支持 priority，并持久化到 run', async () => {
     await h.dispose()
   }
 })
+
+test('DAG 依赖：前置未完成时不启动，完成后才跑', async () => {
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const h = await setup({ chunks: ['ok'], hold }, { maxConcurrent: 2 })
+  try {
+    const first = await h.task.create({ prompt: '前置' })
+    const second = await h.task.create({ prompt: '后置', dependsOn: [first.id] })
+    h.ctx.taskRunner.dispatch(first)
+    h.ctx.taskRunner.dispatch(second)
+
+    await waitFor(() => h.harness!.requests.length === 1, '只启动前置')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(h.harness!.requests.length, 1, '前置未完成时后置不能启动')
+
+    release()
+    await waitFor(() => h.harness!.requests.length === 2, '前置完成后后置启动')
+    await waitFor(() => h.ctx.taskRunner.stats().active === 0, '全部收尾')
+    const prompts = h.harness!.requests.map((request) => /任务：(.+)$/m.exec(request.text)?.[1] ?? '?')
+    assert.deepEqual(prompts, ['前置', '后置'])
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('DAG 依赖：前置失败/不存在时，后置直接失败', async () => {
+  const h = await setup({ chunks: [], failWith: 'boom' }, { maxConcurrent: 2 })
+  try {
+    const first = await h.task.create({ prompt: '会失败' })
+    const second = await h.task.create({ prompt: '依赖它', dependsOn: [first.id] })
+    h.ctx.taskRunner.dispatch(first)
+    h.ctx.taskRunner.dispatch(second)
+
+    await waitFor(async () => {
+      const current = await h.task.get(second.id)
+      return current?.status === 'failed' ? current : null
+    }, '后置失败')
+    const dependent = await h.task.get(second.id)
+    assert.match(dependent?.error ?? '', /前置任务.*失败/)
+
+    const missing = await h.task.create({ prompt: '依赖不存在', dependsOn: ['run_missing'] })
+    h.ctx.taskRunner.dispatch(missing)
+    await waitFor(async () => {
+      const current = await h.task.get(missing.id)
+      return current?.status === 'failed' ? current : null
+    }, '缺失依赖失败')
+    assert.match((await h.task.get(missing.id))?.error ?? '', /不存在/)
+  } finally {
+    await h.dispose()
+  }
+})
