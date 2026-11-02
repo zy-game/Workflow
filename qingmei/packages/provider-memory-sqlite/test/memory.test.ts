@@ -209,3 +209,51 @@ test('召回打分：同相似度时显著度高的排前面', async () => {
     await dispose()
   }
 })
+
+test('多跳扩散：两跳外的邻居也能被带回', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      fact('主人', '养', '狗'),
+      fact('狗', '叫', '豆豆'),
+      fact('豆豆', '玩', '玩具'),
+    ])
+    await ctx.memory.recall({ text: '主人 狗 豆豆' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await ctx.memory.recall({ text: '狗 豆豆 玩具' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    const hit = await ctx.memory.recall({ text: '我养什么', limit: 10 })
+    const objects = hit.facts.map((item) => item.object)
+    assert.ok(objects.includes('狗'), '一跳：关键词命中')
+    assert.ok(objects.includes('豆豆'), '两跳：狗 → 豆豆')
+    assert.ok(objects.includes('玩具'), '三跳：豆豆 → 玩具')
+  } finally {
+    await dispose()
+  }
+})
+
+test('剪枝：弱且长期未共同激活的突触被删除，强突触保留', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([fact('主人', '养', '狗'), fact('狗', '叫', '豆豆')])
+    const store = (ctx as unknown as { reflect: { get(name: string, required: false): unknown } }).reflect.get('store', false) as {
+      collection(name: string): {
+        insert(value: Record<string, unknown>): Promise<unknown>
+        get(id: string): Promise<unknown>
+      }
+    }
+    const synapses = store.collection('qm_mem_synapse')
+    const old = Date.now() - 200 * 24 * 60 * 60 * 1000
+    await synapses.insert({ id: 'weak', from_id: 'a', to_id: 'b', kind: 'associative', weight: 0.01, co_activated: 1, last_fired_at: old })
+    await synapses.insert({ id: 'strong', from_id: 'c', to_id: 'd', kind: 'associative', weight: 0.8, co_activated: 1, last_fired_at: old })
+
+    const memory = ctx.memory as unknown as { prune(now?: number): Promise<number> }
+    const removed = await memory.prune()
+    assert.equal(removed, 1)
+    assert.equal(await synapses.get('weak'), null)
+    assert.ok(await synapses.get('strong'))
+  } finally {
+    await dispose()
+  }
+})

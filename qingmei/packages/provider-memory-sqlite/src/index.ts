@@ -35,7 +35,11 @@ const SYNAPSE_COLLECTION = 'qm_mem_synapse'
 const DAY_MS = 24 * 60 * 60 * 1000
 const HALF_LIFE_MS = 30 * DAY_MS
 const SPREAD = 0.6
-const MAX_SPREAD_HOPS = 1
+const MAX_SPREAD_HOPS = 3
+const MIN_SCORE = 0.005
+const INITIAL_WEIGHT = 0.2
+const PRUNE_WEIGHT = 0.05
+const PRUNE_AGE_MS = 180 * DAY_MS
 
 interface FactRow extends Row {
   subject: string
@@ -142,31 +146,45 @@ export class SqliteMemory extends MemoryService {
       candidates.set(row.id, scoreOf(row, score, now))
     }
 
-    // ② 扩散：从种子沿突触走一跳，γ 打折；只收可见节点
+    // ② 扩散：从种子沿突触走 ≤3 跳，每跳 γ 打折；只收可见节点
     const seedIds = [...candidates.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
       .map(([id]) => id)
     if (seedIds.length > 0) {
-      const seedSet = new Set(seedIds)
       const synapses = await this.synapses.find({})
+      const adjacency = new Map<string, { to: string; weight: number }[]>()
       for (const edge of synapses) {
-        if (edge.weight < 0.05) continue
-        for (const [from, to] of [
-          [edge.from_id, edge.to_id],
-          [edge.to_id, edge.from_id],
-        ] as const) {
-          if (!seedSet.has(from)) continue
-          const source = candidates.get(from) ?? 0
-          if (source <= 0 || !byId.has(to)) continue
-          const spread = SPREAD * source * edge.weight
-          if (spread > (candidates.get(to) ?? 0)) candidates.set(to, spread)
+        if (edge.weight < PRUNE_WEIGHT) continue
+        const forward = adjacency.get(edge.from_id) ?? []
+        forward.push({ to: edge.to_id, weight: edge.weight })
+        adjacency.set(edge.from_id, forward)
+        const backward = adjacency.get(edge.to_id) ?? []
+        backward.push({ to: edge.from_id, weight: edge.weight })
+        adjacency.set(edge.to_id, backward)
+      }
+
+      const bestDepth = new Map<string, number>(seedIds.map((id) => [id, 0]))
+      const queue = seedIds.map((id) => ({ id, activation: candidates.get(id) ?? 0, depth: 0 }))
+      while (queue.length > 0) {
+        const current = queue.shift()!
+        if (current.depth >= MAX_SPREAD_HOPS) continue
+        for (const edge of adjacency.get(current.id) ?? []) {
+          if (!byId.has(edge.to)) continue
+          const spread = SPREAD * current.activation * edge.weight
+          if (spread <= (candidates.get(edge.to) ?? 0)) continue
+          candidates.set(edge.to, spread)
+          const depth = current.depth + 1
+          if (depth < (bestDepth.get(edge.to) ?? Infinity)) {
+            bestDepth.set(edge.to, depth)
+            queue.push({ id: edge.to, activation: spread, depth })
+          }
         }
       }
     }
 
     const scored = [...candidates.entries()]
-      .filter(([, score]) => score > 0.03)
+      .filter(([, score]) => score > MIN_SCORE)
       .sort((a, b) => b[1] - a[1])
       .slice(0, query.limit ?? this.limit)
       .map(([id, score]) => ({ row: byId.get(id)!, score }))
@@ -204,7 +222,7 @@ export class SqliteMemory extends MemoryService {
         const [from, to] = ids[i]! < ids[j]! ? [ids[i]!, ids[j]!] : [ids[j]!, ids[i]!]
         const key = `${from}|${to}`
         const existing = await this.synapses.get(key)
-        const weight = existing?.weight ?? 0.1
+        const weight = existing?.weight ?? INITIAL_WEIGHT
         const next = Math.min(1, Math.max(0, weight + 0.02 - 0.001 * weight))
         if (existing) {
           await this.synapses.update(key, {
@@ -227,6 +245,18 @@ export class SqliteMemory extends MemoryService {
     }
   }
 
+  /** 剪枝：弱（w<0.05）且 180 天未共同激活的突触删除；返回删除条数 */
+  async prune(now = Date.now()): Promise<number> {
+    const synapses = await this.synapses.find({})
+    let removed = 0
+    for (const edge of synapses) {
+      const stale = edge.last_fired_at === null || now - edge.last_fired_at > PRUNE_AGE_MS
+      if (edge.weight < PRUNE_WEIGHT && stale) {
+        if (await this.synapses.delete(edge.id)) removed += 1
+      }
+    }
+    return removed
+  }
   /**
    * 画像：只对 owner 视口开；按 subject 聚合，每个 subject 取置信度最高的几条。
    * 与 recall 的区别是「稳定」——不依赖当前这句话的关键词。
@@ -357,7 +387,12 @@ function similarity(row: FactRow, tokens: string[]): number {
 }
 
 export function apply(ctx: Context, config: MemoryConfig = {}): void {
-  ctx.plugin(SqliteMemory, config)
+  const memory = new SqliteMemory(ctx, config)
+  // 启动时剪一次，之后每天一次（不阻塞启动）
+  void memory.prune().catch(() => undefined)
+  const timer = setInterval(() => void memory.prune().catch(() => undefined), 24 * 60 * 60 * 1000)
+  timer.unref?.()
+  ctx.effect(() => () => clearInterval(timer))
 }
 
 export const defaultExport = { name, inject, apply }
