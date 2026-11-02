@@ -81,7 +81,9 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
    （DSH 目前不返回 usage，可能得等 harness 支持）。
 2. **M1 剩余**：`audience` + `validTo` + 群聊零注入 ✅、memory 必需化 ✅；
    还差画像最小版（docs/05 M1 交付物）、`summarize`、情节/决策/教训类型、断网抽取补偿队列。
-3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
+3. **历史表的真实索引与迁移**（接 M3 平台前）：现在幂等靠进程内串行化 + 先查再插，
+   多进程/平台重投压力下要落成真实唯一索引；`steps` / `tokens_*` / `error_code` 也还没采集。
+   结构（`direction`/`blocks_json`/`trace_id` + `qm_turn`）已完成。
 4. **A3 收尾**：QQ/飞书渠道等 M3；盘点结论的追问闭环（「那个盘点结果呢」直接回最近的 inventory run）。
    自动盘点与结论回推已完成。
 5. **A5 剩余**：回滚/投诉信号。
@@ -129,6 +131,15 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 历史表结构化（M3 前置）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `TurnStart.traceId` / `TurnEnd.traceId` + `latencyMs` / `OutboundEnvelope.traceId` |
+| `packages/qm-agent` | 每回合生成 `turn_*` id，带进 turn/start、出站消息与 turn/end |
+| `packages/qm-history` | `qm_message` 落 `direction` / `blocks_json` / `trace_id` / `platform_message_id`；`qm_turn` 在 turn/end 写状态与耗时；写入串行化 + 同一 `session_id + platform_message_id` 幂等 |
+| 测试 | 4 条（结构化字段、重投幂等、qm_turn 状态/耗时、重复事件只写一行）；全量 238 → 242 |
 
 ### A2 排期器最小版：并发容量与重启恢复
 

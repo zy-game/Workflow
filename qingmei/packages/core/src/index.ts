@@ -44,6 +44,8 @@ export interface OutboundEnvelope {
   channel: ChannelId
   conversationId: string
   blocks: Block[]
+  /** 产生这条消息的回合 id；主动消息没有 */
+  traceId?: string
   editTarget?: string
   replyTo?: string
   idempotencyKey?: string
@@ -333,6 +335,8 @@ export interface TurnRequest {
 /** qm/turn/start 的载荷：某个回合开始处理这条消息 */
 export interface TurnStart {
   sessionId: string
+  /** 回合 id：qm_message.trace_id 与 qm_turn.id 都用它 */
+  traceId: string
   message: InboundMessage
 }
 
@@ -343,8 +347,11 @@ export interface TurnChunk {
 
 export interface TurnEnd {
   sessionId: string
+  traceId: string
   ok: boolean
   text: string
+  /** 回合耗时；qm_turn.latency_ms */
+  latencyMs?: number
   /** 本回合用户说了什么：记忆抽取要用，避免再查库 */
   userText?: string
   error?: string

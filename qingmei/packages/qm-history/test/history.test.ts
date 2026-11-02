@@ -11,8 +11,18 @@ import { EVENTS, type InboundMessage, type Row, type StoreService } from '@qingm
 interface MessageRow extends Row {
   session_id: string
   role: 'user' | 'assistant'
+  direction: 'in' | 'out'
+  blocks_json: string
   text: string
+  trace_id: string | null
   platform_message_id?: string
+  created_at: number
+}
+
+interface TurnRow extends Row {
+  session_id: string
+  status: string
+  latency_ms: number | null
   created_at: number
 }
 
@@ -25,11 +35,15 @@ async function setup() {
   await historyFiber
   const store = ctx.reflect.get('store', false) as StoreService
   const collection = store.collection<MessageRow>('qm_message')
+  const turns = store.collection<TurnRow>('qm_turn')
 
   return {
     ctx,
     async rows(): Promise<MessageRow[]> {
       return collection.find({ order: [{ field: 'created_at', dir: 'asc' }] })
+    },
+    async turnRows(): Promise<TurnRow[]> {
+      return turns.find({})
     },
     async dispose() {
       await historyFiber.dispose()
@@ -134,6 +148,76 @@ test('没有文本的事件不落库', async () => {
     await h.ctx.events.parallel(EVENTS.outbound, { channel: 'web', conversationId: 'conv-1', blocks: [] })
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.equal((await h.rows()).length, 0)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('结构化字段：direction / blocks_json / trace_id 都落库', async () => {
+  const h = await setup()
+  try {
+    h.ctx.events.emit(EVENTS.turnStart, {
+      sessionId: 's_conv-1',
+      traceId: 'turn_t1',
+      message: inbound('在吗', 'conv-1', 'pm_struct'),
+    })
+    await waitFor(async () => (await h.rows()).length === 1, '用户消息落库')
+
+    const [row] = await h.rows()
+    assert.equal(row!.direction, 'in')
+    assert.deepEqual(JSON.parse(row!.blocks_json!), [{ type: 'text', text: '在吗' }])
+    assert.equal(row!.trace_id, 'turn_t1')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('幂等：同一个 platform_message_id 只写一次', async () => {
+  const h = await setup()
+  try {
+    const start = { sessionId: 's_conv-1', traceId: 'turn_t1', message: inbound('在吗', 'conv-1', 'pm_dup') }
+    h.ctx.events.emit(EVENTS.turnStart, start)
+    h.ctx.events.emit(EVENTS.turnStart, start)
+    await waitFor(async () => (await h.rows()).length === 1, '只落一条')
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal((await h.rows()).length, 1, '重投不应多出一条')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('turn/end 写 qm_turn：状态与耗时', async () => {
+  const h = await setup()
+  try {
+    h.ctx.events.emit(EVENTS.turnEnd, {
+      sessionId: 's_conv-1',
+      traceId: 'turn_t9',
+      ok: true,
+      text: '好',
+      latencyMs: 42,
+    })
+    await waitFor(async () => (await h.turnRows()).length === 1, '回合落库')
+    const [turn] = await h.turnRows()
+    assert.equal(turn!.id, 'turn_t9')
+    assert.equal(turn!.session_id, 's_conv-1')
+    assert.equal(turn!.status, 'ok')
+    assert.equal(turn!.latency_ms, 42)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('turn/end 失败时记 failed；重复事件只写一行', async () => {
+  const h = await setup()
+  try {
+    const end = { sessionId: 's_conv-1', traceId: 'turn_t10', ok: false, text: '坏了', latencyMs: 10 }
+    h.ctx.events.emit(EVENTS.turnEnd, end)
+    h.ctx.events.emit(EVENTS.turnEnd, end)
+    await waitFor(async () => (await h.turnRows()).length === 1, '回合落库')
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    const rows = await h.turnRows()
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0]!.status, 'failed')
   } finally {
     await h.dispose()
   }

@@ -333,6 +333,13 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** 去掉本回合新加的 traceId/latencyMs，只比较业务字段；同时校验它们确实存在 */
+function endView(end: TurnEnd): Omit<TurnEnd, 'traceId' | 'latencyMs'> {
+  assert.match(end.traceId, /^turn_/)
+  assert.equal(typeof end.latencyMs, 'number')
+  const { traceId: _traceId, latencyMs: _latencyMs, ...rest } = end
+  return rest
+}
 async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
@@ -383,7 +390,7 @@ test('一次 inbound：chunk 事件、turn/end、store 两条消息、渠道回�
 
   // turn/end
   assert.equal(h.ends.length, 1)
-  assert.deepEqual(h.ends[0], {
+  assert.deepEqual(endView(h.ends[0]!), {
     sessionId: 's_conv-1',
     ok: true,
     text: '你好呀，我是青梅。',
@@ -412,9 +419,11 @@ test('一次 inbound：chunk 事件、turn/end、store 两条消息、渠道回�
   assert.notEqual(rows[0].id, rows[1].id)
   assert.ok(rows[1].created_at > rows[0].created_at)
 
-  // 渠道回投完整回复
+  // 渠道回投完整回复（带上本回合的 traceId）
   assert.equal(h.state.sent.length, 1)
-  assert.deepEqual(h.state.sent[0], {
+  const { traceId: sentTraceId, ...envelope } = h.state.sent[0]!
+  assert.equal(sentTraceId, h.ends[0]!.traceId, '出站消息应带回合 traceId')
+  assert.deepEqual(envelope, {
     channel: 'web',
     conversationId: 'conv-1',
     blocks: [{ type: 'text', text: '你好呀，我是青梅。' }],
@@ -459,7 +468,7 @@ test('模型出错：兜底回复、turn/end 仍发出且 ok=false、历史照�
 
   const expected = '我这边出了点问题：模型路由不可用'
   assert.equal(h.chunks.length, 0)
-  assert.deepEqual(h.ends[0], {
+  assert.deepEqual(endView(h.ends[0]!), {
     sessionId: 's_conv-1',
     ok: false,
     text: expected,
@@ -518,7 +527,7 @@ test('渠道发送失败：只剩用户消息，turn/end 仍发出且 ok=false',
   h.ctx.events.emit(EVENTS.inbound, inbound('在吗'))
   await waitFor(() => h.ends.length === 1, 'turn/end')
 
-  assert.deepEqual(h.ends[0], {
+  assert.deepEqual(endView(h.ends[0]!), {
     sessionId: 's_conv-1',
     ok: false,
     text: '好。',
@@ -540,7 +549,7 @@ test('落库失败：回复照发、turn/end 仍为 ok（落库不再属于回�
   h.ctx.events.emit(EVENTS.inbound, inbound('在吗'))
   await waitFor(() => h.ends.length === 1, 'turn/end')
 
-  assert.deepEqual(h.ends[0], {
+  assert.deepEqual(endView(h.ends[0]!), {
     sessionId: 's_conv-1',
     ok: true,
     text: '好。',

@@ -13,6 +13,7 @@ import type { Context } from 'cordis'
 import {
   EVENTS,
   textOf,
+  uid,
   type ChatMessage,
   type ChannelService,
   type GatewayService,
@@ -155,8 +156,10 @@ export function apply(ctx: Context, config: AgentConfig): void {
   async function runTurn(message: InboundMessage): Promise<void> {
     const sessionId = sessionIdOf(message)
     const userText = textOf(message.blocks)
+    const traceId = uid('turn')
+    const startedAt = Date.now()
     // 轮到这条消息了：先报 turn/start，qm-history 按这个顺序写用户消息
-    ctx.events.emit(EVENTS.turnStart, { sessionId, message })
+    ctx.events.emit(EVENTS.turnStart, { sessionId, traceId, message })
     /** 回合里所有可上报的失败，按发生顺序累积；非空即 ok=false */
     const problems: string[] = []
     const controller = new AbortController()
@@ -225,6 +228,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
         channel: message.channel,
         conversationId: message.conversation.id,
         blocks: [{ type: 'text', text: reply }],
+        traceId,
       })
       if (!result.ok) problems.push(`渠道发送失败：${result.error ?? '未知原因'}`)
     } catch (error) {
@@ -232,7 +236,14 @@ export function apply(ctx: Context, config: AgentConfig): void {
     }
 
     // 渠道结果也是回合结果的一部分，所以 turn/end 放在发送之后，ok/error 才是真实状态
-    const end: TurnEnd = { sessionId, ok: problems.length === 0, text: reply, userText }
+    const end: TurnEnd = {
+      sessionId,
+      traceId,
+      ok: problems.length === 0,
+      text: reply,
+      userText,
+      latencyMs: Date.now() - startedAt,
+    }
     if (problems.length > 0) end.error = problems.join('；')
     ctx.events.emit(EVENTS.turnEnd, end)
   }
