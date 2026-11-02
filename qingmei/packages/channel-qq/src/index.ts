@@ -334,7 +334,8 @@ export function apply(ctx: Context, config: QqConfig = {}): void {
     ctx.logger.info('[channel-qq] 未配置 appId/clientSecret（或 QM_QQ_APP_ID / QM_QQ_CLIENT_SECRET），渠道不启用')
     return
   }
-  const transport = createQqTransport({ ...config, appId, clientSecret })
+  const sandbox = config.sandbox ?? process.env.QM_QQ_SANDBOX === '1'
+  const transport = createQqTransport({ ...config, sandbox, appId, clientSecret })
   const adapter = createQqAdapter(ctx, config, transport)
   const dispose = ctx.channel.register(adapter)
   ctx.effect(() => () => dispose())

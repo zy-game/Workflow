@@ -247,7 +247,8 @@ export function apply(ctx: Context, config: FeishuConfig = {}): void {
     ctx.logger.info('[channel-feishu] 未配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET），渠道不启用')
     return
   }
-  const transport = createLarkTransport({ ...config, appId, appSecret })
+  const domain = config.domain ?? (process.env.QM_FEISHU_DOMAIN === 'lark' ? 'lark' : undefined)
+  const transport = createLarkTransport({ ...config, ...(domain ? { domain } : {}), appId, appSecret })
   const adapter = createFeishuAdapter(ctx, config, transport)
   const dispose = ctx.channel.register(adapter)
   ctx.effect(() => () => dispose())
