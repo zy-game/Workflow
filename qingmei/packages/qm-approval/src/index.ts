@@ -48,6 +48,8 @@ export function apply(ctx: Context): void {
     const allow = /^(批准|同意|允许|approve|allow)[!！。.,，\s]*$/i.test(text)
     const deny = /^(拒绝|不同意|deny|reject)[!！。.,，\s]*$/i.test(text)
     if (!allow && !deny) return
+    // 控制指令：qm-agent 看到 handledBy 会跳过这一轮，避免再回一句
+    message.handledBy = 'approval'
     void decideFromChannel(allow, message).catch((error: unknown) => {
       ctx.logger.warn(`[qm-approval] 渠道审批失败：${messageOf(error)}`)
     })

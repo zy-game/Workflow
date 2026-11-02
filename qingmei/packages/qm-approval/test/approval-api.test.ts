@@ -137,7 +137,7 @@ test('渠道回复「批准」：处理最早一条待确认并回执', async ()
     const first = await h.approval.create({ action: 'acp:bash: npm test', prompt: '跑测试' })
     const second = await h.approval.create({ action: 'tool.invoke:shell', prompt: '执行 shell' })
 
-    h.ctx.events.emit(EVENTS.inbound, {
+    const message = {
       platformMessageId: 'om_1',
       channel: 'feishu',
       accountId: 'cli',
@@ -145,7 +145,9 @@ test('渠道回复「批准」：处理最早一条待确认并回执', async ()
       sender: { platformUserId: 'ou_1', displayName: '我' },
       blocks: [{ type: 'text', text: '批准' }],
       receivedAt: new Date(),
-    })
+    }
+    h.ctx.events.emit(EVENTS.inbound, message)
+    assert.equal(message.handledBy, 'approval', '审批回复应标记为控制指令')
 
     await new Promise((resolve) => setTimeout(resolve, 30))
     const rows = await h.approval.list()

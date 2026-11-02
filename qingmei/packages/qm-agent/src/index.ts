@@ -154,6 +154,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
   }
 
   async function runTurn(message: InboundMessage): Promise<void> {
+    // 被审批等控制指令消费掉的消息不再进入对话回合
+    if (message.handledBy) return
     const sessionId = sessionIdOf(message)
     const userText = textOf(message.blocks)
     const traceId = uid('turn')

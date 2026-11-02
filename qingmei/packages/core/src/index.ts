@@ -38,6 +38,8 @@ export interface InboundMessage {
   blocks: Block[]
   replyTo?: string
   receivedAt: Date
+  /** 已被某个插件当作控制指令消费（如审批回复），agent 不应再当聊天处理 */
+  handledBy?: string
 }
 
 export interface OutboundEnvelope {

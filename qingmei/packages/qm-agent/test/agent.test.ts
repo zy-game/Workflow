@@ -574,3 +574,14 @@ test('召回按会话视口走：私聊 owner、群聊 group:<id>', async () => 
   await waitFor(() => h.ends.length === 2, '第二个 turn/end')
   assert.deepEqual(h.state.recalls.at(-1), { text: '群里问一句', audience: 'group:g1' })
 })
+
+test('被控制指令消费的消息不进入对话回合，也不调用模型', async () => {
+  const h = await boot({ chunks: ['不该出现'] })
+  const message = inbound('批准') as InboundMessage
+  message.handledBy = 'approval'
+  h.ctx.events.emit(EVENTS.inbound, message)
+  await delay(20)
+  assert.equal(h.chunks.length, 0)
+  assert.equal(h.ends.length, 0)
+  assert.equal(h.state.requests.length, 0)
+})
