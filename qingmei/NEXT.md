@@ -53,6 +53,11 @@ qm-history（qm_message 的唯一写入方）
   - Web 顶栏「任务」面板：状态 / 进度 / 结论，订阅 `task-started|progress|finished` 自动刷新
   - 也可以绕开对话直接 `POST /api/v1/tasks`
 
+- **审批桥**：工具被判 `ask`、或子 agent 发 ACP `session/request_permission` 时落 `qm_approval`，
+  Web「任务」面板顶部「待确认」区批准/拒绝；批准后调用方继续，拒绝/超时按拒绝处理
+  - `GET /api/v1/approvals`、`POST /api/v1/approvals/decide`；状态推 SSE
+  - 生产实测：工具被拦 → 批准 → 1.2s 内继续执行，审计记 `allow` + approvalId
+
 ## 2. 下一步（按整体方案排，不按清单）
 
 整体方案的分段（docs/00 §8）：P1 地基 = M0+M1+M2；P2 手与口 = M3+M3 的渠道 + H；
@@ -65,13 +70,13 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 
 按这个位置，下一步按价值排：
 
-1. **H 收口（P2 主线）**：任务面板（SSE 事件已经发出来了，只差 UI）+ H3 审批桥
-   （把 `permission.ask` 接到「任务停 needs_approval → 人批准 → 继续」）+ `qm doctor harness`。
-   做完「执行」这条主线才算闭环，A1 才有东西可催。
+1. **H 收尾**：任务面板 ✅、H3 审批桥 ✅；还差 `qm doctor harness`、
+   `session_id` 回填与 resume、预算（token/时长）、产物（`qm_publish_artifact`）。
+   做完这些「执行」这条主线才算完整，A1 才有东西可催。
 2. **M1 补记忆语义（P1 欠账）**：`audience` + `validTo`（新值让旧值失效而不是覆盖）+ 画像最小版。
    现在「我养猫→我养狗」只能覆盖，查不到「猫的记录已失效」，与 docs/05 M1 验收不符。
 3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
-4. **M2 收尾**：渠道确认链路（`ask` → 待确认 → 批准后短时放行）。
+4. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
 5. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
 
 ## 3. 已知技术债（按优先级）
@@ -113,6 +118,21 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 审批桥（H3）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/index.ts` | `ApprovalRequest` / `ApprovalStatus` / `ApprovalService`；事件 `qm/approval/requested|decided` |
+| `packages/provider-approval-sqlite`（新） | `qm_approval` 队列：create/get/list/decide/wait（轮询，重启后 pending 仍在） |
+| `packages/qm-approval`（新） | `GET /api/v1/approvals`、`POST /api/v1/approvals/decide`，状态推 SSE |
+| `packages/host-mcp` | `guardToolCall` 的 `ask` 改为落审批并阻塞等待；批准继续，拒绝/超时抛可读原因并记 deny |
+| `packages/provider-dsh-acp` | `AcpClient` 处理 `session/request_permission`（按 optionId 回 selected/cancelled）；`DshHarness` 接到审批队列，等待期间任务 run 标 `needs_approval`；没有审批服务一律取消 |
+| `apps/web/public/*` | 任务面板顶部「待确认」区：批准/拒绝，订阅 `approval-*` 刷新 |
+| 测试 | 审批队列 4 条、HTTP 2 条、ACP 权限 5 条、guard 4 条；全量 174 → 191 |
+
+验证：本地 CDP 点「批准」→ 待确认区消失；生产临时把 `schedule_list` 标成 dangerous →
+调用被拦、审批可查、批准后 1.2s 内继续，审计记 `allow` + approvalId。
 
 ### 任务派发工具与 Web 任务面板
 
