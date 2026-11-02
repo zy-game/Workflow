@@ -11,6 +11,7 @@ import type { Context } from 'cordis'
 import {
   EVENTS,
   textOf,
+  type ActionEvent,
   type ApprovalRequest,
   type ApprovalService,
   type GatewayRequest,
@@ -22,6 +23,10 @@ import {
   type Row,
   type StoreService,
 } from '@qingmei/core'
+
+interface ApprovalPush extends Row {
+  channels: string[]
+}
 
 interface ChannelTarget extends Row {
   conversationId: string
@@ -39,6 +44,7 @@ export function apply(ctx: Context): void {
   const store = ctx.reflect.get('store', false) as StoreService | undefined
   if (!store) throw new Error('[qm-approval] 缺少 store 服务')
   const targets = store.collection<ChannelTarget>('qm_channel_target')
+  const pushes = store.collection<ApprovalPush>('qm_approval_push')
 
   // 渠道里回「批准/拒绝」直接处理最早的一条待确认；没有待确认时静默忽略
   const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
@@ -75,10 +81,24 @@ export function apply(ctx: Context): void {
         .send({
           channel: row.id as ChannelId,
           conversationId: row.conversationId,
-          blocks: [{ type: 'text', text: `🔐 待确认：${request.prompt}\n回「批准」或「拒绝」即可${extra}` }],
+          blocks: [
+            { type: 'text', text: `🔐 待确认：${request.prompt}\n回「批准」或「拒绝」即可${extra}` },
+            {
+              type: 'actions',
+              buttons: [
+                { id: `approval:allow:${request.id}`, label: '同意', style: 'primary' },
+                { id: `approval:deny:${request.id}`, label: '拒绝', style: 'danger' },
+              ],
+            },
+          ],
         })
         .catch(() => undefined)
     }
+    // 记下这条审批推到了哪些渠道，Web 面板要显示
+    const channels = rows.map((row) => row.id)
+    const existing = await pushes.get(request.id)
+    if (existing) await pushes.update(existing.id, { channels })
+    else await pushes.insert({ id: request.id, channels })
   }
 
   ctx.events.on(EVENTS.approvalRequested, (request: ApprovalRequest) => {
@@ -86,6 +106,33 @@ export function apply(ctx: Context): void {
       ctx.logger.warn(`[qm-approval] 审批推送失败：${messageOf(error)}`)
     })
   })
+  // 卡片按钮：approval:allow:<id> / approval:deny:<id>
+  ctx.events.on(EVENTS.action, (action: ActionEvent) => {
+    void handleAction(action).catch((error: unknown) => {
+      ctx.logger.warn(`[qm-approval] 按钮审批失败：${messageOf(error)}`)
+    })
+  })
+
+  async function handleAction(action: ActionEvent): Promise<void> {
+    const match = /^approval:(allow|deny):(.+)$/.exec(action.actionId)
+    if (!match) return
+    const allow = match[1] === 'allow'
+    const request = await approval.get(match[2]!)
+    if (!request || request.status !== 'pending') return
+
+    const decided = await approval.decide(request.id, {
+      allow,
+      reason: `来自 ${action.channel} 的按钮`,
+    })
+    if (!decided || !channel) return
+    await channel
+      .send({
+        channel: action.channel,
+        conversationId: action.conversationId,
+        blocks: [{ type: 'text', text: `${allow ? '✅ 已批准' : '⛔ 已拒绝'}：${request.prompt}` }],
+      })
+      .catch(() => undefined)
+  }
   async function decideFromChannel(allow: boolean, message: InboundMessage): Promise<void> {
     const pending = (await approval.list('pending')).slice().sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     const target = pending[0]
@@ -123,7 +170,13 @@ export function apply(ctx: Context): void {
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const raw = (req.query.status ?? '').trim()
         const status = raw === 'pending' || raw === 'allowed' || raw === 'denied' ? raw : undefined
-        res.status(200).send({ ok: true, items: await approval.list(status) })
+        const items = await approval.list(status)
+        const pushRows = await pushes.find({})
+        const byId = new Map(pushRows.map((row) => [row.id, row.channels]))
+        res.status(200).send({
+          ok: true,
+          items: items.map((item) => ({ ...item, notifiedTo: byId.get(item.id) ?? [] })),
+        })
       },
     }),
   )

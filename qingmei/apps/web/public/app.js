@@ -997,7 +997,11 @@ function renderApprovals(items) {
 
     const meta = document.createElement('p')
     meta.className = 'approval-meta'
-    meta.textContent = `${request.requester ?? ''} · ${formatWhen(request.createdAt, null)}`
+    const channelNames = { feishu: '飞书', qq: 'QQ', web: 'Web' }
+    const pushed = Array.isArray(request.notifiedTo) && request.notifiedTo.length > 0
+      ? ` · 已推送 ${request.notifiedTo.map((id) => channelNames[id] ?? id).join('/')}`
+      : ''
+    meta.textContent = `${request.requester ?? ''} · ${formatWhen(request.createdAt, null)}${pushed}`
 
     const actions = document.createElement('div')
     actions.className = 'approval-actions'

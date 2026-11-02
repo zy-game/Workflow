@@ -212,7 +212,7 @@ test('审批请求会推到最近的渠道会话，Web 不重复发', async () =
     h.ctx.events.emit(EVENTS.inbound, inbound('m2', 'feishu', 'oc_dm'))
     await new Promise((resolve) => setTimeout(resolve, 30))
 
-    await h.approval.create({ action: 'tool.invoke:test', prompt: '需要你确认' })
+    const request = await h.approval.create({ action: 'tool.invoke:test', prompt: '需要你确认' })
     await new Promise((resolve) => setTimeout(resolve, 30))
 
     assert.equal(h.channel.sent.length, 1, '只推飞书，不推 web')
@@ -222,6 +222,47 @@ test('审批请求会推到最近的渠道会话，Web 不重复发', async () =
     const text = (envelope.blocks[0] as { text: string }).text
     assert.match(text, /待确认：需要你确认/)
     assert.match(text, /回「批准」或「拒绝」/)
+    const actions = envelope.blocks.find((block) => block.type === 'actions') as
+      | { buttons: { id: string; label: string }[] }
+      | undefined
+    assert.deepEqual(
+      actions?.buttons.map((button) => [button.label, button.id]),
+      [
+        ['同意', `approval:allow:${request.id}`],
+        ['拒绝', `approval:deny:${request.id}`],
+      ],
+    )
+
+    const listed = await h.call({ method: 'GET', path: '/api/v1/approvals', query: {}, headers: {} })
+    const item = (listed.body as { items: { id: string; notifiedTo: string[] }[] }).items.find((row) => row.id === request.id)
+    assert.deepEqual(item?.notifiedTo, ['feishu'])
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('卡片按钮：同意/拒绝直接决定并回执', async () => {
+  const h = await setup()
+  try {
+    const allowOne = await h.approval.create({ action: 'tool.invoke:card', prompt: '按钮同意测试' })
+    h.ctx.events.emit(EVENTS.action, {
+      channel: 'feishu',
+      conversationId: 'oc_card',
+      actionId: `approval:allow:${allowOne.id}`,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal((await h.approval.get(allowOne.id))?.status, 'allowed')
+    assert.match((h.channel.sent.at(-1)!.blocks[0] as { text: string }).text, /已批准：按钮同意测试/)
+
+    const denyOne = await h.approval.create({ action: 'tool.invoke:card', prompt: '按钮拒绝测试' })
+    h.ctx.events.emit(EVENTS.action, {
+      channel: 'feishu',
+      conversationId: 'oc_card',
+      actionId: `approval:deny:${denyOne.id}`,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal((await h.approval.get(denyOne.id))?.status, 'denied')
+    assert.match((h.channel.sent.at(-1)!.blocks[0] as { text: string }).text, /已拒绝：按钮拒绝测试/)
   } finally {
     await h.dispose()
   }

@@ -132,7 +132,19 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
-### M3 渠道骨架：飞书与 QQ 机器人
+### 审批卡片按钮与推送渠道标记
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | 事件 `qm/action` + `ActionEvent` |
+| `packages/channel-feishu` | 出站遇到 `actions` 块渲染成交互卡片（按钮 value 带 `actionId`）；`card.action.trigger` 事件转成 `qm/action`；`sendCard` |
+| `packages/qm-approval` | 推送带「同意/拒绝」按钮；监听 `qm/action` 直接决定并回执；记录 `qm_approval_push`，`GET /api/v1/approvals` 返回 `notifiedTo` |
+| `apps/web` | 待确认条目显示「已推送 飞书/QQ」 |
+| 测试 | 272 全绿（卡片渲染、按钮动作、推送渠道标记） |
+
+> QQ 暂不支持按钮，收到的是文本 + 回复「批准/拒绝」。
+
+### 审批推送渠道### M3 渠道骨架：飞书与 QQ 机器人
 
 | 文件 | 改了什么 |
 | --- | --- |

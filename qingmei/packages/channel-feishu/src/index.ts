@@ -69,10 +69,22 @@ export interface FeishuInboundEvent {
   mentioned?: boolean
 }
 
+/** 飞书卡片按钮点击（传输层归一化后的形状） */
+export interface FeishuCardAction {
+  actionId: string
+  chatId: string
+  messageId?: string
+  operatorId?: string
+}
+
 /** 飞书传输层：真实实现用 SDK，测试用假实现 */
 export interface FeishuTransport {
-  start(onInbound: (event: FeishuInboundEvent) => void): Promise<void>
+  start(
+    onInbound: (event: FeishuInboundEvent) => void,
+    onAction?: (action: FeishuCardAction) => string | void,
+  ): Promise<void>
   sendText(input: { receiveId: string; receiveIdType: string; text: string }): Promise<{ messageId: string }>
+  sendCard(input: { receiveId: string; receiveIdType: string; card: unknown }): Promise<{ messageId: string }>
   stop(): Promise<void>
 }
 
@@ -92,38 +104,52 @@ export function createFeishuAdapter(
     id: FEISHU_CHANNEL,
     capabilities,
     async start(): Promise<void> {
-      await transport.start((event) => {
-        console.log(`[channel-feishu] inbound chat=${event.chatId} msg=${event.messageId} mentioned=${event.mentioned === true}`)
-        if (config.allowedChatIds && config.allowedChatIds.length > 0 && !config.allowedChatIds.includes(event.chatId)) {
-          return
-        }
-        const text = typeof event.text === 'string' ? stripMentions(event.text) : ''
-        if (!text) return
-        if (event.chatType === 'group' && requireMention && event.mentioned !== true) return
-        if (seen.has(event.messageId)) return
-        seen.add(event.messageId)
-        if (seen.size > SEEN_LIMIT) {
-          const oldest = seen.values().next().value
-          if (oldest !== undefined) seen.delete(oldest)
-        }
+      await transport.start(
+        (event) => {
+          console.log(`[channel-feishu] inbound chat=${event.chatId} msg=${event.messageId} mentioned=${event.mentioned === true}`)
+          if (config.allowedChatIds && config.allowedChatIds.length > 0 && !config.allowedChatIds.includes(event.chatId)) {
+            return
+          }
+          const text = typeof event.text === 'string' ? stripMentions(event.text) : ''
+          if (!text) return
+          if (event.chatType === 'group' && requireMention && event.mentioned !== true) return
+          if (seen.has(event.messageId)) return
+          seen.add(event.messageId)
+          if (seen.size > SEEN_LIMIT) {
+            const oldest = seen.values().next().value
+            if (oldest !== undefined) seen.delete(oldest)
+          }
 
-        const message: InboundMessage = {
-          platformMessageId: event.messageId,
-          channel: FEISHU_CHANNEL,
-          accountId: config.appId ?? 'feishu',
-          conversation: {
-            kind: event.chatType === 'p2p' ? 'dm' : 'group',
-            id: event.chatId,
-          },
-          sender: {
-            platformUserId: event.senderId,
-            displayName: event.senderName ?? event.senderId,
-          },
-          blocks: [{ type: 'text', text }],
-          receivedAt: new Date(),
-        }
-        ctx.events.emit(EVENTS.inbound, message)
-      })
+          const message: InboundMessage = {
+            platformMessageId: event.messageId,
+            channel: FEISHU_CHANNEL,
+            accountId: config.appId ?? 'feishu',
+            conversation: {
+              kind: event.chatType === 'p2p' ? 'dm' : 'group',
+              id: event.chatId,
+            },
+            sender: {
+              platformUserId: event.senderId,
+              displayName: event.senderName ?? event.senderId,
+            },
+            blocks: [{ type: 'text', text }],
+            receivedAt: new Date(),
+          }
+          ctx.events.emit(EVENTS.inbound, message)
+        },
+        (action) => {
+          console.log(`[channel-feishu] card action ` + (action.actionId || 'none'))
+          if (!action.actionId) return '无法识别的操作'
+          ctx.events.emit(EVENTS.action, {
+            channel: FEISHU_CHANNEL,
+            conversationId: action.chatId,
+            actionId: action.actionId,
+            ...(action.operatorId ? { actorId: action.operatorId } : {}),
+            ...(action.messageId ? { messageId: action.messageId } : {}),
+          })
+          return '已收到'
+        },
+      )
     },
 
     async stop(): Promise<void> {
@@ -132,8 +158,19 @@ export function createFeishuAdapter(
 
     async send(envelope: OutboundEnvelope): Promise<SendResult> {
       const text = textOf(envelope.blocks)
-      if (!text) return { ok: false, error: '空消息不发送' }
+      const buttons = buttonsOf(envelope.blocks)
+      if (!text && buttons.length === 0) return { ok: false, error: '空消息不发送' }
+
       try {
+        // 带按钮的消息发成卡片：两个按钮的 value.actionId 会被原样回传
+        if (buttons.length > 0) {
+          const result = await transport.sendCard({
+            receiveId: envelope.conversationId,
+            receiveIdType,
+            card: buildActionCard(text, buttons),
+          })
+          return { ok: true, ...(result.messageId ? { platformMessageId: result.messageId } : {}) }
+        }
         const result = await transport.sendText({
           receiveId: envelope.conversationId,
           receiveIdType,
@@ -147,6 +184,34 @@ export function createFeishuAdapter(
   }
 }
 
+/** 从 blocks 里取出按钮组（目前只支持一组） */
+export function buttonsOf(blocks: OutboundEnvelope['blocks']): { id: string; label: string; style?: string }[] {
+  for (const block of blocks) {
+    if (block.type === 'actions') return block.buttons
+  }
+  return []
+}
+
+/** 飞书交互卡片：正文 + 一排按钮；按钮 value 里带 actionId */
+export function buildActionCard(text: string, buttons: { id: string; label: string; style?: string }[]): unknown {
+  const elements: unknown[] = []
+  if (text) elements.push({ tag: 'div', text: { tag: 'lark_md', content: text } })
+  elements.push({
+    tag: 'action',
+    actions: buttons.map((button) => ({
+      tag: 'button',
+      text: { tag: 'plain_text', content: button.label },
+      type: button.style === 'danger' ? 'danger' : button.style === 'primary' ? 'primary' : 'default',
+      value: { actionId: button.id },
+    })),
+  })
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '青梅 · 待确认' } },
+    elements,
+  }
+}
+
 /**
  * 真实传输层：动态 import SDK，避免没装 SDK 时整个组合根起不来。
  * 长连接由 SDK 维护（自动重连），客户端只在 send 时取 tenant token。
@@ -154,13 +219,17 @@ export function createFeishuAdapter(
 export function createLarkTransport(config: FeishuConfig & { appId: string; appSecret: string }): FeishuTransport {
   let inner: FeishuTransport | null = null
   return {
-    async start(onInbound) {
-      inner = await createRealTransport(config, onInbound)
-      await inner.start(onInbound)
+    async start(onInbound, onAction) {
+      inner = await createRealTransport(config)
+      await inner.start(onInbound, onAction)
     },
     async sendText(input) {
       if (!inner) throw new Error('飞书长连接尚未建立')
       return inner.sendText(input)
+    },
+    async sendCard(input) {
+      if (!inner) throw new Error('飞书长连接尚未建立')
+      return inner.sendCard(input)
     },
     async stop() {
       await inner?.stop()
@@ -171,7 +240,6 @@ export function createLarkTransport(config: FeishuConfig & { appId: string; appS
 
 async function createRealTransport(
   config: FeishuConfig & { appId: string; appSecret: string },
-  _onInbound: (event: FeishuInboundEvent) => void,
 ): Promise<FeishuTransport> {
   const lark = (await import('@larksuiteoapi/node-sdk')) as unknown as LarkSdk
   const domain = config.domain === 'lark' ? lark.Domain?.Lark : lark.Domain?.Feishu
@@ -182,6 +250,7 @@ async function createRealTransport(
   })
 
   let handler: ((event: FeishuInboundEvent) => void) | null = null
+  let actionHandler: ((action: FeishuCardAction) => string | void) | null = null
   const dispatcher = new lark.EventDispatcher({}).register({
     'im.message.receive_v1': (data: LarkMessageEvent) => {
       const message = data?.message
@@ -197,6 +266,23 @@ async function createRealTransport(
         mentioned: Array.isArray(data.message?.mentions) && data.message.mentions.length > 0,
       })
     },
+    'card.action.trigger': (data: LarkCardActionEvent) => {
+      const actionId = data?.action?.value?.actionId
+      if (!actionId) return { toast: { type: 'error', content: '无法识别的操作' } }
+      let content = '已收到'
+      try {
+        const result = actionHandler?.({
+          actionId,
+          chatId: data.context?.open_chat_id ?? '',
+          ...(data.context?.open_message_id ? { messageId: data.context.open_message_id } : {}),
+          ...(data.operator?.open_id ? { operatorId: data.operator.open_id } : {}),
+        })
+        if (typeof result === 'string' && result) content = result
+      } catch {
+        return { toast: { type: 'error', content: '处理失败' } }
+      }
+      return { toast: { type: 'success', content } }
+    },
   })
   const ws = new lark.WSClient({
     appId: config.appId,
@@ -206,8 +292,9 @@ async function createRealTransport(
   })
 
   return {
-    async start(onInbound) {
+    async start(onInbound, onAction) {
       handler = onInbound
+      actionHandler = onAction ?? null
       await ws.start({ eventDispatcher: dispatcher })
     },
     async sendText({ receiveId, receiveIdType, text }) {
@@ -221,6 +308,20 @@ async function createRealTransport(
       })
       if (response.code !== 0) {
         throw new Error(`feishu send failed ${response.code}: ${response.msg ?? ''}`)
+      }
+      return { messageId: response.data?.message_id ?? '' }
+    },
+    async sendCard({ receiveId, receiveIdType, card }) {
+      const response = await client.im.message.create({
+        params: { receive_id_type: receiveIdType },
+        data: {
+          receive_id: receiveId,
+          msg_type: 'interactive',
+          content: JSON.stringify(card),
+        },
+      })
+      if (response.code !== 0) {
+        throw new Error(`feishu send card failed ${response.code}: ${response.msg ?? ''}`)
       }
       return { messageId: response.data?.message_id ?? '' }
     },
@@ -283,6 +384,12 @@ interface LarkSdk {
     close: (options?: { force?: boolean }) => void
   }
   Domain?: { Feishu?: string; Lark?: string }
+}
+
+interface LarkCardActionEvent {
+  operator?: { open_id?: string }
+  action?: { value?: { actionId?: string } }
+  context?: { open_chat_id?: string; open_message_id?: string }
 }
 
 interface LarkMessageEvent {

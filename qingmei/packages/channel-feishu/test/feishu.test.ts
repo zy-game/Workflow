@@ -10,18 +10,24 @@ import {
   type OutboundEnvelope,
   type ChannelService,
 } from '@qingmei/core'
-import type { FeishuInboundEvent, FeishuTransport } from '../src/index.ts'
+import type { FeishuCardAction, FeishuInboundEvent, FeishuTransport } from '../src/index.ts'
 
 class FakeTransport implements FeishuTransport {
   started = 0
   stopped = 0
   readonly sent: { receiveId: string; receiveIdType: string; text: string }[] = []
+  readonly cards: { receiveId: string; receiveIdType: string; card: unknown }[] = []
   fail: string | null = null
   private handler: ((event: FeishuInboundEvent) => void) | null = null
+  private actionHandler: ((action: FeishuCardAction) => string | void) | null = null
 
-  async start(onInbound: (event: FeishuInboundEvent) => void): Promise<void> {
+  async start(
+    onInbound: (event: FeishuInboundEvent) => void,
+    onAction?: (action: FeishuCardAction) => string | void,
+  ): Promise<void> {
     this.started += 1
     this.handler = onInbound
+    this.actionHandler = onAction ?? null
   }
 
   async sendText(input: { receiveId: string; receiveIdType: string; text: string }): Promise<{ messageId: string }> {
@@ -30,9 +36,20 @@ class FakeTransport implements FeishuTransport {
     return { messageId: `om_sent_${this.sent.length}` }
   }
 
+  async sendCard(input: { receiveId: string; receiveIdType: string; card: unknown }): Promise<{ messageId: string }> {
+    if (this.fail) throw new Error(this.fail)
+    this.cards.push(input)
+    return { messageId: `om_card_` }
+  }
+
+  triggerAction(action: FeishuCardAction): string | void {
+    return this.actionHandler?.(action)
+  }
+
   async stop(): Promise<void> {
     this.stopped += 1
     this.handler = null
+    this.actionHandler = null
   }
 
   emit(event: Partial<FeishuInboundEvent> & { messageId: string }): void {
@@ -204,6 +221,55 @@ test('requireMentionInGroup=false 时群里不 @ 也进', async () => {
   try {
     h.transport.emit({ messageId: 'g1', chatId: 'oc_g', chatType: 'group', text: '没 @ 我', mentioned: false })
     assert.equal(h.inbound.length, 1)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('出站：带 actions 块的消息发成卡片，按钮 value 带 actionId', async () => {
+  const h = await setup()
+  try {
+    const result = await h.channel.send({
+      channel: 'feishu',
+      conversationId: 'oc_chat',
+      blocks: [
+        { type: 'text', text: '要执行吗' },
+        {
+          type: 'actions',
+          buttons: [
+            { id: 'approval:allow:ap1', label: '同意', style: 'primary' },
+            { id: 'approval:deny:ap1', label: '拒绝', style: 'danger' },
+          ],
+        },
+      ],
+    })
+    assert.equal(result.ok, true)
+    assert.equal(h.transport.cards.length, 1)
+    assert.equal(h.transport.cards[0]!.receiveId, 'oc_chat')
+    const card = h.transport.cards[0]!.card as { elements: { tag: string; actions?: { text: { content: string }; value: { actionId: string } }[] }[] }
+    const actionBlock = card.elements.find((element) => element.tag === 'action')
+    assert.deepEqual(
+      actionBlock?.actions?.map((item) => [item.text.content, item.value.actionId]),
+      [
+        ['同意', 'approval:allow:ap1'],
+        ['拒绝', 'approval:deny:ap1'],
+      ],
+    )
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('卡片按钮点击：发 qm/action，actionId 原样带回', async () => {
+  const h = await setup()
+  try {
+    const actions: { channel: string; conversationId: string; actionId: string; actorId?: string }[] = []
+    h.ctx.events.on(EVENTS.action, (action: { channel: string; conversationId: string; actionId: string; actorId?: string }) => actions.push(action))
+    const toast = h.transport.triggerAction({ actionId: 'approval:allow:ap1', chatId: 'oc_1', operatorId: 'ou_1' })
+    assert.deepEqual(actions, [
+      { channel: 'feishu', conversationId: 'oc_1', actionId: 'approval:allow:ap1', actorId: 'ou_1' },
+    ])
+    assert.equal(toast, '已收到')
   } finally {
     await h.dispose()
   }

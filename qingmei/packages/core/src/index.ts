@@ -105,6 +105,8 @@ export const EVENTS = {
   approvalDecided: 'qm/approval/decided',
   /** 自主循环每跑完一次（无论是否给出建议） */
   autonomyTick: 'qm/autonomy/tick',
+  /** 渠道上的按钮/卡片点击（如审批的同意/拒绝） */
+  action: 'qm/action',
 } as const
 
 // ────────────────────────────────────────────── 日程
@@ -335,6 +337,16 @@ export interface TurnRequest {
 }
 
 /** qm/turn/start 的载荷：某个回合开始处理这条消息 */
+export interface ActionEvent {
+  channel: ChannelId
+  conversationId: string
+  /** 动作 id，由发消息方约定，例如 approval:allow:<id> */
+  actionId: string
+  actorId?: string
+  /** 平台消息 id（卡片所在消息） */
+  messageId?: string
+}
+
 export interface TurnStart {
   sessionId: string
   /** 回合 id：qm_message.trace_id 与 qm_turn.id 都用它 */
