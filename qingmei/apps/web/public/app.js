@@ -14,6 +14,7 @@ const ENDPOINTS = {
   autonomyTick: './api/v1/autonomy/tick',
   autonomyTrust: './api/v1/autonomy/trust',
   autonomyDigest: './api/v1/autonomy/digest',
+  autonomyComplaint: './api/v1/autonomy/complaint',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -54,6 +55,7 @@ const el = {
   autonomyRefresh: document.getElementById('autonomy-refresh'),
   autonomyTick: document.getElementById('autonomy-tick'),
   autonomyDigest: document.getElementById('autonomy-digest'),
+  autonomyComplain: document.getElementById('autonomy-complain'),
   autonomyClose: document.getElementById('autonomy-close'),
   autonomyLevels: Array.from(document.querySelectorAll('.autonomy-level')),
   autonomyLock: document.getElementById('autonomy-lock'),
@@ -839,7 +841,8 @@ function renderAutonomy(body) {
   const trust = body?.trust ?? { accepted: 0, ignored: 0, streak: 0 }
   const digestCount = Number(body?.digest?.count) || 0
   const digestText = digestCount > 0 ? ` · 摘要 ${digestCount} 条` : ''
-  el.autonomyBudget.textContent = `模式 ${body?.mode ?? 'A1'} · 今日建议 ${budget.used}/${budget.limit} · 采纳 ${trust.accepted} · 忽略 ${trust.ignored} · 连续 ${trust.streak}${digestText}`
+  const complaintsText = Number(trust.complaints) > 0 ? ` · 投诉 ${trust.complaints}` : ''
+  el.autonomyBudget.textContent = `模式 ${body?.mode ?? 'A1'} · 今日建议 ${budget.used}/${budget.limit} · 采纳 ${trust.accepted} · 忽略 ${trust.ignored} · 连续 ${trust.streak}${complaintsText}${digestText}`
   if (el.autonomyDigest) el.autonomyDigest.disabled = digestCount === 0
   state.autonomyMode = body?.mode ?? 'A1'
   state.autonomyLocked = Boolean(body?.locked)
@@ -923,12 +926,33 @@ async function setAutonomyTrust(payload) {
     })
     if (!res.ok) {
       const detail = await res.json().catch(() => null)
-      throw new Error(detail?.error || `设置失败（HTTP ）`)
+      throw new Error(detail?.error || `设置失败（HTTP ${res.status}）`)
     }
     showAutonomyError('')
     await loadAutonomy()
   } catch (error) {
     showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '设置失败')
+  }
+}
+
+async function complainAutonomy() {
+  if (!state.token) return
+  try {
+    const res = await fetch(ENDPOINTS.autonomyComplaint, {
+      method: 'POST',
+      headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify({ reason: 'Web 面板投诉最近一条建议' }),
+    })
+    const detail = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(detail?.error || `投诉失败（HTTP ${res.status}）`)
+    const before = detail?.before ?? state.autonomyMode
+    const after = detail?.after ?? before
+    showAutonomyError('')
+    await loadAutonomy()
+    if (before !== after) setStatus('online', `已投诉：${before} → ${after}`)
+    else setStatus('online', `已记录投诉（当前 ${after}${detail?.locked ? '，已锁定' : ''}）`)
+  } catch (error) {
+    showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '投诉失败')
   }
 }
 
@@ -1200,6 +1224,7 @@ function bindEvents() {
     button.addEventListener('click', () => void setAutonomyTrust({ level: button.dataset.level }))
   }
   el.autonomyLock?.addEventListener('click', () => void setAutonomyTrust({ locked: !state.autonomyLocked }))
+  el.autonomyComplain?.addEventListener('click', () => void complainAutonomy())
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.schedulesOpen) setSchedulesOpen(false)

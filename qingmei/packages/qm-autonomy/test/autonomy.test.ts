@@ -768,3 +768,36 @@ test('摘要：到点自动发一次，同一天不重复', async () => {
     await h.dispose()
   }
 })
+
+test('A5 投诉：降一级、清空待回应、记录次数；锁定只记录不降', async () => {
+  const h = await setup()
+  try {
+    await h.call({ method: 'POST', path: '/api/v1/autonomy/trust', query: {}, headers: {}, body: { level: 'A2' } })
+
+    const first = await h.call({
+      method: 'POST',
+      path: '/api/v1/autonomy/complaint',
+      query: {},
+      headers: {},
+      body: { reason: '这条建议没用' },
+    })
+    assert.equal(first.status, 200)
+    assert.deepEqual(first.body, { ok: true, before: 'A2', after: 'A1', complaints: 1, locked: false })
+
+    const second = await h.call({ method: 'POST', path: '/api/v1/autonomy/complaint', query: {}, headers: {}, body: {} })
+    assert.equal((second.body as { after: string }).after, 'A0')
+    const third = await h.call({ method: 'POST', path: '/api/v1/autonomy/complaint', query: {}, headers: {}, body: {} })
+    assert.equal((third.body as { after: string }).after, 'A0', 'A0 不再降')
+
+    const listed = await h.call({ method: 'GET', path: '/api/v1/autonomy', query: {}, headers: {} })
+    const trust = (listed.body as { trust: { complaints: number } }).trust
+    assert.equal(trust.complaints, 3)
+
+    await h.call({ method: 'POST', path: '/api/v1/autonomy/trust', query: {}, headers: {}, body: { level: 'A2', locked: true } })
+    const locked = await h.call({ method: 'POST', path: '/api/v1/autonomy/complaint', query: {}, headers: {}, body: {} })
+    assert.equal((locked.body as { after: string }).after, 'A2', '锁定时不自动降级')
+    assert.equal((locked.body as { locked: boolean }).locked, true)
+  } finally {
+    await h.dispose()
+  }
+})

@@ -318,6 +318,22 @@ export interface AutonomyState {
   locked: boolean
   /** 被降级到摘要的候选（每天最多发一次） */
   digest: { day: string; items: { id: string; title: string; reason: string; at: number }[] }
+  /** 投诉/回滚累计次数；一次投诉降一级（locked 时只记录不降） */
+  complaints?: number
+  lastComplaintAt?: Date | null
+}
+
+export interface AutonomyComplaintInput {
+  reason?: string
+  /** 针对哪条建议（trace id），可缺省 */
+  traceId?: string
+}
+
+export interface AutonomyComplaintResult {
+  before: AutonomyLevel
+  after: AutonomyLevel
+  complaints: number
+  locked: boolean
 }
 
 /** 自主循环：世界状态快照 → 候选 → 过滤 → 选择 → 记账（docs/13 §3） */
@@ -328,6 +344,10 @@ export abstract class AutonomyService extends Service {
   abstract tick(trigger: 'tick' | 'manual'): Promise<AutonomyTrace>
   abstract list(limit?: number): Promise<AutonomyTrace[]>
   abstract status(): Promise<AutonomyState>
+  /** 投诉/回滚：具体 runner 覆盖；默认实现不支持 */
+  async complain(_input?: AutonomyComplaintInput): Promise<AutonomyComplaintResult> {
+    throw new Error('当前 autonomy 实现不支持 complain')
+  }
 }
 
 export interface TurnRequest {

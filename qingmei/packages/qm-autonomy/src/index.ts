@@ -16,6 +16,8 @@ import {
   type AutonomyExecution,
   type AutonomyLevel,
   type AutonomyCandidate,
+  type AutonomyComplaintInput,
+  type AutonomyComplaintResult,
   type AutonomySnapshot,
   type AutonomyState,
   type AutonomyTrace,
@@ -114,6 +116,8 @@ interface StateRow extends Row {
   ignored_by_rule_json?: string
   locked?: boolean
   digest_json?: string
+  complaints?: number
+  last_complaint_at?: number | null
 }
 
 class AutonomyRunner extends AutonomyService {
@@ -490,6 +494,8 @@ class AutonomyRunner extends AutonomyService {
         ignoredByRule: {},
         locked: false,
         digest: { day: '', items: [] },
+        complaints: 0,
+        lastComplaintAt: null,
       }
     }
     return {
@@ -505,6 +511,8 @@ class AutonomyRunner extends AutonomyService {
       ignoredByRule: parseJson<Record<string, number>>(row.ignored_by_rule_json ?? null, {}),
       locked: Boolean(row.locked),
       digest: parseJson<AutonomyState['digest']>(row.digest_json ?? null, { day: '', items: [] }),
+      complaints: Number(row.complaints) || 0,
+      lastComplaintAt: row.last_complaint_at ? new Date(row.last_complaint_at) : null,
     }
   }
 
@@ -523,6 +531,8 @@ class AutonomyRunner extends AutonomyService {
       ignored_by_rule_json: JSON.stringify(state.ignoredByRule),
       locked: state.locked,
       digest_json: JSON.stringify(state.digest),
+      complaints: state.complaints ?? 0,
+      last_complaint_at: state.lastComplaintAt ? state.lastComplaintAt.getTime() : null,
     }
     if (rows[0]) await this.states.update(rows[0].id, changes)
     else await this.states.insert({ id: 'state', ...changes })
@@ -544,6 +554,33 @@ class AutonomyRunner extends AutonomyService {
     })
   }
 
+  /**
+   * A5 投诉/回滚：记录一次投诉，并降一级（A3 → A2 → A1 → A0）。
+   * locked 时只记录不改级别；降级后清掉待回应的建议，避免旧建议继续计采纳。
+   */
+  async complain(input: AutonomyComplaintInput = {}): Promise<AutonomyComplaintResult> {
+    return this.serialize(async () => {
+      const state = await this.getState()
+      const before = state.mode
+      state.complaints = (state.complaints ?? 0) + 1
+      state.lastComplaintAt = new Date()
+      state.streak = 0
+      state.pending = null
+
+      const order: AutonomyLevel[] = ['A0', 'A1', 'A2', 'A3']
+      const index = order.indexOf(before)
+      const after = !state.locked && index > 0 ? order[index - 1]! : before
+      state.mode = after
+      await this.saveState(state)
+
+      if (after !== before) {
+        void this.notify(`📉 收到投诉${input.reason ? `（${input.reason}）` : ''}，主动级别 ${before} → ${after}`)
+      } else if (state.locked) {
+        void this.notify('📉 收到投诉；当前级别已锁定，未自动降级')
+      }
+      return { before, after, complaints: state.complaints, locked: state.locked }
+    })
+  }
   private async noteEngagementInner(): Promise<void> {
     const state = await this.getState()
     if (!state.pending) return
@@ -681,7 +718,12 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
           mode: status.mode,
           locked: status.locked,
           budget: { limit: config.dailyBudget ?? DEFAULTS.dailyBudget, used: status.used },
-          trust: { accepted: status.accepted, ignored: status.ignored, streak: status.streak },
+          trust: {
+            accepted: status.accepted,
+            ignored: status.ignored,
+            streak: status.streak,
+            complaints: status.complaints ?? 0,
+          },
           digest: { count: status.digest.items.length },
           lastTickAt: status.lastTickAt,
           items: await runner.list(),
@@ -711,6 +753,26 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
           ...(locked !== undefined ? { locked } : {}),
         })
         res.status(200).send({ ok: true, mode: state.mode, locked: state.locked })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/autonomy/complaint',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+        if (reason.length > 200) {
+          res.status(400).send({ ok: false, error: 'reason 最多 200 字' })
+          return
+        }
+        const result = await runner.complain({
+          ...(reason ? { reason } : {}),
+          ...(typeof body.traceId === 'string' && body.traceId.trim() ? { traceId: body.traceId.trim() } : {}),
+        })
+        res.status(200).send({ ok: true, ...result })
       },
     }),
   )

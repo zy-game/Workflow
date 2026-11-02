@@ -132,6 +132,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### A5 投诉/回滚信号
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `AutonomyState.complaints` / `lastComplaintAt`；`complain()` 契约（默认不支持） |
+| `packages/qm-autonomy` | 投诉降一级、清空待回应、累计次数并通知；`locked` 只记录不降；`POST /api/v1/autonomy/complaint` |
+| `apps/web` | 「主动」面板加「这条没用」按钮，状态栏显示投诉次数 |
+| 测试 | 286 全绿 |
+
+> 未做：具体动作的回滚（撤回已执行操作）。
+
 ### A2 排期器：优先级 + 静默时间窗
 
 | 文件 | 改了什么 |
