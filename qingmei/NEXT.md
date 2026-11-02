@@ -349,6 +349,8 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
     否则 `limit` 先于排序生效，顺序就是插入顺序。
 23. **主动消息也要走 `channel.send`**：这样 qm-history 才能落库、Web 与渠道才一致；
     绕过它直接写 `qm_message` 会让建议在会话历史里凭空出现或消失。
+24. **用 PowerShell 改含模板字符串的代码会吃掉变量插值**：反引号在 double-quoted 字符串里是转义符，
+    替换后变量变成空串（盘点 prompt 的项目名、回执文案都踩过）。这类改动优先用编辑工具，别用 `-replace`。
 
 ## 7. 2026-10-30 文档对齐（已做，别重复做）
 
