@@ -130,7 +130,15 @@ export function apply(ctx: Context): void {
     if (!match) return
     const allow = match[1] === 'allow'
     const request = await approval.get(match[2]!)
-    if (!request || request.status !== 'pending') return
+    if (!request) {
+      await editCard(action, '⌛ 该审批已失效')
+      return
+    }
+    // 已经决定过：把旧卡片也改成结果，点一次就失效（覆盖推送前发出的卡片）
+    if (request.status !== 'pending') {
+      await editCard(action, `${request.status === 'allowed' ? '✅ 已批准' : '⛔ 已拒绝'}：${request.prompt}`)
+      return
+    }
 
     const decided = await approval.decide(request.id, {
       allow,
@@ -142,6 +150,19 @@ export function apply(ctx: Context): void {
       conversationId: action.conversationId,
       ...(action.messageId ? { messageId: action.messageId } : {}),
     })
+  }
+
+  /** 只更新点中的那张卡片（用于已决定/已失效的旧卡片） */
+  async function editCard(action: ActionEvent, text: string): Promise<void> {
+    if (!channel) return
+    await channel
+      .send({
+        channel: action.channel,
+        conversationId: action.conversationId,
+        blocks: [{ type: 'text', text }],
+        ...(action.messageId ? { editTarget: action.messageId } : {}),
+      })
+      .catch(() => undefined)
   }
 
   /** 决定后逐个会话更新：有卡片消息 id 的走编辑（按钮消失），没有的补一条文本 */

@@ -269,3 +269,28 @@ test('卡片按钮：同意/拒绝直接决定并回执', async () => {
     await h.dispose()
   }
 })
+
+test('点已决定的旧卡片：把那张卡改成结果，不重复决定', async () => {
+  const h = await setup()
+  try {
+    const request = await h.approval.create({ action: 'tool.invoke:old', prompt: '旧卡片测试' })
+    await h.approval.decide(request.id, { allow: true })
+    const before = h.channel.sent.length
+
+    h.ctx.events.emit(EVENTS.action, {
+      channel: 'feishu',
+      conversationId: 'oc_1',
+      actionId: `approval:allow:${request.id}`,
+      messageId: 'om_old_card',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    assert.equal(h.channel.sent.length, before + 1, '应更新旧卡片而不是再发一条')
+    const last = h.channel.sent.at(-1)!
+    assert.equal(last.editTarget, 'om_old_card')
+    assert.match((last.blocks[0] as { text: string }).text, /已批准：旧卡片测试/)
+    assert.equal((await h.approval.get(request.id))?.status, 'allowed', '状态不应被再次改动')
+  } finally {
+    await h.dispose()
+  }
+})
