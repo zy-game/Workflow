@@ -53,6 +53,8 @@ export interface FeishuConfig {
   allowedChatIds?: string[]
   /** 飞书国际版用 'lark' */
   domain?: 'feishu' | 'lark'
+  /** 群聊只在被 @ 时回复，默认 true（与 docs/05 M3 验收一致） */
+  requireMentionInGroup?: boolean
 }
 
 /** 一条飞书入站消息（传输层归一化后的形状） */
@@ -63,6 +65,8 @@ export interface FeishuInboundEvent {
   text: string
   senderId: string
   senderName?: string
+  /** 群聊里是否 @ 了机器人 */
+  mentioned?: boolean
 }
 
 /** 飞书传输层：真实实现用 SDK，测试用假实现 */
@@ -82,6 +86,7 @@ export function createFeishuAdapter(
 ): ChannelAdapter {
   const seen = new Set<string>()
   const receiveIdType = config.receiveIdType ?? 'chat_id'
+  const requireMention = config.requireMentionInGroup !== false
 
   return {
     id: FEISHU_CHANNEL,
@@ -93,6 +98,7 @@ export function createFeishuAdapter(
         }
         const text = typeof event.text === 'string' ? event.text.trim() : ''
         if (!text) return
+        if (event.chatType === 'group' && requireMention && event.mentioned !== true) return
         if (seen.has(event.messageId)) return
         seen.add(event.messageId)
         if (seen.size > SEEN_LIMIT) {
@@ -187,6 +193,7 @@ async function createRealTransport(
         text: content,
         senderId: data.sender?.sender_id?.open_id ?? '',
         senderName: data.sender?.sender_id?.user_id ?? undefined,
+        mentioned: Array.isArray(data.message?.mentions) && data.message.mentions.length > 0,
       })
     },
   })
@@ -273,7 +280,7 @@ interface LarkSdk {
 }
 
 interface LarkMessageEvent {
-  message?: { message_id?: string; chat_id?: string; chat_type?: string; content?: string }
+  message?: { message_id?: string; chat_id?: string; chat_type?: string; content?: string; mentions?: unknown[] }
   sender?: { sender_id?: { open_id?: string; user_id?: string } }
 }
 

@@ -8,6 +8,22 @@ import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as approvalPlugin from '@qingmei/provider-approval-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as approvalApi from '../src/index.ts'
+import { EVENTS, ChannelService, type OutboundEnvelope, type SendResult } from '@qingmei/core'
+import type { ChannelCapabilities } from '@qingmei/core'
+
+class FakeChannel extends ChannelService {
+  readonly sent: OutboundEnvelope[] = []
+  async register(): Promise<() => void> {
+    return () => undefined
+  }
+  async send(envelope: OutboundEnvelope): Promise<SendResult> {
+    this.sent.push(envelope)
+    return { ok: true, platformMessageId: out_ }
+  }
+  status() {
+    return [{ id: 'feishu' as const, online: true }]
+  }
+}
 import {
   type ApprovalRequest,
   type ApprovalService,
@@ -38,6 +54,7 @@ async function setup() {
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'api.db') })
   await storeFiber
+  const channel = new FakeChannel(ctx)
   const approvalFiber = ctx.plugin(approvalPlugin)
   await approvalFiber
   await ctx.plugin(gatewayPlugin)
@@ -46,7 +63,9 @@ async function setup() {
   const approval = ctx.reflect.get('approval', false) as ApprovalService
 
   return {
+    ctx,
     approval,
+    channel,
     async call(req: GatewayRequest) {
       const response = fakeResponse()
       const handled = await ctx.gateway.dispatch(req, response.res)
@@ -107,6 +126,68 @@ test('POST /api/v1/approvals/decide：批准、拒绝、缺参、未知 id', asy
 
     const unknown = await h.call(request('POST', '/api/v1/approvals/decide', { id: 'ap_nope', allow: true }))
     assert.equal(unknown.status, 404)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('渠道回复「批准」：处理最早一条待确认并回执', async () => {
+  const h = await setup()
+  try {
+    const first = await h.approval.create({ action: 'acp:bash: npm test', prompt: '跑测试' })
+    const second = await h.approval.create({ action: 'tool.invoke:shell', prompt: '执行 shell' })
+
+    h.ctx.events.emit(EVENTS.inbound, {
+      platformMessageId: 'om_1',
+      channel: 'feishu',
+      accountId: 'cli',
+      conversation: { kind: 'dm', id: 'oc_1' },
+      sender: { platformUserId: 'ou_1', displayName: '我' },
+      blocks: [{ type: 'text', text: '批准' }],
+      receivedAt: new Date(),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    const rows = await h.approval.list()
+    assert.equal(rows.find((row) => row.id === first.id)?.status, 'allowed')
+    assert.equal(rows.find((row) => row.id === second.id)?.status, 'pending')
+    assert.equal(h.channel.sent.length, 1)
+    const text = (h.channel.sent[0]!.blocks[0] as { text: string }).text
+    assert.match(text, /已批准：跑测试/)
+    assert.match(text, /还有 1 条待确认/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('渠道回复「拒绝」与无关文本', async () => {
+  const h = await setup()
+  try {
+    const only = await h.approval.create({ action: 'a', prompt: '危险操作' })
+    h.ctx.events.emit(EVENTS.inbound, {
+      platformMessageId: 'om_2',
+      channel: 'feishu',
+      accountId: 'cli',
+      conversation: { kind: 'dm', id: 'oc_1' },
+      sender: { platformUserId: 'ou_1', displayName: '我' },
+      blocks: [{ type: 'text', text: '拒绝' }],
+      receivedAt: new Date(),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal((await h.approval.get(only.id))?.status, 'denied')
+
+    const before = h.channel.sent.length
+    h.ctx.events.emit(EVENTS.inbound, {
+      platformMessageId: 'om_3',
+      channel: 'feishu',
+      accountId: 'cli',
+      conversation: { kind: 'dm', id: 'oc_1' },
+      sender: { platformUserId: 'ou_1', displayName: '我' },
+      blocks: [{ type: 'text', text: '今天吃什么' }],
+      receivedAt: new Date(),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(h.channel.sent.length, before, '无关文本不应触发审批')
   } finally {
     await h.dispose()
   }

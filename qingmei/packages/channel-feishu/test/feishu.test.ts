@@ -85,8 +85,8 @@ test('入站：归一化成 qm/inbound，同一 message_id 只发一次', async 
     // 等 ChannelHub 异步调用 adapter.start
     for (let i = 0; i < 100 && h.transport.started === 0; i += 1) await tick()
 
-    h.transport.emit({ messageId: 'om_1', chatId: 'oc_1', chatType: 'group', text: ' 在吗 \n', senderId: 'ou_1', senderName: '我' })
-    h.transport.emit({ messageId: 'om_1', chatId: 'oc_1', chatType: 'group', text: ' 在吗 \n', senderId: 'ou_1', senderName: '我' })
+    h.transport.emit({ messageId: 'om_1', chatId: 'oc_1', chatType: 'group', text: ' 在吗 \n', senderId: 'ou_1', senderName: '我', mentioned: true })
+    h.transport.emit({ messageId: 'om_1', chatId: 'oc_1', chatType: 'group', text: ' 在吗 \n', senderId: 'ou_1', senderName: '我', mentioned: true })
 
     assert.equal(h.inbound.length, 1, '重投应被去重')
     const message = h.inbound[0]!
@@ -180,5 +180,30 @@ test('缺凭据时 apply 不注册渠道', async () => {
     if (savedId !== undefined) process.env.QM_FEISHU_APP_ID = savedId
     if (savedSecret !== undefined) process.env.QM_FEISHU_APP_SECRET = savedSecret
     await channelFiber.dispose()
+  }
+})
+
+test('群聊：默认只在被 @ 时进 qm/inbound，私聊不受限', async () => {
+  const h = await setup()
+  try {
+    h.transport.emit({ messageId: 'g1', chatId: 'oc_g', chatType: 'group', text: '没 @ 我', mentioned: false })
+    h.transport.emit({ messageId: 'g2', chatId: 'oc_g', chatType: 'group', text: '@我 在吗', mentioned: true })
+    h.transport.emit({ messageId: 'd1', chatId: 'oc_d', chatType: 'p2p', text: '私聊' })
+    assert.deepEqual(
+      h.inbound.map((message) => message.platformMessageId),
+      ['g2', 'd1'],
+    )
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('requireMentionInGroup=false 时群里不 @ 也进', async () => {
+  const h = await setup({ requireMentionInGroup: false })
+  try {
+    h.transport.emit({ messageId: 'g1', chatId: 'oc_g', chatType: 'group', text: '没 @ 我', mentioned: false })
+    assert.equal(h.inbound.length, 1)
+  } finally {
+    await h.dispose()
   }
 })
