@@ -46,6 +46,9 @@ qm-history（qm_message 的唯一写入方）
   - `dangerous` 或 `ask` 一律先拒（渠道确认链路未做）；被拒绝的调用也写审计
   - 审计落 `qm_audit`（只追加），列名按 docs/04；每次调用一条，带 `trace_id`
 - 人格白名单 + 输出卫生（内部工具名/路径不外泄）
+- **记忆（M1 语义收口）**：同一 `subject+predicate` 的新值让旧值 `valid_to` 置位（不删除）；
+  `audience` 区分 owner 与群，群聊只注入该群 public 事实（private/secret 零注入）；
+  `qm-agent` 把 memory 列为必需依赖（缺了不启动，不再静默降级）
 - **派任务给 DSH**：对话里说「派个任务」→ DSH 调 `qm_dispatch_task` → `qm-task` 建 run、
   分配 `data/workspaces/<runId>`、调 `harness.run`；子 agent 经 `qm_report_progress` /
   `qm_finish_task` 回报，账本落 `qm_task_run`
@@ -71,14 +74,16 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 按这个位置，下一步按价值排：
 
 1. **H 收尾**：任务面板 ✅、H3 审批桥 ✅、`session_id` 回填 ✅、`qm doctor` 的 harness 段 ✅、
-   产物（`qm_publish_artifact`，先记引用）✅、token 用量记录 ✅；
-   还差 resume（拿 session_id 调 `session/resume`）与 token 预算的硬拦截。
-   做完这两项「执行」这条主线才算完整，A1 才有东西可催。
-2. **M1 补记忆语义（P1 欠账）**：`audience` + `validTo`（新值让旧值失效而不是覆盖）+ 画像最小版。
-   现在「我养猫→我养狗」只能覆盖，查不到「猫的记录已失效」，与 docs/05 M1 验收不符。
+   产物（`qm_publish_artifact`，先记引用）✅、token 用量记录 ✅、ACP 文件/命令能力 ✅；
+   还差 resume（拿 session_id 调 `session/resume`）与 token 预算的硬拦截
+   （DSH 目前不返回 usage，可能得等 harness 支持）。
+2. **M1 剩余**：`audience` + `validTo` + 群聊零注入 ✅、memory 必需化 ✅；
+   还差画像最小版（docs/05 M1 交付物）、`summarize`、情节/决策/教训类型、断网抽取补偿队列。
 3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
-4. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
-5. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
+4. **A1 自主循环骨架**（P3）：任务账本/日程/权限这些前置已经齐了，可以开始「每 N 分钟取世界状态 →
+   候选行动 → 白名单与打扰预算过滤 → 留下 decision trace」。
+5. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
+6. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
 
 ## 3. 已知技术债（按优先级）
 

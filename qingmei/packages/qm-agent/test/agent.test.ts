@@ -25,6 +25,7 @@ import {
   type TurnEnd,
 } from '@qingmei/core'
 import { LlmService, type ChatRequest, type ChatStreamChunk } from '@qingmei/service-llm'
+import { MemoryService, type MemoryRecord, type RecallQuery, type RecallResult } from '@qingmei/core'
 
 import * as channelPlugin from '@qingmei/service-channel'
 import * as historyPlugin from '@qingmei/qm-history'
@@ -138,6 +139,8 @@ interface FakeOptions {
 
 interface FakeState {
   collections: Map<string, MemoryCollection<Row>>
+  memoryText: string
+  recalls: RecallQuery[]
   sent: OutboundEnvelope[]
   published: GatewayEvent[]
   requests: ChatRequest[]
@@ -149,6 +152,8 @@ interface FakeState {
 function createFakes(options: FakeOptions) {
   const state: FakeState = {
     collections: new Map(),
+    memoryText: '',
+    recalls: [],
     sent: [],
     published: [],
     requests: [],
@@ -256,7 +261,23 @@ function createFakes(options: FakeOptions) {
     },
   }
 
-  return { state, adapter, FakeStore, FakeGateway, FakeLlm }
+  class FakeMemory extends MemoryService {
+    constructor(ctx: Context) {
+      super(ctx)
+    }
+    async ingest(_records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }> {
+      return { created: [], merged: [] }
+    }
+    async recall(query: RecallQuery): Promise<RecallResult> {
+      state.recalls.push(query)
+      return { facts: [], text: state.memoryText }
+    }
+    async forget(): Promise<number> {
+      return 0
+    }
+  }
+
+  return { state, adapter, FakeStore, FakeGateway, FakeLlm, FakeMemory }
 }
 
 // ────────────────────────────────────────────── 测试脚手架
@@ -276,6 +297,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(channelPlugin)
   await ctx.plugin(fakes.FakeGateway)
   await ctx.plugin(fakes.FakeLlm)
+  await ctx.plugin(fakes.FakeMemory)
   await ctx.plugin(historyPlugin)
   await ctx.plugin(agent, { persona: PERSONA })
   ctx.channel.register(fakes.adapter)
@@ -338,7 +360,7 @@ async function seed(
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(agent.name, 'qm-agent')
-  assert.deepEqual(agent.inject, ['llm', 'store', 'channel', 'gateway'])
+  assert.deepEqual(agent.inject, ['llm', 'store', 'channel', 'gateway', 'memory'])
 })
 
 test('一次 inbound：chunk 事件、turn/end、store 两条消息、渠道回投', async () => {
@@ -527,4 +549,19 @@ test('落库失败：回复照发、turn/end 仍为 ok（落库不再属于回�
   assert.equal(h.state.messages().length, 0)
   assert.equal(h.state.sent.length, 1)
   assert.deepEqual(h.state.sent[0].blocks, [{ type: 'text', text: '好。' }])
+})
+
+test('召回按会话视口走：私聊 owner、群聊 group:<id>', async () => {
+  const h = await boot({ chunks: ['收到。'] })
+  h.state.memoryText = '主人喜欢手冲咖啡'
+
+  h.ctx.events.emit(EVENTS.inbound, inbound('我喜欢喝什么'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  assert.deepEqual(h.state.recalls.at(-1), { text: '我喜欢喝什么', audience: 'owner' })
+
+  const group = inbound('群里问一句')
+  group.conversation = { kind: 'group', id: 'g1' }
+  h.ctx.events.emit(EVENTS.inbound, group)
+  await waitFor(() => h.ends.length === 2, '第二个 turn/end')
+  assert.deepEqual(h.state.recalls.at(-1), { text: '群里问一句', audience: 'group:g1' })
 })

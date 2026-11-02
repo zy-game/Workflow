@@ -34,7 +34,7 @@ export interface AgentConfig {
 export const name = 'qm-agent'
 
 /** cordis 会等这四个服务就绪后才执行 apply，卸载时自动停用本插件 */
-export const inject: string[] = ['llm', 'store', 'channel', 'gateway']
+export const inject: string[] = ['llm', 'store', 'channel', 'gateway', 'memory']
 
 /** qm_message 表名 */
 const MESSAGE_COLLECTION = 'qm_message'
@@ -101,8 +101,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
   const gateway = requireService<GatewayService>(ctx, 'gateway')
   /** harness 是可选车道：存在就优先用，不存在或不可用则回落 llm */
   const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
-  /** memory 也是可选：有就注入召回结果，没有就跳过 */
-  const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
+  /** 记忆是核心依赖（docs/02）：缺失时插件不会 ACTIVE，而不是静默降级成「没有记忆」 */
+  const memory = requireService<MemoryService>(ctx, 'memory')
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
@@ -165,8 +165,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
     /** 召回失败不能影响对话：退化成"这次没有记忆" */
     let memoryText = ''
     if (memory) {
+      // 视口决定能看到哪些记忆：群聊只注入该群的 public 事实（docs/05 M1 验收第 5 条）
+      const audience =
+        message.conversation.kind === 'group' ? `group:${message.conversation.id}` : 'owner'
       try {
-        memoryText = (await memory.recall({ text: userText })).text
+        memoryText = (await memory.recall({ text: userText, audience })).text
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
       }

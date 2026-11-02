@@ -99,3 +99,57 @@ test('ingest：低于置信度阈值或字段不完整的记录被丢弃', async
     await dispose()
   }
 })
+
+test('ingest：同一 subject+predicate 的新值让旧值有效期末尾（软失效，不删除）', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    const cat = await ctx.memory.ingest([fact('主人', '养', '猫')])
+    const catId = cat.created[0]!
+
+    const dog = await ctx.memory.ingest([fact('主人', '养', '狗')])
+    assert.equal(dog.created.length, 1, '新值应新增一行')
+
+    // 旧值仍在库里，只是 valid_to 被置位
+    const rows = await ctx.store.collection('qm_mem_fact').find({})
+    const catRow = rows.find((row) => row.id === catId)
+    assert.ok(catRow, '旧事实不应被删除')
+    assert.equal(typeof catRow.valid_to, 'number')
+    assert.ok(catRow.valid_to > 0)
+
+    const hit = await ctx.memory.recall({ text: '我养狗吗' })
+    assert.equal(hit.facts.length, 1)
+    assert.equal(hit.facts[0]?.object, '狗')
+  } finally {
+    await dispose()
+  }
+})
+
+test('recall：群聊视口不注入 private，也不注入别的 audience', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      { ...fact('主人', '喜欢', '手冲咖啡'), sensitivity: 'private' },
+      { ...fact('项目:青梅', '状态', '测试全绿'), sensitivity: 'public', audience: 'group:g1' },
+      { ...fact('主人', '手机号', '138'), sensitivity: 'secret' },
+    ])
+
+    const owner = await ctx.memory.recall({ text: '咖啡 测试 手机号' })
+    assert.deepEqual(
+      owner.facts.map((item) => item.object),
+      ['手冲咖啡'],
+      '主人视口只给 audience=owner 的非 secret 记忆（secret 永不注入 prompt）',
+    )
+
+    const group = await ctx.memory.recall({ text: '咖啡 测试 手机号', audience: 'group:g1' })
+    assert.deepEqual(
+      group.facts.map((item) => item.object),
+      ['测试全绿'],
+      '群聊只给该群 public 事实，private/secret 零注入',
+    )
+
+    const otherGroup = await ctx.memory.recall({ text: '测试', audience: 'group:g2' })
+    assert.equal(otherGroup.facts.length, 0, '别的群看不到 g1 的记忆')
+  } finally {
+    await dispose()
+  }
+})

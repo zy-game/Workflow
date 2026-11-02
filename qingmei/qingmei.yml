@@ -11,11 +11,17 @@
 - name: '@qingmei/service-llm'
 - name: '@qingmei/service-channel'
 - name: '@qingmei/service-gateway'
+- name: '@qingmei/service-memory'
 
 # ── 提供方
 - name: '@qingmei/provider-store-sqlite'
   config:
     path: './data/qm.db'
+
+- name: '@qingmei/provider-memory-sqlite'
+  config:
+    limit: 5
+    minConfidence: 0.6
 
 - name: '@qingmei/provider-llm-echo'
   config:

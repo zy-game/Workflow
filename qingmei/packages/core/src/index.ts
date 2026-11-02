@@ -356,6 +356,8 @@ export interface MemoryRecord {
   /** 0..1 */
   confidence: number
   sensitivity: 'public' | 'private' | 'secret'
+  /** 可见范围：'owner' 只给主人；'group:<id>' 群内可见。缺省 owner */
+  audience?: string
   origin: { kind: 'channel' | 'harness' | 'self' | 'doc' | 'manual'; id: string }
   occurredAt?: Date
 }
@@ -363,11 +365,15 @@ export interface MemoryRecord {
 export interface RecalledFact extends MemoryRecord {
   id: string
   createdAt: Date
+  /** 失效时间；召回只取 null 的 */
+  validTo?: Date | null
 }
 
 export interface RecallQuery {
   text: string
   limit?: number
+  /** 当前视口：'owner'（缺省）或 'group:<id>'；群聊只注入 public 且 audience 匹配的记忆 */
+  audience?: string
 }
 
 export interface RecallResult {
