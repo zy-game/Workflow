@@ -12,6 +12,7 @@ import {
   MemoryService,
   uid,
   type MemoryRecord,
+  type ProfileEntry,
   type RecallQuery,
   type RecallResult,
   type RecalledFact,
@@ -130,6 +131,31 @@ export class SqliteMemory extends MemoryService {
     }))
     const text = facts.map((fact) => `- ${fact.subject}${fact.predicate}${fact.object}`).join('\n')
     return { facts, text }
+  }
+
+  /**
+   * 画像：只对 owner 视口开；按 subject 聚合，每个 subject 取置信度最高的几条。
+   * 与 recall 的区别是「稳定」——不依赖当前这句话的关键词。
+   */
+  async profile(query: { audience?: string; limit?: number } = {}): Promise<ProfileEntry[]> {
+    const audience = query.audience?.trim() || 'owner'
+    if (audience !== 'owner') return []
+
+    const rows = await this.collection.find({ where: { valid_to: null } })
+    const sorted = rows
+      .filter((row) => visibleTo(row, audience))
+      .sort((a, b) => b.confidence - a.confidence || b.created_at - a.created_at)
+
+    const bySubject = new Map<string, ProfileEntry['facts']>()
+    for (const row of sorted) {
+      const facts = bySubject.get(row.subject) ?? []
+      if (facts.length >= 4) continue
+      facts.push({ subject: row.subject, predicate: row.predicate, object: row.object, confidence: row.confidence })
+      bySubject.set(row.subject, facts)
+    }
+    return [...bySubject.entries()]
+      .slice(0, query.limit ?? 12)
+      .map(([subject, facts]) => ({ subject, facts }))
   }
 
   async forget(ids: string[]): Promise<number> {

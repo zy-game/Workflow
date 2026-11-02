@@ -153,3 +153,25 @@ test('recall：群聊视口不注入 private，也不注入别的 audience', asy
     await dispose()
   }
 })
+
+test('profile：按 subject 聚合、只含有效 owner 事实，群聊视口为空', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      fact('主人', '喜欢', '手冲咖啡', 0.9),
+      fact('主人', '养', '猫', 0.8),
+      fact('主人', '养', '狗', 0.95),
+      fact('工作', '在', '腾讯', 0.7),
+    ])
+
+    const profile = await ctx.memory.profile({ audience: 'owner' })
+    const bySubject = new Map(profile.map((entry) => [entry.subject, entry.facts.map((item) => `${item.predicate}${item.object}`)]))
+    assert.ok(bySubject.get('主人')?.includes('养狗'))
+    assert.equal(bySubject.get('主人')?.some((item) => item.includes('猫')), false, '被覆盖的旧值不应出现')
+    assert.ok(bySubject.get('工作')?.includes('在腾讯'))
+
+    assert.deepEqual(await ctx.memory.profile({ audience: 'group:g1' }), [])
+  } finally {
+    await dispose()
+  }
+})

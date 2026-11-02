@@ -132,6 +132,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### M1 画像最小版
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `MemoryService.profile()`（默认空）+ `ProfileEntry` / `ProfileFact` / `ProfileQuery` |
+| `packages/provider-memory-sqlite` | 按 subject 聚合 owner 高置信有效事实，每 subject 最多 4 条，最多 12 个 subject；群聊视口返回空 |
+| `packages/qm-agent` | 私聊时注入「关于主人」稳定段（与按句召回分开），群聊不调用 |
+| 测试 | 281 全绿 |
+
+> 未做：画像页（查看/编辑/删除）、`summarize`、情节/决策/教训类型。
+
 ### 审批按钮：QQ keyboard + 卡片点后失效
 
 | 文件 | 改了什么 |

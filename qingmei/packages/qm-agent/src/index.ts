@@ -20,6 +20,7 @@ import {
   type HarnessService,
   type InboundMessage,
   type MemoryService,
+  type ProfileEntry,
   type Row,
   type StoreService,
   type TurnChunk,
@@ -82,6 +83,17 @@ export function sanitizeReply(text: string): string {
   for (const pattern of INTERNAL_PATTERNS) out = out.replace(pattern, '（内部信息已隐藏）')
   for (const name of TOOL_NAMES) out = out.split(`\`${name}\``).join('某个工具')
   return out
+}
+
+/** 画像 → 提示词里的稳定段：每个 subject 一行，事实按 predicate 拼起来 */
+export function formatProfile(entries: ProfileEntry[]): string {
+  return entries
+    .map((entry) => {
+      const facts = entry.facts.map((fact) => `${fact.predicate}${fact.object}`).join('；')
+      return facts ? `- ${entry.subject}：${facts}` : ''
+    })
+    .filter(Boolean)
+    .join('\n')
 }
 
 /** qm_message 的 P1 行形状（docs/04 的完整字段在 P1 里只保留对话所需的最小集） */
@@ -167,18 +179,31 @@ export function apply(ctx: Context, config: AgentConfig): void {
     const controller = new AbortController()
     let reply = ''
 
+    // 视口决定能看到哪些记忆：群聊只注入该群的 public 事实（docs/05 M1 验收第 5 条）
+    const audience = message.conversation.kind === 'group' ? `group:${message.conversation.id}` : 'owner'
+
     /** 召回失败不能影响对话：退化成"这次没有记忆" */
     let memoryText = ''
+    /** 画像只对 owner 开：稳定事实，不依赖这句话的关键词 */
+    let profileText = ''
     if (memory) {
-      // 视口决定能看到哪些记忆：群聊只注入该群的 public 事实（docs/05 M1 验收第 5 条）
-      const audience =
-        message.conversation.kind === 'group' ? `group:${message.conversation.id}` : 'owner'
       try {
         memoryText = (await memory.recall({ text: userText, audience })).text
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
       }
+      if (audience === 'owner') {
+        try {
+          profileText = formatProfile(await memory.profile({ audience }))
+        } catch (error) {
+          problems.push(`画像读取失败：${messageOf(error)}`)
+        }
+      }
     }
+    const memoryBlock = [
+      profileText ? `【关于主人】\n${profileText}` : '',
+      memoryText ? `【已知记忆】\n${memoryText}` : '',
+    ].filter(Boolean).join('\n\n')
 
     try {
       // 车道选择：装了 harness 且能握手，就用它（有自己的会话/工具/压缩）；
@@ -194,7 +219,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
         for await (const event of harness.run({
           conversationId: sessionId,
           // DSH 自己维护会话历史；把召回结果作为前缀附在这一轮输入上
-          text: memoryText ? `【已知记忆】\n${memoryText}\n\n${userText}` : userText,
+          text: memoryBlock ? `${memoryBlock}\n\n${userText}` : userText,
           signal: controller.signal,
         })) {
           if (event.type === 'text') {
@@ -210,7 +235,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
         }
       } else {
         const messages: ChatMessage[] = [
-          { role: 'system', content: memoryText ? `${persona}\n\n【已知记忆】\n${memoryText}` : persona },
+          { role: 'system', content: memoryBlock ? `${persona}\n\n${memoryBlock}` : persona },
           ...(await loadHistory(sessionId, message.platformMessageId)),
           { role: 'user', content: userText },
         ]

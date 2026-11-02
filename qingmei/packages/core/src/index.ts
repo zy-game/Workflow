@@ -559,6 +559,26 @@ export interface RecallResult {
   text: string
 }
 
+/** 画像里的一条事实（与召回不同：按 subject 聚合，稳定注入） */
+export interface ProfileFact {
+  subject: string
+  predicate: string
+  object: string
+  confidence: number
+}
+
+export interface ProfileEntry {
+  subject: string
+  facts: ProfileFact[]
+}
+
+export interface ProfileQuery {
+  /** owner 视口才给画像；群聊返回空 */
+  audience?: string
+  /** 最多几个 subject */
+  limit?: number
+}
+
 export abstract class MemoryService extends Service {
   constructor(ctx: Context) {
     super(ctx, 'memory')
@@ -567,6 +587,10 @@ export abstract class MemoryService extends Service {
   abstract ingest(records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }>
   abstract recall(query: RecallQuery): Promise<RecallResult>
   abstract forget(ids: string[]): Promise<number>
+  /** 稳定画像（按 subject 聚合的高置信事实）；默认空，provider 可覆盖 */
+  async profile(_query?: ProfileQuery): Promise<ProfileEntry[]> {
+    return []
+  }
 }
 
 // ────────────────────────────────────────────── 任务账本

@@ -25,7 +25,7 @@ import {
   type TurnEnd,
 } from '@qingmei/core'
 import { LlmService, type ChatRequest, type ChatStreamChunk } from '@qingmei/service-llm'
-import { MemoryService, type MemoryRecord, type RecallQuery, type RecallResult } from '@qingmei/core'
+import { MemoryService, type MemoryRecord, type ProfileEntry, type RecallQuery, type RecallResult } from '@qingmei/core'
 
 import * as channelPlugin from '@qingmei/service-channel'
 import * as historyPlugin from '@qingmei/qm-history'
@@ -140,6 +140,8 @@ interface FakeOptions {
 interface FakeState {
   collections: Map<string, MemoryCollection<Row>>
   memoryText: string
+  profile: ProfileEntry[]
+  profileCalls: { audience?: string }[]
   recalls: RecallQuery[]
   sent: OutboundEnvelope[]
   published: GatewayEvent[]
@@ -153,6 +155,8 @@ function createFakes(options: FakeOptions) {
   const state: FakeState = {
     collections: new Map(),
     memoryText: '',
+    profile: [],
+    profileCalls: [],
     recalls: [],
     sent: [],
     published: [],
@@ -271,6 +275,10 @@ function createFakes(options: FakeOptions) {
     async recall(query: RecallQuery): Promise<RecallResult> {
       state.recalls.push(query)
       return { facts: [], text: state.memoryText }
+    }
+    async profile(query?: { audience?: string }): Promise<ProfileEntry[]> {
+      state.profileCalls.push(query ?? {})
+      return state.profile
     }
     async forget(): Promise<number> {
       return 0
@@ -584,4 +592,27 @@ test('被控制指令消费的消息不进入对话回合，也不调用模型',
   assert.equal(h.chunks.length, 0)
   assert.equal(h.ends.length, 0)
   assert.equal(h.state.requests.length, 0)
+})
+
+test('画像只注入私聊：owner 看到「关于主人」，群聊不调用 profile', async () => {
+  const h = await boot({ chunks: ['收到。'] })
+  h.state.profile = [
+    { subject: '宠物', facts: [{ subject: '宠物', predicate: '是', object: '狗', confidence: 0.9 }] },
+  ]
+
+  h.ctx.events.emit(EVENTS.inbound, inbound('我养什么'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  const system = h.state.requests[0]!.messages[0]!
+  assert.equal(system.role, 'system')
+  assert.match(system.content, /【关于主人】/)
+  assert.match(system.content, /宠物：是狗/)
+  assert.deepEqual(h.state.profileCalls.at(-1), { audience: 'owner' })
+
+  const group = inbound('群里问一句')
+  group.conversation = { kind: 'group', id: 'g2' }
+  h.ctx.events.emit(EVENTS.inbound, group)
+  await waitFor(() => h.ends.length === 2, '第二个 turn/end')
+  const groupSystem = h.state.requests.at(-1)!.messages[0]!
+  assert.doesNotMatch(groupSystem.content, /【关于主人】/)
+  assert.equal(h.state.profileCalls.length, 1, '群聊不应调用 profile')
 })
