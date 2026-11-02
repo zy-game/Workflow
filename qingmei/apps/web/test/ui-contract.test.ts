@@ -11,6 +11,7 @@ const PUBLIC = path.resolve(here, '../public')
 const GATEWAY = path.resolve(here, '../../../packages/host-gateway/src/index.ts')
 const QM_TASK = path.resolve(here, '../../../packages/qm-task/src/index.ts')
 const QM_APPROVAL = path.resolve(here, '../../../packages/qm-approval/src/index.ts')
+const QM_AUTONOMY = path.resolve(here, '../../../packages/qm-autonomy/src/index.ts')
 
 async function readPublic(name: string): Promise<string> {
   return readFile(path.join(PUBLIC, name), 'utf8')
@@ -68,4 +69,17 @@ test('待确认区与 qm-approval 的路由/事件对得上', async () => {
   assert.match(approvalPlugin, /path: '\/api\/v1\/approvals\/decide'/, 'qm-approval 应注册 decide')
   assert.match(approvalPlugin, /'approval-requested'/, 'qm-approval 应把请求推到 SSE')
   assert.match(approvalPlugin, /'approval-decided'/, 'qm-approval 应把判定推到 SSE')
+})
+
+test('主动面板与 qm-autonomy 的路由/事件对得上', async () => {
+  const script = await readPublic('app.js')
+  const autonomyPlugin = await readFile(QM_AUTONOMY, 'utf8')
+
+  assert.match(script, /autonomy: '\.\/api\/v1\/autonomy'/, 'app.js 应把自主循环接口写在 ENDPOINTS 里')
+  assert.match(script, /autonomy-tick/, '主动面板应订阅 SSE 的 autonomy-tick')
+  assert.match(script, /autonomy\/tick/, '应有「立即巡一次」的入口')
+
+  assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy'/, 'qm-autonomy 应注册 GET /api/v1/autonomy')
+  assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy\/tick'/, 'qm-autonomy 应注册 tick')
+  assert.match(autonomyPlugin, /'autonomy-tick'/, 'qm-autonomy 应把每次 tick 推到 SSE')
 })

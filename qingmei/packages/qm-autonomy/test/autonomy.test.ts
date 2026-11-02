@@ -1,0 +1,369 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Context } from 'cordis'
+import * as storePlugin from '@qingmei/provider-store-sqlite'
+import * as gatewayPlugin from '@qingmei/service-gateway'
+import * as autonomyPlugin from '../src/index.ts'
+import {
+  ApprovalService,
+  ScheduleService,
+  TaskService,
+  type ApprovalRequest,
+  type AutonomyService,
+  type CreateApprovalInput,
+  type Decision,
+  type GatewayRequest,
+  type GatewayResponse,
+  type PermissionService,
+  type Scheduled,
+  type ScheduleInput,
+  type SchedulePatch,
+  type TaskRun,
+} from '@qingmei/core'
+
+class FakeApproval extends ApprovalService {
+  pending: ApprovalRequest[] = []
+
+  async create(input: CreateApprovalInput): Promise<ApprovalRequest> {
+    throw new Error('不需要在自主循环测试里创建审批')
+  }
+  async get(): Promise<ApprovalRequest | null> {
+    return null
+  }
+  async list(status?: string): Promise<ApprovalRequest[]> {
+    return status === 'pending' ? this.pending : []
+  }
+  async decide(): Promise<ApprovalRequest | null> {
+    return null
+  }
+  async wait(): Promise<ApprovalRequest | null> {
+    return null
+  }
+}
+
+class FakeTask extends TaskService {
+  runs: TaskRun[] = []
+
+  async create(): Promise<TaskRun> {
+    throw new Error('not used')
+  }
+  async get(): Promise<TaskRun | null> {
+    return null
+  }
+  async list(limit = 20): Promise<TaskRun[]> {
+    return this.runs.slice(0, limit)
+  }
+  async start(): Promise<TaskRun | null> {
+    return null
+  }
+  async setStatus(): Promise<TaskRun | null> {
+    return null
+  }
+  async reportProgress(): Promise<TaskRun | null> {
+    return null
+  }
+  async addArtifact(): Promise<TaskRun | null> {
+    return null
+  }
+  async reportUsage(): Promise<TaskRun | null> {
+    return null
+  }
+  async finish(): Promise<TaskRun | null> {
+    return null
+  }
+}
+
+class FakeSchedule extends ScheduleService {
+  schedules: Scheduled[] = []
+
+  async create(_input: ScheduleInput): Promise<Scheduled> {
+    throw new Error('not used')
+  }
+  async list(): Promise<Scheduled[]> {
+    return this.schedules
+  }
+  async cancel(): Promise<boolean> {
+    return false
+  }
+  async pause(): Promise<boolean> {
+    return false
+  }
+  async resume(): Promise<boolean> {
+    return false
+  }
+  async update(_id: string, _patch: SchedulePatch): Promise<Scheduled | null> {
+    return null
+  }
+}
+
+function approvalRequest(prompt = '子 agent 请求执行：bash: npm test'): ApprovalRequest {
+  return {
+    id: 'ap_1',
+    action: 'acp:bash: npm test',
+    prompt,
+    status: 'pending',
+    runId: null,
+    requester: 'harness:dsh',
+    channel: 'web',
+    createdAt: new Date(),
+    decidedAt: null,
+    reason: null,
+  }
+}
+
+function taskRun(overrides: Partial<TaskRun> = {}): TaskRun {
+  return {
+    id: 'run_1',
+    taskId: 'run_1',
+    title: '跑测试',
+    prompt: '跑测试',
+    harnessId: 'dsh',
+    sessionId: null,
+    cwd: './data/workspaces/run_1',
+    status: 'running',
+    progress: null,
+    artifacts: [],
+    usage: null,
+    result: null,
+    error: null,
+    createdAt: new Date(),
+    startedAt: new Date(),
+    finishedAt: null,
+    ...overrides,
+  }
+}
+
+function scheduled(overrides: Partial<Scheduled> = {}): Scheduled {
+  return {
+    id: 'sch_1',
+    text: '开会',
+    channel: 'web',
+    conversationId: 'owner',
+    nextAt: new Date(Date.now() + 10 * 60_000),
+    everyMs: null,
+    cron: null,
+    timezone: null,
+    missedPolicy: 'fire-once',
+    pausedAt: null,
+    firedAt: null,
+    ...overrides,
+  }
+}
+
+async function setup(config: Record<string, unknown> = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'qm-autonomy-'))
+  const ctx = new Context()
+  const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'autonomy.db') })
+  await storeFiber
+  await ctx.plugin(FakeApproval)
+  await ctx.plugin(FakeTask)
+  await ctx.plugin(FakeSchedule)
+  await ctx.plugin(gatewayPlugin)
+  const autonomyFiber = ctx.plugin(autonomyPlugin, { tickMs: 0, quietStart: 0, quietEnd: 0, ...config })
+  await autonomyFiber
+
+  const autonomy = ctx.reflect.get('autonomy', false) as AutonomyService
+  const approval = ctx.reflect.get('approval', false) as FakeApproval
+  const task = ctx.reflect.get('task', false) as FakeTask
+  const schedule = ctx.reflect.get('schedule', false) as FakeSchedule
+
+  return {
+    ctx,
+    autonomy,
+    approval,
+    task,
+    schedule,
+    async call(req: GatewayRequest) {
+      let status = 0
+      let body: unknown
+      const res: GatewayResponse = {
+        status(code: number) {
+          status = code
+          return res
+        },
+        header() {
+          return res
+        },
+        send(payload: unknown) {
+          body = payload
+        },
+      }
+      const handled = await ctx.gateway.dispatch(req, res)
+      return { handled, status, body }
+    },
+    async dispose() {
+      await autonomyFiber.dispose()
+      await storeFiber.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+test('插件形态与契约一致：name / inject', () => {
+  assert.equal(autonomyPlugin.name, 'qm-autonomy')
+  assert.deepEqual(autonomyPlugin.inject, ['store', 'approval', 'task', 'schedule', 'gateway'])
+})
+
+test('tick：有待确认的审批 → 选它，预算 +1，账本留痕', async () => {
+  const h = await setup()
+  try {
+    h.approval.pending = [approvalRequest()]
+    const trace = await h.autonomy.tick('manual')
+
+    assert.equal(trace.mode, 'A1')
+    assert.equal(trace.chosen?.id, 'approval.pending')
+    assert.match(trace.reason, /最早一条/)
+    assert.equal(trace.budget.used, 1)
+    assert.equal(trace.snapshot.pendingApprovals, 1)
+    assert.equal(trace.trigger, 'manual')
+
+    const traces = await h.autonomy.list()
+    assert.equal(traces.length, 1)
+    assert.equal(traces[0]!.id, trace.id)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('tick：同一规则在冷却期内不再重复建议', async () => {
+  const h = await setup({ cooldownMinutes: 60 })
+  try {
+    h.approval.pending = [approvalRequest()]
+    const first = await h.autonomy.tick('tick')
+    assert.equal(first.chosen?.id, 'approval.pending')
+
+    const second = await h.autonomy.tick('tick')
+    assert.equal(second.chosen, null)
+    assert.equal(second.budget.used, 1, '冷却中的候选不消耗预算')
+    assert.equal(second.suppressed[0]?.id, 'approval.pending')
+    assert.match(second.suppressed[0]!.reason, /冷却中/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('tick：预算用完就不再建议，并说明原因', async () => {
+  const h = await setup({ dailyBudget: 1, cooldownMinutes: 0 })
+  try {
+    h.schedule.schedules = [scheduled()]
+    const first = await h.autonomy.tick('tick')
+    assert.equal(first.chosen?.id, 'schedule.upcoming')
+    assert.equal(first.budget.used, 1)
+
+    const second = await h.autonomy.tick('tick')
+    assert.equal(second.chosen, null)
+    assert.equal(second.budget.used, 1)
+    assert.match(second.reason, /已用 1\/1/)
+    assert.equal(second.suppressed[0]?.reason, '今日预算用完')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('tick：静默时段只记录，不消耗预算', async () => {
+  const h = await setup({ quietStart: 0, quietEnd: 24 })
+  try {
+    h.approval.pending = [approvalRequest()]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.chosen, null)
+    assert.equal(trace.budget.used, 0)
+    assert.match(trace.reason, /静默时段/)
+    assert.equal(trace.suppressed[0]?.reason, '静默时段')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('tick：A0 观察模式只记录不动作', async () => {
+  const h = await setup({ mode: 'A0' })
+  try {
+    h.approval.pending = [approvalRequest()]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.mode, 'A0')
+    assert.equal(trace.chosen, null)
+    assert.match(trace.reason, /A0/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('tick：失败任务给 task.retry 建议；日程给 notify', async () => {
+  const h = await setup()
+  try {
+    h.task.runs = [
+      taskRun({ id: 'run_failed', status: 'failed', error: '测试挂了', finishedAt: new Date() }),
+    ]
+    const failedTrace = await h.autonomy.tick('tick')
+    assert.equal(failedTrace.chosen?.id, 'task.failed')
+    assert.equal(failedTrace.chosen?.action, 'task.retry')
+    assert.match(failedTrace.reason, /测试挂了/)
+
+    h.task.runs = []
+    h.approval.pending = []
+    h.schedule.schedules = [scheduled({ text: '开会' })]
+    await h.autonomy.tick('tick')
+    const scheduleTrace = (await h.autonomy.list())[0]!
+    assert.equal(scheduleTrace.chosen?.id, 'schedule.upcoming')
+    assert.equal(scheduleTrace.chosen?.action, 'notify.self')
+    assert.match(scheduleTrace.reason, /开会/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('HTTP：GET /api/v1/autonomy 返回模式、预算与账本；POST tick 立即跑一次', async () => {
+  const h = await setup({ dailyBudget: 2 })
+  try {
+    h.approval.pending = [approvalRequest()]
+    const ticked = await h.call({ method: 'POST', path: '/api/v1/autonomy/tick', query: {}, headers: {} })
+    assert.equal(ticked.status, 200)
+    assert.equal((ticked.body as { trace: { chosen: { id: string } | null } }).trace.chosen?.id, 'approval.pending')
+
+    const listed = await h.call({ method: 'GET', path: '/api/v1/autonomy', query: {}, headers: {} })
+    assert.equal(listed.status, 200)
+    const body = listed.body as { mode: string; budget: { used: number; limit: number }; items: unknown[] }
+    assert.equal(body.mode, 'A1')
+    assert.deepEqual(body.budget, { used: 1, limit: 2 })
+    assert.equal(body.items.length, 1)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('状态落库：重启后预算与冷却不丢', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qm-autonomy-restart-'))
+  try {
+    const boot = async () => {
+      const ctx = new Context()
+      const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'state.db') })
+      await storeFiber
+      await ctx.plugin(FakeApproval)
+      await ctx.plugin(FakeTask)
+      await ctx.plugin(FakeSchedule)
+      await ctx.plugin(gatewayPlugin)
+      const fiber = ctx.plugin(autonomyPlugin, { tickMs: 0, quietStart: 0, quietEnd: 0 })
+      await fiber
+      return { ctx, async dispose() { await fiber.dispose(); await storeFiber.dispose() } }
+    }
+
+    const first = await boot()
+    const approval = first.ctx.reflect.get('approval', false) as FakeApproval
+    const autonomy = first.ctx.reflect.get('autonomy', false) as AutonomyService
+    approval.pending = [approvalRequest()]
+    await autonomy.tick('tick')
+    await first.dispose()
+
+    const second = await boot()
+    const autonomy2 = second.ctx.reflect.get('autonomy', false) as AutonomyService
+    const state = await autonomy2.status()
+    assert.equal(state.used, 1)
+    assert.ok((state.cooldowns['approval.pending'] ?? 0) > Date.now())
+    assert.equal((await autonomy2.list()).length, 1)
+    await second.dispose()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -67,6 +67,13 @@
 # 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
 - name: '@qingmei/qm-approval'
 
+# 自主循环（A1 建议模式）：每 5 分钟巡一次，值得打扰时给一条建议
+- name: '@qingmei/qm-autonomy'
+  config:
+    dailyBudget: 3
+    quietStart: 23
+    quietEnd: 8
+
 # 回合结束后异步抽取事实；走 llm 车道，不阻塞回复
 - name: '@qingmei/provider-schedule-sqlite'
   config:

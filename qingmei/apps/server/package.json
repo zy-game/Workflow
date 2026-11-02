@@ -25,6 +25,7 @@
     "@qingmei/provider-task-sqlite": "workspace:*",
     "@qingmei/qm-task": "workspace:*",
     "@qingmei/qm-approval": "workspace:*",
+    "@qingmei/qm-autonomy": "workspace:*",
     "@qingmei/service-memory": "workspace:*",
     "@qingmei/service-channel": "workspace:*",
     "@qingmei/service-gateway": "workspace:*",

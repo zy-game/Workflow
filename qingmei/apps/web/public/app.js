@@ -10,6 +10,8 @@ const ENDPOINTS = {
   tasks: './api/v1/tasks',
   approvals: './api/v1/approvals',
   approvalDecide: './api/v1/approvals/decide',
+  autonomy: './api/v1/autonomy',
+  autonomyTick: './api/v1/autonomy/tick',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -41,6 +43,15 @@ const el = {
   tasksClose: document.getElementById('tasks-close'),
   approvals: document.getElementById('approvals'),
   approvalsList: document.getElementById('approvals-list'),
+  autonomyToggle: document.getElementById('autonomy-toggle'),
+  autonomy: document.getElementById('autonomy'),
+  autonomyList: document.getElementById('autonomy-list'),
+  autonomyEmpty: document.getElementById('autonomy-empty'),
+  autonomyBudget: document.getElementById('autonomy-budget'),
+  autonomyError: document.getElementById('autonomy-error'),
+  autonomyRefresh: document.getElementById('autonomy-refresh'),
+  autonomyTick: document.getElementById('autonomy-tick'),
+  autonomyClose: document.getElementById('autonomy-close'),
 }
 
 const state = {
@@ -58,6 +69,8 @@ const state = {
   schedulesLoading: false,
   tasksOpen: false,
   tasksLoading: false,
+  autonomyOpen: false,
+  autonomyLoading: false,
 }
 
 // ── 令牌 ─────────────────────────────────────
@@ -207,6 +220,11 @@ function connect() {
       if (state.tasksOpen) void loadApprovals()
     })
   }
+
+  // 自主循环巡完一次：主动面板开着就刷新
+  source.addEventListener('autonomy-tick', () => {
+    if (state.autonomyOpen) void loadAutonomy()
+  })
 
   // 兼容把事件类型写在 data.type / data.event 里的服务端实现
   source.addEventListener('message', (event) => {
@@ -659,6 +677,7 @@ function setSchedulesOpen(open) {
   el.schedulesToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
   if (open) {
     setTasksOpen(false)
+    setAutonomyOpen(false)
     void loadSchedules()
   }
 }
@@ -772,8 +791,116 @@ function setTasksOpen(open) {
   el.tasksToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
   if (open) {
     setSchedulesOpen(false)
+    setAutonomyOpen(false)
     void loadTasks()
     void loadApprovals()
+  }
+}
+
+// ── 主动（自主循环） ─────────────────────────
+
+function setAutonomyOpen(open) {
+  state.autonomyOpen = open
+  if (!el.autonomy) return
+  el.autonomy.hidden = !open
+  el.autonomyToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    setTasksOpen(false)
+    setSchedulesOpen(false)
+    void loadAutonomy()
+  }
+}
+
+function showAutonomyError(message) {
+  if (!el.autonomyError) return
+  el.autonomyError.textContent = message || ''
+  el.autonomyError.hidden = !message
+}
+
+function renderAutonomy(body) {
+  const items = Array.isArray(body?.items) ? body.items : []
+  const budget = body?.budget ?? { used: 0, limit: 0 }
+  el.autonomyBudget.textContent = `模式 ${body?.mode ?? 'A1'} · 今日建议 ${budget.used}/${budget.limit}`
+  el.autonomyEmpty.hidden = items.length > 0
+  el.autonomyList.replaceChildren()
+
+  for (const trace of items) {
+    const row = document.createElement('li')
+    row.className = 'autonomy-item'
+
+    const head = document.createElement('p')
+    head.className = 'autonomy-line'
+    const when = formatWhen(trace.at, null)
+    if (trace.chosen) {
+      head.textContent = `${when} · 建议：${trace.chosen.title}`
+    } else {
+      head.textContent = `${when} · 保持沉默`
+    }
+
+    const reason = document.createElement('p')
+    reason.className = 'autonomy-reason'
+    reason.textContent = trace.reason || ''
+
+    row.append(head, reason)
+
+    const details = []
+    if (trace.chosen) details.push(`动作 ${trace.chosen.action}（${trace.chosen.risk} 风险）`)
+    if (Array.isArray(trace.candidates) && trace.candidates.length > 0) {
+      details.push(`候选 ${trace.candidates.map((item) => item.id).join('、')}`)
+    }
+    if (Array.isArray(trace.suppressed) && trace.suppressed.length > 0) {
+      details.push(`压制 ${trace.suppressed.map((item) => `${item.id}：${item.reason}`).join('；')}`)
+    }
+    details.push(`预算 ${trace.budget?.used ?? 0}/${trace.budget?.limit ?? 0}`)
+    const meta = document.createElement('p')
+    meta.className = 'autonomy-meta'
+    meta.textContent = details.join(' · ')
+    row.append(meta)
+
+    el.autonomyList.append(row)
+  }
+}
+
+async function loadAutonomy() {
+  if (!state.token || state.autonomyLoading) return
+  state.autonomyLoading = true
+  showAutonomyError('')
+  try {
+    const res = await fetch(ENDPOINTS.autonomy, {
+      headers: withAuth({ Accept: 'application/json' }),
+      cache: 'no-store',
+    })
+    if (res.status === 401 || res.status === 403) throw new Error('令牌无效或已过期')
+    if (!res.ok) throw new Error(`读取主动建议失败（HTTP ${res.status}）`)
+    renderAutonomy(await res.json())
+  } catch (error) {
+    showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '读取主动建议失败')
+  } finally {
+    state.autonomyLoading = false
+  }
+}
+
+async function tickAutonomy() {
+  if (!state.token) return
+  if (el.autonomyTick) {
+    el.autonomyTick.disabled = true
+    el.autonomyTick.textContent = '巡视中…'
+  }
+  try {
+    const res = await fetch(ENDPOINTS.autonomyTick, {
+      method: 'POST',
+      headers: withAuth({ Accept: 'application/json' }),
+    })
+    if (!res.ok) throw new Error(`巡视失败（HTTP ${res.status}）`)
+    showAutonomyError('')
+    await loadAutonomy()
+  } catch (error) {
+    showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '巡视失败')
+  } finally {
+    if (el.autonomyTick) {
+      el.autonomyTick.disabled = false
+      el.autonomyTick.textContent = '立即巡一次'
+    }
   }
 }
 
@@ -990,10 +1117,15 @@ function bindEvents() {
   el.tasksToggle?.addEventListener('click', () => setTasksOpen(!state.tasksOpen))
   el.tasksRefresh?.addEventListener('click', () => void loadTasks())
   el.tasksClose?.addEventListener('click', () => setTasksOpen(false))
+  el.autonomyToggle?.addEventListener('click', () => setAutonomyOpen(!state.autonomyOpen))
+  el.autonomyRefresh?.addEventListener('click', () => void loadAutonomy())
+  el.autonomyTick?.addEventListener('click', () => void tickAutonomy())
+  el.autonomyClose?.addEventListener('click', () => setAutonomyOpen(false))
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.schedulesOpen) setSchedulesOpen(false)
     if (state.tasksOpen) setTasksOpen(false)
+    if (state.autonomyOpen) setAutonomyOpen(false)
   })
 }
 
@@ -1008,6 +1140,7 @@ async function start() {
     el.input.placeholder = '请用带 ?token= 的链接打开'
     if (el.schedulesToggle) el.schedulesToggle.disabled = true
     if (el.tasksToggle) el.tasksToggle.disabled = true
+    if (el.autonomyToggle) el.autonomyToggle.disabled = true
     updateSendButton()
     appendNotice('地址里缺少 token，请用网关生成的带 ?token= 的链接重新打开。')
     return

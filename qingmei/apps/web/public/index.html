@@ -38,6 +38,16 @@
           >
             日程
           </button>
+          <button
+            id="autonomy-toggle"
+            class="ghost"
+            type="button"
+            aria-expanded="false"
+            aria-controls="autonomy"
+            title="查看主动建议"
+          >
+            主动
+          </button>
           <span
             id="status"
             class="status"
@@ -69,6 +79,23 @@
         </div>
         <p id="tasks-error" class="tasks-error" role="alert" hidden></p>
         <ul id="tasks-list" class="tasks-list"></ul>
+      </section>
+
+      <section id="autonomy" class="autonomy" hidden aria-labelledby="autonomy-title">
+        <div class="autonomy-head">
+          <h2 id="autonomy-title" class="autonomy-title">主动</h2>
+          <div class="autonomy-tools">
+            <button id="autonomy-tick" class="ghost" type="button">立即巡一次</button>
+            <button id="autonomy-refresh" class="ghost" type="button">刷新</button>
+            <button id="autonomy-close" class="ghost" type="button">关闭</button>
+          </div>
+        </div>
+        <p id="autonomy-budget" class="autonomy-budget"></p>
+        <p id="autonomy-empty" class="autonomy-empty">
+          还没有决策记录。自主循环每 5 分钟看一次世界状态，值得打扰时才给建议。
+        </p>
+        <p id="autonomy-error" class="autonomy-error" role="alert" hidden></p>
+        <ul id="autonomy-list" class="autonomy-list"></ul>
       </section>
 
       <section id="schedules" class="schedules" hidden aria-labelledby="schedules-title">

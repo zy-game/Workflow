@@ -459,6 +459,90 @@ body {
   text-decoration: underline;
 }
 
+/* ── 主动（自主循环） ───────────────────────── */
+
+.autonomy {
+  padding: 14px 16px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-elev);
+}
+
+.autonomy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.autonomy-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.autonomy-tools {
+  display: flex;
+  gap: 4px;
+}
+
+.autonomy-budget {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+}
+
+.autonomy-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.autonomy-error {
+  margin: 0 0 8px;
+  color: #ffb4ae;
+  font-size: 0.8125rem;
+}
+
+.autonomy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.autonomy-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 2%);
+}
+
+.autonomy-line {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.autonomy-reason {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.autonomy-meta {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 /* ── 待确认（审批） ─────────────────────────── */
 
 .approvals {

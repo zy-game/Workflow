@@ -46,6 +46,8 @@ qm-history（qm_message 的唯一写入方）
   - `dangerous` 或 `ask` 一律先拒（渠道确认链路未做）；被拒绝的调用也写审计
   - 审计落 `qm_audit`（只追加），列名按 docs/04；每次调用一条，带 `trace_id`
 - 人格白名单 + 输出卫生（内部工具名/路径不外泄）
+- **主动循环（A1 骨架）**：每 5 分钟快照 → 规则候选（待确认审批 / 临近日程 / 失败任务）→ 过滤
+  （静默时段 / 每日 3 条预算 / 4 小时冷却）→ 建议 + decision trace；Web「主动」面板可回看理由
 - **记忆（M1 语义收口）**：同一 `subject+predicate` 的新值让旧值 `valid_to` 置位（不删除）；
   `audience` 区分 owner 与群，群聊只注入该群 public 事实（private/secret 零注入）；
   `qm-agent` 把 memory 列为必需依赖（缺了不启动，不再静默降级）
@@ -80,8 +82,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 2. **M1 剩余**：`audience` + `validTo` + 群聊零注入 ✅、memory 必需化 ✅；
    还差画像最小版（docs/05 M1 交付物）、`summarize`、情节/决策/教训类型、断网抽取补偿队列。
 3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
-4. **A1 自主循环骨架**（P3）：任务账本/日程/权限这些前置已经齐了，可以开始「每 N 分钟取世界状态 →
-   候选行动 → 白名单与打扰预算过滤 → 留下 decision trace」。
+4. **A2**：排期器 + 行动白名单执行（A1 的 trace 目前只建议不执行），
+otify.self 真正发消息。
 5. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
 6. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
 
@@ -124,6 +126,19 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 自主循环（A1 骨架）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/index.ts` | `AutonomyCandidate` / `AutonomySnapshot` / `AutonomyTrace` / `AutonomyState` + `AutonomyService`；事件 `qm/autonomy/tick` |
+| `packages/qm-autonomy`（新） | 每 5 分钟 tick：快照 → 规则候选（待确认审批 95 / 60 分钟内日程 80 / 24 小时内失败任务 70）→ 过滤（静默 23–08、每日 3 条、4 小时冷却）→ 选择 → 写 `qm_autonomy_trace` / `qm_autonomy_state`；`GET /api/v1/autonomy`、`POST /api/v1/autonomy/tick`，推 SSE `autonomy-tick` |
+| `apps/web/public/*` | 头部第三个开关「主动」：预算、决策记录、选中理由、被压制的候选与原因、「立即巡一次」 |
+| `qingmei.yml` / `qingmei.prod.yml` | 注册 `qm-autonomy`（dailyBudget 3、静默 23–08） |
+| 测试 | 9 条（规则、预算、静默、A0、冷却、HTTP、重启后状态保留）；全量 202 → 212 |
+
+验证：本地建一个 10 分钟后的日程 → tick 选中 `schedule.upcoming` 并给出理由；
+连按两次第二次显示「候选都在冷却中」；Web「主动」面板展示预算 1/3 与三条 trace。
 
 ### 产物与 token 用量
 
@@ -289,10 +304,16 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
     断言会莫名其妙地失败。要么每轮重建临时库，要么开头先 `DELETE` 清干净。
 18. **`qm doctor` 会占用清单里的端口**：生产上跑 doctor 要先停服（host-mcp 的 7420 是写死的），
     跑完再起；否则插件会因 EADDRINUSE 报 FAILED。
-20. **关键词召回必须切到单字**：只切二元词时，「我养什么」切出「我养/养什/什么」，\n    一个都命中不了事实「主人养狗」，M1 验收里的自然问法会直接失败。\n21. **同一毫秒创建的行排序不稳定**：qm_task_run / qm_approval 的列表按时间倒序，\n    连续创建要单调递增（max(now, last+1)），否则测试与 UI 顺序会随机。\n19. **ACP 的文件/命令工具需要两端都打开**：客户端要在 `initialize` 里声明
+19. **ACP 的文件/命令工具需要两端都打开**：客户端要在 `initialize` 里声明
     `fs`/`terminal` 能力并实现 `fs/*`、`terminal/*`；DSH profile（`~/.dsh/profiles/acp/cordis.patch.yml`）
     里不能 `disabled` 掉 `tool-fs` / `tool-bash`。任一处没配好，模型会一口咬定「我没有文件权限」，
     而且这个说法听起来像权限问题，实际是能力没声明。仓库里有现成的 patch：`deploy/`。
+20. **关键词召回必须切到单字**：只切二元词时，「我养什么」切出「我养/养什/什么」，
+    一个都命中不了事实「主人养狗」，M1 验收里的自然问法会直接失败。
+21. **同一毫秒创建的行排序不稳定**：`qm_task_run` / `qm_approval` 的列表按时间倒序，
+    连续创建要单调递增（`max(now, last+1)`），否则测试与 UI 顺序会随机。
+22. **`store.find` 不支持 `orderBy`**：账本类列表（autonomy trace）要取回来自己排序再截断，
+    否则 `limit` 先于排序生效，顺序就是插入顺序。
 
 ## 7. 2026-10-30 文档对齐（已做，别重复做）
 

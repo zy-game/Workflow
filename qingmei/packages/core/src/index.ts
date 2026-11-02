@@ -99,6 +99,8 @@ export const EVENTS = {
   taskFinished: 'qm/task/finished',
   approvalRequested: 'qm/approval/requested',
   approvalDecided: 'qm/approval/decided',
+  /** 自主循环每跑完一次（无论是否给出建议） */
+  autonomyTick: 'qm/autonomy/tick',
 } as const
 
 // ────────────────────────────────────────────── 日程
@@ -170,6 +172,65 @@ export abstract class ScheduleService extends Service {
   abstract resume(id: string): Promise<boolean>
   /** 改内容或规则；规则变了就从「现在」重排。返回 null 表示没有这条日程或它已经结束 */
   abstract update(id: string, patch: SchedulePatch): Promise<Scheduled | null>
+}
+
+// ────────────────────────────────────────────── 自主循环（docs/13，A1）
+
+export interface AutonomyCandidate {
+  /** 规则 id：冷却与去重按它 */
+  id: string
+  /** 行动白名单里的动作名，如 notify.self / task.retry */
+  action: string
+  title: string
+  /** 为什么提这条（后台可读） */
+  reason: string
+  /** 排序用；规则给的确定性分值 */
+  value: number
+  risk: 'low' | 'medium' | 'high'
+  payload?: Record<string, unknown>
+}
+
+export interface AutonomySnapshot {
+  at: Date
+  pendingApprovals: number
+  runningTasks: number
+  failedTasks: number
+  upcomingSchedules: number
+}
+
+export interface AutonomyTrace {
+  id: string
+  at: Date
+  trigger: 'tick' | 'manual'
+  mode: 'A0' | 'A1' | 'A2' | 'A3'
+  snapshot: AutonomySnapshot
+  candidates: AutonomyCandidate[]
+  chosen: AutonomyCandidate | null
+  /** 被过滤掉的候选与原因；「为什么没说」也要可查 */
+  suppressed: { id: string; reason: string }[]
+  budget: { day: string; limit: number; used: number }
+  /** 一句话结论：保持沉默时写清楚原因 */
+  reason: string
+}
+
+export interface AutonomyState {
+  mode: 'A0' | 'A1' | 'A2' | 'A3'
+  /** 预算按本地日期重置 */
+  day: string
+  used: number
+  lastTickAt: Date | null
+  /** 规则 id → 冷却截止时间戳 */
+  cooldowns: Record<string, number>
+}
+
+/** 自主循环：世界状态快照 → 候选 → 过滤 → 选择 → 记账（docs/13 §3） */
+export abstract class AutonomyService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'autonomy')
+  }
+  abstract tick(trigger: 'tick' | 'manual'): Promise<AutonomyTrace>
+  abstract list(limit?: number): Promise<AutonomyTrace[]>
+  abstract status(): Promise<AutonomyState>
 }
 
 export interface TurnRequest {
