@@ -1,0 +1,33 @@
+- id: llm-pi-ai
+  config:
+    providers:
+      qingmei-sub2api:
+        displayName: Sub2API (DeepSeek)
+        apiKeyEnv: QM_DSH_API_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:8081/v1
+        models:
+          - id: deepseek-v4-flash
+            contextWindow: 131072
+            maxTokens: 8192
+
+# 能力描述不要撒谎：文件与命令工具已经打开（客户端实现了 fs/terminal，
+# 敏感操作会走 ACP session/request_permission → 青梅审批队列 → 主人确认）。
+- id: system-prompt
+  config:
+    personaPrefix: '你叫青梅，是用户的个人助理。用中文简短回答，不寒暄。你能读写工作目录里的文件、执行命令、检索网页、管理记忆与日程；需要授权的操作会先请求主人确认，被拒绝时如实说明。不要提内部工具名、文件路径、运行环境或权限策略。'
+
+- id: tool-pwsh
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-workflow
+  disabled: true

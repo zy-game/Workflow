@@ -129,12 +129,12 @@ interface NewSessionOptions {
 `qm_finish_task` 携带的 `memory` 字段是跨端记忆的主要来源：PC 工作区做完的事，通过它变成
 手机可召回的事实与教训。格式与合并规则见 [10 · 跨端统一记忆](10-跨端统一记忆.md) §5.1。
 
-> **当前落地（2026-10-30）**：上表是「子 agent 任务数据面」的目标工具集，**尚未实现**。
-> 现在 `host-mcp` 只暴露对话车道用得到的
-> `memory_recall` / `memory_remember` / `schedule_create` / `schedule_update` /
-> `schedule_cancel` / `schedule_pause` / `schedule_resume` / `schedule_list`（无 `qm_` 前缀）。
-> 接 H 阶段做任务数据面时要做两件事：统一 `qm_` 命名；把「对话车道工具」与「任务上报工具」
-> 分成两组，否则模型会在同义工具里选错。
+> **当前落地（2026-11-02）**：上表是「子 agent 任务数据面」的目标工具集。已实现
+> `qm_dispatch_task` / `qm_report_progress` / `qm_publish_artifact` / `qm_finish_task`
+> 与对话车道的 `memory_*` / `schedule_*`（尚未统一 `qm_` 前缀）。
+> 另一条前提：ACP 的文件与命令工具需要客户端**声明能力并实现方法**
+> （`fs/*`、`terminal/*`），且 DSH profile 里不能 `disabled` 掉 `tool-fs` / `tool-bash`；
+> 细节见仓库的 `deploy/README.md`。这两处没配好时，模型会声称「自己没有文件权限」。
 
 `qm_report_progress` 的入参刻意保持极简，避免子 agent 花 token 填表：
 
@@ -213,6 +213,7 @@ qm_task（青梅账本，长期）
    harness 拿不到青梅的主 token，也读不到其他 run 的数据。
 2. **目录约束**：`cwd` 只能是 `data/workspaces/<runId>`（或用户显式授权的项目目录）。
    越界由青梅在 MCP 工具层拒绝——**不依赖 harness 自己的沙箱**，因为不能假设每个 harness 都有。
+   客户端的 `fs/*` 也做同样校验：路径不在会话 cwd 内直接回错误。
 3. **审批桥**：ACP 的权限请求 → `permission` 服务 → 渠道确认（网页弹窗 / 手机通知 / watch 一键）。
    拒绝时把理由回传，不要让子 agent 卡死。
 4. **注入防护**：harness 的一切输出（文本、工具结果、文件内容）都是**不可信数据**。

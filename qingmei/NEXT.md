@@ -284,6 +284,10 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
     断言会莫名其妙地失败。要么每轮重建临时库，要么开头先 `DELETE` 清干净。
 18. **`qm doctor` 会占用清单里的端口**：生产上跑 doctor 要先停服（host-mcp 的 7420 是写死的），
     跑完再起；否则插件会因 EADDRINUSE 报 FAILED。
+19. **ACP 的文件/命令工具需要两端都打开**：客户端要在 `initialize` 里声明
+    `fs`/`terminal` 能力并实现 `fs/*`、`terminal/*`；DSH profile（`~/.dsh/profiles/acp/cordis.patch.yml`）
+    里不能 `disabled` 掉 `tool-fs` / `tool-bash`。任一处没配好，模型会一口咬定「我没有文件权限」，
+    而且这个说法听起来像权限问题，实际是能力没声明。仓库里有现成的 patch：`deploy/`。
 
 ## 7. 2026-10-30 文档对齐（已做，别重复做）
 
