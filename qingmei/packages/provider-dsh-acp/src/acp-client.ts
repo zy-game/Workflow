@@ -11,6 +11,13 @@ export interface AcpUpdate {
   update: Record<string, unknown>
 }
 
+/** ACP `session/prompt` 响应里的 token 用量（实验字段） */
+export interface AcpUsage {
+  totalTokens?: number
+  inputTokens?: number
+  outputTokens?: number
+}
+
 /** ACP `session/request_permission` 的参数（v1 schema） */
 export interface AcpPermissionRequest {
   sessionId: string
@@ -73,12 +80,12 @@ export class AcpClient {
     return result.sessionId
   }
 
-  async prompt(sessionId: string, text: string): Promise<{ stopReason: string }> {
+  async prompt(sessionId: string, text: string): Promise<{ stopReason: string; usage?: AcpUsage }> {
     const result = (await this.request('session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text }],
-    })) as { stopReason?: string }
-    return { stopReason: result?.stopReason ?? 'end_turn' }
+    })) as { stopReason?: string; usage?: AcpUsage }
+    return { stopReason: result?.stopReason ?? 'end_turn', ...(result?.usage ? { usage: result.usage } : {}) }
   }
 
   async closeSession(sessionId: string): Promise<void> {

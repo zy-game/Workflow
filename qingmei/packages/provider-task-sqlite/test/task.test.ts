@@ -119,6 +119,49 @@ test('start：已在 running 时补记 sessionId', async () => {
   }
 })
 
+test('addArtifact：追加产物；结束后不能再交付', async () => {
+  const h = await setup()
+  try {
+    const run = await h.task.create({ prompt: '跑测试' })
+    await h.task.start(run.id)
+
+    const after = await h.task.addArtifact(run.id, { name: '测试报告', path: 'reports/test.html', summary: '全绿' })
+    assert.ok(after)
+    assert.equal(after.artifacts.length, 1)
+    assert.equal(after.artifacts[0]!.name, '测试报告')
+    assert.equal(after.artifacts[0]!.path, 'reports/test.html')
+    assert.ok(after.artifacts[0]!.at instanceof Date)
+
+    await h.task.addArtifact(run.id, { name: '截图', url: 'https://example.test/shot.png' })
+    assert.equal((await h.task.get(run.id))?.artifacts.length, 2)
+
+    await assert.rejects(h.task.addArtifact(run.id, { name: '  ' }), /必须有 name/)
+
+    await h.task.finish(run.id, { status: 'done' })
+    assert.equal(await h.task.addArtifact(run.id, { name: '迟到的产物' }), null)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('reportUsage：累加 token 用量，收尾后仍可补记', async () => {
+  const h = await setup()
+  try {
+    const run = await h.task.create({ prompt: '跑测试' })
+    await h.task.start(run.id)
+
+    await h.task.reportUsage(run.id, { inputTokens: 30, outputTokens: 12, totalTokens: 42 })
+    await h.task.reportUsage(run.id, { inputTokens: 5, outputTokens: 3, totalTokens: 8 })
+    assert.deepEqual((await h.task.get(run.id))?.usage, { inputTokens: 35, outputTokens: 15, totalTokens: 50 })
+
+    await h.task.finish(run.id, { status: 'done' })
+    const late = await h.task.reportUsage(run.id, { inputTokens: 1, outputTokens: 1, totalTokens: 2 })
+    assert.equal(late?.usage?.totalTokens, 52, 'usage 常在收尾后才回来，允许补记')
+  } finally {
+    await h.dispose()
+  }
+})
+
 test('setStatus：running ⇄ needs_approval', async () => {
   const h = await setup()
   try {

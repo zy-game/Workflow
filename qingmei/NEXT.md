@@ -70,9 +70,10 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 
 按这个位置，下一步按价值排：
 
-1. **H 收尾**：任务面板 ✅、H3 审批桥 ✅、`session_id` 回填 ✅、`qm doctor` 的 harness 段 ✅；
-   还差 resume（拿 session_id 调 `session/resume`）、token 预算、产物（`qm_publish_artifact`）。
-   做完这些「执行」这条主线才算完整，A1 才有东西可催。
+1. **H 收尾**：任务面板 ✅、H3 审批桥 ✅、`session_id` 回填 ✅、`qm doctor` 的 harness 段 ✅、
+   产物（`qm_publish_artifact`，先记引用）✅、token 用量记录 ✅；
+   还差 resume（拿 session_id 调 `session/resume`）与 token 预算的硬拦截。
+   做完这两项「执行」这条主线才算完整，A1 才有东西可催。
 2. **M1 补记忆语义（P1 欠账）**：`audience` + `validTo`（新值让旧值失效而不是覆盖）+ 画像最小版。
    现在「我养猫→我养狗」只能覆盖，查不到「猫的记录已失效」，与 docs/05 M1 验收不符。
 3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
@@ -118,6 +119,18 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 产物与 token 用量
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/index.ts` | `TaskArtifact` / `TaskUsage`；`TaskRun` 加 `artifacts` / `usage`；`TaskService.addArtifact` / `reportUsage`；`HarnessEvent` 加 `usage` |
+| `packages/provider-dsh-acp` | `prompt` 返回 ACP 的 usage（实验字段），转成 `usage` 事件 |
+| `packages/provider-task-sqlite` | `artifacts_json` / `usage_json`；产物追加（结束前）、用量累加（收尾后仍可补记） |
+| `packages/qm-task` | 收到 `usage` 事件写回账本 |
+| `packages/host-mcp` | 新工具 `qm_publish_artifact`（runId + name + url/path/summary），登记为 `write` |
+| `apps/web/public/*` | 任务行显示产物（链接可点）与 token 数 |
+| 测试 | 账本 2 条、MCP 1 条、ACP usage 断言；全量 192 → 195 |
 
 ### 审批桥（H3）
 

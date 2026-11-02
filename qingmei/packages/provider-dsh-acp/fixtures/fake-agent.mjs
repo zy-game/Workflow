@@ -70,7 +70,7 @@ rl.on('line', (line) => {
       })
     }
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: params.sessionId, update: { sessionUpdate: 'tool_call', title: 'read_file', status: 'completed' } } })
-    send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } })
+    send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn', usage: { totalTokens: 42, inputTokens: 30, outputTokens: 12 } } })
     return
   }
   if (method === 'session/close') {

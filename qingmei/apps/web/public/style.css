@@ -435,6 +435,30 @@ body {
   overflow-wrap: anywhere;
 }
 
+.task-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-artifact {
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.task-artifact a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.task-artifact a:hover {
+  text-decoration: underline;
+}
+
 /* ── 待确认（审批） ─────────────────────────── */
 
 .approvals {

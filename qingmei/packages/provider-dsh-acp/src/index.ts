@@ -93,6 +93,17 @@ export class DshHarness extends HarnessService {
     const finished = client
       .prompt(sessionId, req.text)
       .then((result) => {
+        if (result.usage) {
+          const usage = result.usage
+          queue.push({
+            type: 'usage',
+            usage: {
+              inputTokens: usage.inputTokens ?? 0,
+              outputTokens: usage.outputTokens ?? 0,
+              totalTokens: usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
+            },
+          })
+        }
         queue.push({ type: 'done', stopReason: result.stopReason })
       })
       .catch((error: unknown) => {

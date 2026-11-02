@@ -48,6 +48,7 @@ class FakeHarness extends HarnessService {
       await new Promise((resolve) => setTimeout(resolve, 1))
       yield { type: 'text', text }
     }
+    yield { type: 'usage', usage: { inputTokens: 30, outputTokens: 12, totalTokens: 42 } }
     if (this.options.streamError) {
       yield { type: 'error', message: this.options.streamError }
       return
@@ -160,6 +161,7 @@ test('POST /api/v1/tasks：建 run、派给 harness、正常收尾为 done', asy
     assert.match(sent.text, /把测试跑一遍/)
     assert.equal(sent.cwd, path.resolve(done.cwd))
     assert.equal(done.sessionId, 'sess_fake', 'harness 侧 sessionId 应回填进账本')
+    assert.equal(done.usage?.totalTokens, 42, 'ACP 的 usage 应记进账本')
     assert.deepEqual(h.harness!.closed, [`task_${run.id}`])
   } finally {
     await h.dispose()

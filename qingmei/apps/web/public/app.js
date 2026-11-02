@@ -697,7 +697,8 @@ function renderTasks(items) {
     const meta = document.createElement('p')
     meta.className = 'task-meta'
     const status = TASK_STATUS_TEXT[run.status] ?? run.status
-    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}`
+    const tokens = run.usage && Number.isFinite(run.usage.totalTokens) ? ` · ${run.usage.totalTokens} tokens` : ''
+    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}${tokens}`
     row.append(title, meta)
 
     if (run.progress && typeof run.progress.phase === 'string') {
@@ -706,6 +707,28 @@ function renderTasks(items) {
       const note = run.progress.note ? ` · ${run.progress.note}` : ''
       progress.textContent = `进度：${run.progress.phase}${note}`
       row.append(progress)
+    }
+
+    if (Array.isArray(run.artifacts) && run.artifacts.length > 0) {
+      const list = document.createElement('ul')
+      list.className = 'task-artifacts'
+      for (const artifact of run.artifacts) {
+        const item = document.createElement('li')
+        item.className = 'task-artifact'
+        const label = `📎 ${artifact.name}`
+        if (typeof artifact.url === 'string' && artifact.url) {
+          const link = document.createElement('a')
+          link.href = artifact.url
+          link.target = '_blank'
+          link.rel = 'noopener noreferrer'
+          link.textContent = label
+          item.append(link)
+        } else {
+          item.textContent = artifact.path ? `${label} · ${artifact.path}` : label
+        }
+        list.append(item)
+      }
+      row.append(list)
     }
     if (run.error) {
       const error = document.createElement('p')

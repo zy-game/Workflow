@@ -94,6 +94,9 @@ export class TaskRunner extends TaskRunnerService {
       })) {
         if (event.type === 'text') collected += event.text
         else if (event.type === 'error') failure = event.message
+        else if (event.type === 'usage') {
+          await task.reportUsage(run.id, event.usage).catch(() => undefined)
+        }
       }
     } catch (error) {
       failure = messageOf(error)

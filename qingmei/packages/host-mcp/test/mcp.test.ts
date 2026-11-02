@@ -19,6 +19,7 @@ import {
   type Scheduled,
   type ScheduleInput,
   type SchedulePatch,
+  type TaskArtifact,
   type TaskRun,
 } from '@qingmei/core'
 import * as permissionPlugin from '@qingmei/provider-permission-static'
@@ -187,6 +188,8 @@ class FakeTask extends TaskService {
       cwd: `/tmp/${id}`,
       status: 'running',
       progress: null,
+      artifacts: [],
+      usage: null,
       result: null,
       error: null,
       createdAt: new Date('2026-10-30T12:00:00.000Z'),
@@ -231,6 +234,20 @@ class FakeTask extends TaskService {
     if (!run || run.finishedAt) return null
     run.progress = { ...progress, at: new Date('2026-10-30T12:00:02.000Z') }
     return run
+  }
+
+  async addArtifact(
+    id: string,
+    artifact: { name: string; url?: string; path?: string; summary?: string },
+  ): Promise<TaskRun | null> {
+    const run = this.runs.get(id)
+    if (!run || run.finishedAt) return null
+    run.artifacts.push({ ...artifact, at: new Date('2026-10-30T12:00:03.000Z') })
+    return run
+  }
+
+  async reportUsage(): Promise<TaskRun | null> {
+    return null
   }
 
   async finish(
@@ -372,6 +389,7 @@ test('注册表覆盖全部工具，且 schema 与 handler 一一对应', () => 
       'schedule_pause',
       'schedule_resume',
       'qm_dispatch_task',
+      'qm_publish_artifact',
       'qm_report_progress',
       'qm_finish_task',
       'schedule_list',
@@ -529,6 +547,28 @@ test('qm_dispatch_task：建 run 并交给 runner，空 prompt 报错', async ()
   assert.deepEqual(runner.dispatched, ['run_create1'])
 
   await assert.rejects(call('qm_dispatch_task', { prompt: '   ' }), /prompt 不能为空/)
+})
+
+test('qm_publish_artifact：登记产物；未知/已结束的 run 报错', async () => {
+  const { task, call } = setup()
+  task.seed('run_1')
+
+  const result = await call('qm_publish_artifact', {
+    runId: 'run_1',
+    name: '测试报告',
+    path: 'reports/test.html',
+    summary: '全绿',
+  })
+  assert.equal(textOf(result), '已登记产物：测试报告（共 1 个）')
+  assert.deepEqual(task.runs.get('run_1')?.artifacts[0], {
+    name: '测试报告',
+    path: 'reports/test.html',
+    summary: '全绿',
+    at: new Date('2026-10-30T12:00:03.000Z'),
+  })
+
+  await assert.rejects(call('qm_publish_artifact', { runId: 'run_nope', name: 'x' }), /没有这个任务/)
+  await assert.rejects(call('qm_publish_artifact', { runId: 'run_1', name: '  ' }), /name 不能为空/)
 })
 
 test('qm_report_progress：写进账本；未知或已结束的 run 报错', async () => {

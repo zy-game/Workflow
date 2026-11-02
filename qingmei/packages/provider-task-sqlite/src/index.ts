@@ -16,9 +16,11 @@ import {
   type CreateTaskInput,
   type Row,
   type StoreService,
+  type TaskArtifact,
   type TaskProgress,
   type TaskRun,
   type TaskStatus,
+  type TaskUsage,
 } from '@qingmei/core'
 
 export interface TaskConfig {
@@ -48,6 +50,8 @@ interface TaskRow extends Row {
   cwd: string
   status: TaskStatus
   progress_json: string | null
+  artifacts_json: string | null
+  usage_json: string | null
   result: string | null
   error: string | null
   created_at: number
@@ -87,6 +91,8 @@ export class SqliteTask extends TaskService {
       cwd: input.cwd ?? `${this.workspaceRoot}/${id}`,
       status: 'queued',
       progress_json: null,
+      artifacts_json: null,
+      usage_json: null,
       result: null,
       error: null,
       created_at: now,
@@ -152,6 +158,40 @@ export class SqliteTask extends TaskService {
     return next
   }
 
+  async addArtifact(
+    id: string,
+    artifact: { name: string; url?: string; path?: string; summary?: string },
+  ): Promise<TaskRun | null> {
+    const row = await this.collection.get(id)
+    if (!row || row.finished_at !== null) return null
+    const name = artifact.name?.trim()
+    if (!name) throw new Error('产物必须有 name')
+
+    const entry: TaskArtifact = {
+      name,
+      at: new Date(),
+      ...(artifact.url?.trim() ? { url: artifact.url.trim() } : {}),
+      ...(artifact.path?.trim() ? { path: artifact.path.trim() } : {}),
+      ...(artifact.summary?.trim() ? { summary: artifact.summary.trim() } : {}),
+    }
+    const list = parseArtifacts(row.artifacts_json)
+    list.push(entry)
+    return this.patch(row, { artifacts_json: JSON.stringify(list) })
+  }
+
+  /** 用量是累加的：同一个 run 多次上报会相加（一次 prompt 一条） */
+  async reportUsage(id: string, usage: TaskUsage): Promise<TaskRun | null> {
+    const row = await this.collection.get(id)
+    if (!row) return null
+    const current = parseUsage(row.usage_json) ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    const merged: TaskUsage = {
+      inputTokens: current.inputTokens + Math.max(0, usage.inputTokens || 0),
+      outputTokens: current.outputTokens + Math.max(0, usage.outputTokens || 0),
+      totalTokens: current.totalTokens + Math.max(0, usage.totalTokens || 0),
+    }
+    return this.patch(row, { usage_json: JSON.stringify(merged) })
+  }
+
   async finish(
     id: string,
     input: { status: 'done' | 'failed' | 'cancelled'; result?: string; error?: string },
@@ -180,6 +220,40 @@ export class SqliteTask extends TaskService {
   }
 }
 
+function parseArtifacts(raw: string | null): TaskArtifact[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw) as { name?: string; url?: string; path?: string; summary?: string; at?: string }[]
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item) => typeof item?.name === 'string' && item.name)
+      .map((item) => ({
+        name: item.name!,
+        ...(item.url ? { url: item.url } : {}),
+        ...(item.path ? { path: item.path } : {}),
+        ...(item.summary ? { summary: item.summary } : {}),
+        at: item.at ? new Date(item.at) : new Date(),
+      }))
+  } catch {
+    return []
+  }
+}
+
+function parseUsage(raw: string | null): TaskUsage | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<TaskUsage>
+    if (typeof parsed !== 'object' || parsed === null) return null
+    return {
+      inputTokens: Number(parsed.inputTokens) || 0,
+      outputTokens: Number(parsed.outputTokens) || 0,
+      totalTokens: Number(parsed.totalTokens) || 0,
+    }
+  } catch {
+    return null
+  }
+}
+
 function toRun(row: TaskRow): TaskRun {
   return {
     id: row.id,
@@ -191,6 +265,8 @@ function toRun(row: TaskRow): TaskRun {
     cwd: row.cwd,
     status: row.status,
     progress: parseProgress(row.progress_json),
+    artifacts: parseArtifacts(row.artifacts_json),
+    usage: parseUsage(row.usage_json),
     result: row.result,
     error: row.error,
     createdAt: new Date(row.created_at),

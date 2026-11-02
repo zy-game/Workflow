@@ -339,6 +339,35 @@ export function createTools(deps: ToolDeps): HostTool[] {
       },
     },
     {
+      name: 'qm_publish_artifact',
+      description: '交付产物：把一个文件路径、链接或摘要登记到任务账本，主人能在任务面板里看到。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          runId: { type: 'string' },
+          name: { type: 'string', description: '产物名，如「测试报告」' },
+          url: { type: 'string', description: '链接' },
+          path: { type: 'string', description: '文件路径（相对 run 目录或绝对路径）' },
+          summary: { type: 'string', description: '一句话说明' },
+        },
+        required: ['runId', 'name'],
+      },
+      async call(args) {
+        const runId = String(args.runId ?? '').trim()
+        const name = String(args.name ?? '').trim()
+        if (!runId) throw new Error('runId 不能为空')
+        if (!name) throw new Error('name 不能为空')
+        const run = await deps.task.addArtifact(runId, {
+          name,
+          ...(typeof args.url === 'string' ? { url: args.url } : {}),
+          ...(typeof args.path === 'string' ? { path: args.path } : {}),
+          ...(typeof args.summary === 'string' ? { summary: args.summary } : {}),
+        })
+        if (!run) throw new Error('没有这个任务，或它已经结束')
+        return textResult(`已登记产物：${name}（共 ${run.artifacts.length} 个）`)
+      },
+    },
+    {
       name: 'qm_report_progress',
       description:
         '向青梅上报当前任务进度。phase 必填；percent 可选（模型给的百分比通常不准）；note 用一句话说明卡在哪。',

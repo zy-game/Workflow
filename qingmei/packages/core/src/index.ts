@@ -323,6 +323,7 @@ export interface HarnessRequest {
 export type HarnessEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string; status: string }
+  | { type: 'usage'; usage: TaskUsage }
   | { type: 'done'; stopReason: string }
   | { type: 'error'; message: string }
 
@@ -397,6 +398,22 @@ export interface TaskProgress {
   at: Date
 }
 
+/** 子 agent 交付的东西：先记引用（链接/路径），blob 存储留给后续 */
+export interface TaskArtifact {
+  name: string
+  url?: string
+  path?: string
+  summary?: string
+  at: Date
+}
+
+/** 一次 run 的 token 用量（ACP prompt 响应里的 usage，实验字段） */
+export interface TaskUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+}
+
 /**
  * 一次执行（docs/07 §5）。
  *
@@ -415,6 +432,8 @@ export interface TaskRun {
   cwd: string
   status: TaskStatus
   progress: TaskProgress | null
+  artifacts: TaskArtifact[]
+  usage: TaskUsage | null
   result: string | null
   error: string | null
   createdAt: Date
@@ -445,6 +464,13 @@ export abstract class TaskService extends Service {
     id: string,
     progress: { phase: string; percent?: number; note?: string },
   ): Promise<TaskRun | null>
+  /** 追加一个产物（链接/路径/摘要）；已结束的 run 返回 null */
+  abstract addArtifact(
+    id: string,
+    artifact: { name: string; url?: string; path?: string; summary?: string },
+  ): Promise<TaskRun | null>
+  /** 记录 token 用量（一次 prompt 的 usage） */
+  abstract reportUsage(id: string, usage: TaskUsage): Promise<TaskRun | null>
   /** 收尾；对已结束的 run 幂等返回当前值 */
   abstract finish(
     id: string,

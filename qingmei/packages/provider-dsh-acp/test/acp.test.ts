@@ -58,6 +58,7 @@ test('DshHarness：run 产出 text/tool/done 事件，并在重复调用时复�
     assert.equal(first.join(''), '你好')
     assert.equal(kinds.at(-1), 'done')
     assert.ok(kinds.includes('tool'))
+    assert.ok(kinds.includes('usage'), 'harness 应把 ACP 的 usage 转成事件')
 
     // 第二轮应复用同一个 ACP 会话（fake agent 固定返回 sess-1，不会新建）
     const second: string[] = []
