@@ -132,6 +132,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P4：N+ 跨端起步
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/qm-agent` | 群视口改为 `group:<channel>:<id>`，不同渠道即使会话 id 撞了也不串味 |
+| `packages/provider-memory-sqlite` | 多源印证写 `qm_mem_provenance`；同一来源重复上报幂等、不重复加权 |
+| 文档 | docs/02、docs/05 的 audience 口径同步 |
+| 测试 | 310 全绿 |
+
+> `qm_finish_task` 的结构化任务记忆上报此前已有。未做：身份绑定/设备域/thread 缝合/幂等事件表。
+
 ### P4：群画像后置校验与群管理页
 
 | 文件 | 改了什么 |

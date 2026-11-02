@@ -299,3 +299,28 @@ test('巩固：每个 subject 保留价值最高的 5 条，其余软压缩不�
     await dispose()
   }
 })
+
+test('多源印证：不同来源提升置信度，同一来源重复不重复加权', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([{ ...fact('主人', '喜欢', '咖啡', 0.7), origin: { kind: 'channel', id: 'm1' } }])
+    const store = (ctx as unknown as { reflect: { get(name: string, required: false): unknown } }).reflect.get('store', false) as {
+      collection(name: string): { find(): Promise<Record<string, unknown>[]> }
+    }
+    const facts = store.collection('qm_mem_fact')
+    const provenance = store.collection('qm_mem_provenance')
+
+    const first = (await facts.find())[0]!.confidence as number
+    await ctx.memory.ingest([{ ...fact('主人', '喜欢', '咖啡', 0.7), origin: { kind: 'harness', id: 'task:1' } }])
+    const second = (await facts.find())[0]!.confidence as number
+    assert.ok(second > first, '第二来源应提升置信度')
+
+    await ctx.memory.ingest([{ ...fact('主人', '喜欢', '咖啡', 0.7), origin: { kind: 'channel', id: 'm1' } }])
+    const third = (await facts.find())[0]!.confidence as number
+    assert.equal(third, second, '同一来源重复上报不应继续加权')
+
+    assert.equal((await provenance.find()).length, 2, '两个来源各一条 provenance')
+  } finally {
+    await dispose()
+  }
+})

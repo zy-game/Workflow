@@ -33,6 +33,7 @@ export const inject = ['store']
 
 const COLLECTION = 'qm_mem_fact'
 const SYNAPSE_COLLECTION = 'qm_mem_synapse'
+const PROVENANCE_COLLECTION = 'qm_mem_provenance'
 const DAY_MS = 24 * 60 * 60 * 1000
 const HALF_LIFE_MS = 30 * DAY_MS
 const SPREAD = 0.6
@@ -65,6 +66,13 @@ interface FactRow extends Row {
   valid_to: number | null
 }
 
+interface ProvenanceRow extends Row {
+  neuron_id: string
+  origin_kind: string
+  origin_id: string
+  observed_at: number
+}
+
 interface SynapseRow extends Row {
   from_id: string
   to_id: string
@@ -77,6 +85,7 @@ interface SynapseRow extends Row {
 export class SqliteMemory extends MemoryService {
   private readonly collection
   private readonly synapses
+  private readonly provenance
   /** 会话 → 上一轮点亮的节点（工作记忆；进程内，重启清空） */
   private readonly working = new Map<string, { ids: string[]; at: number }>()
   private readonly limit: number
@@ -88,6 +97,7 @@ export class SqliteMemory extends MemoryService {
     if (!store) throw new Error('[provider-memory-sqlite] 缺少 store 服务')
     this.collection = store.collection<FactRow>(COLLECTION)
     this.synapses = store.collection<SynapseRow>(SYNAPSE_COLLECTION)
+    this.provenance = store.collection<ProvenanceRow>(PROVENANCE_COLLECTION)
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
   }
@@ -105,7 +115,21 @@ export class SqliteMemory extends MemoryService {
       })
       const same = live.find((row) => row.object === normalized.object)
       if (same) {
-        // 同一事实再次被说出：提升置信度，不新增行
+        const now = Date.now()
+        const provenanceId = provenanceKey(same.id, normalized.origin)
+        // 同一来源重复上报：幂等，不再加权
+        if (await this.provenance.get(provenanceId)) {
+          merged.push(same.id)
+          continue
+        }
+        // 多源印证：不同来源说出同一事实，置信度上升（docs/10 P5）
+        await this.provenance.insert({
+          id: provenanceId,
+          neuron_id: same.id,
+          origin_kind: normalized.origin.kind,
+          origin_id: normalized.origin.id,
+          observed_at: now,
+        })
         await this.collection.update(same.id, {
           confidence: Math.min(1, Math.max(same.confidence, normalized.confidence) + 0.02),
           audience: normalized.audience,
@@ -133,6 +157,13 @@ export class SqliteMemory extends MemoryService {
         valid_to: null,
       }
       const inserted = await this.collection.insert(row)
+      await this.provenance.insert({
+        id: provenanceKey(inserted.id, normalized.origin),
+        neuron_id: inserted.id,
+        origin_kind: normalized.origin.kind,
+        origin_id: normalized.origin.id,
+        observed_at: now,
+      })
       created.push(inserted.id)
     }
     return { created, merged }
@@ -350,7 +381,10 @@ export class SqliteMemory extends MemoryService {
   }
 }
 
-/** 去掉空白与常见语气词，太小/太大的对象拒绝落库 */
+function provenanceKey(neuronId: string, origin: MemoryRecord['origin']): string {
+  return `${neuronId}|${origin.kind}|${origin.id}`
+}
+
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0))
 }
@@ -380,6 +414,8 @@ function scoreOf(row: FactRow, similarity: number, now: number): number {
     0.1 * salience
   )
 }
+
+/** 去掉空白与常见语气词，太小/太大的对象拒绝落库 */
 function normalize(record: MemoryRecord): MemoryRecord | null {
   const subject = record.subject?.trim()
   const predicate = record.predicate?.trim()

@@ -207,7 +207,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
     let reply = ''
 
     // 视口决定能看到哪些记忆：群聊只注入该群的 public 事实（docs/05 M1 验收第 5 条）
-    const audience = message.conversation.kind === 'group' ? `group:${message.conversation.id}` : 'owner'
+    // 群视口带上渠道前缀：不同渠道的会话 id 即使撞了也不会互相看到
+    const audience =
+      message.conversation.kind === 'group'
+        ? `group:${message.channel}:${message.conversation.id}`
+        : 'owner'
 
     /** 召回失败不能影响对话：退化成"这次没有记忆" */
     let memoryText = ''
