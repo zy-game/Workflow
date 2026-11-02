@@ -17,6 +17,7 @@ class FakeTransport implements FeishuTransport {
   stopped = 0
   readonly sent: { receiveId: string; receiveIdType: string; text: string }[] = []
   readonly cards: { receiveId: string; receiveIdType: string; card: unknown }[] = []
+  readonly edited: { messageId: string; card: unknown }[] = []
   fail: string | null = null
   private handler: ((event: FeishuInboundEvent) => void) | null = null
   private actionHandler: ((action: FeishuCardAction) => string | void) | null = null
@@ -40,6 +41,11 @@ class FakeTransport implements FeishuTransport {
     if (this.fail) throw new Error(this.fail)
     this.cards.push(input)
     return { messageId: `om_card_` }
+  }
+
+  async updateCard(input: { messageId: string; card: unknown }): Promise<{ ok: boolean }> {
+    this.edited.push(input)
+    return { ok: true }
   }
 
   triggerAction(action: FeishuCardAction): string | void {
@@ -270,6 +276,26 @@ test('卡片按钮点击：发 qm/action，actionId 原样带回', async () => {
       { channel: 'feishu', conversationId: 'oc_1', actionId: 'approval:allow:ap1', actorId: 'ou_1' },
     ])
     assert.equal(toast, '已收到')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('editTarget：更新原卡片（按钮消失），不再发新消息', async () => {
+  const h = await setup()
+  try {
+    const result = await h.channel.send({
+      channel: 'feishu',
+      conversationId: 'oc_chat',
+      blocks: [{ type: 'text', text: '✅ 已批准：要执行吗' }],
+      editTarget: 'om_card_1',
+    })
+    assert.equal(result.ok, true)
+    assert.equal(h.transport.cards.length, 0)
+    assert.equal(h.transport.edited.length, 1)
+    assert.equal(h.transport.edited[0]!.messageId, 'om_card_1')
+    const card = h.transport.edited[0]!.card as { elements: { tag: string }[] }
+    assert.equal(card.elements.some((element) => element.tag === 'action'), false, '结果卡片不应再有按钮')
   } finally {
     await h.dispose()
   }

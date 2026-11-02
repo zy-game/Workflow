@@ -9,21 +9,26 @@ import {
   type InboundMessage,
   type OutboundEnvelope,
 } from '@qingmei/core'
-import type { QqInboundEvent, QqTransport } from '../src/index.ts'
+import type { QqButton, QqCardAction, QqInboundEvent, QqTransport } from '../src/index.ts'
 
 class FakeTransport implements QqTransport {
   started = 0
   stopped = 0
-  readonly sent: { kind: string; conversationId: string; text: string }[] = []
+  readonly sent: { kind: string; conversationId: string; text: string; buttons?: QqButton[] }[] = []
   fail: string | null = null
   private handler: ((event: QqInboundEvent) => void) | null = null
+  private actionHandler: ((action: QqCardAction) => string | void) | null = null
 
-  async start(onInbound: (event: QqInboundEvent) => void): Promise<void> {
+  async start(
+    onInbound: (event: QqInboundEvent) => void,
+    onAction?: (action: QqCardAction) => string | void,
+  ): Promise<void> {
     this.started += 1
     this.handler = onInbound
+    this.actionHandler = onAction ?? null
   }
 
-  async sendMessage(input: { kind: 'dm' | 'group'; conversationId: string; text: string }): Promise<{ messageId?: string }> {
+  async sendMessage(input: { kind: 'dm' | 'group'; conversationId: string; text: string; buttons?: QqButton[] }): Promise<{ messageId?: string }> {
     if (this.fail) throw new Error(this.fail)
     this.sent.push(input)
     return { messageId: `qq_sent_${this.sent.length}` }
@@ -32,6 +37,11 @@ class FakeTransport implements QqTransport {
   async stop(): Promise<void> {
     this.stopped += 1
     this.handler = null
+    this.actionHandler = null
+  }
+
+  triggerAction(action: QqCardAction): string | void {
+    return this.actionHandler?.(action)
   }
 
   emit(event: Partial<QqInboundEvent> & { messageId: string }): void {
@@ -183,4 +193,84 @@ test('缺凭据时 apply 不注册渠道', async () => {
     if (savedSecret !== undefined) process.env.QM_QQ_CLIENT_SECRET = savedSecret
     await channelFiber.dispose()
   }
+})
+
+test('出站：带 actions 的审批发成按钮消息', async () => {
+  const h = await setup()
+  try {
+    const result = await h.channel.send({
+      channel: 'qq',
+      conversationId: 'dm:u1',
+      blocks: [
+        { type: 'text', text: '要执行吗' },
+        {
+          type: 'actions',
+          buttons: [
+            { id: 'approval:allow:a1', label: '同意', style: 'primary' },
+            { id: 'approval:deny:a1', label: '拒绝', style: 'danger' },
+          ],
+        },
+      ],
+    })
+    assert.equal(result.ok, true)
+    assert.deepEqual(
+      h.transport.sent[0]!.buttons?.map((button) => [button.label, button.id]),
+      [
+        ['同意', 'approval:allow:a1'],
+        ['拒绝', 'approval:deny:a1'],
+      ],
+    )
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('按钮点击：发 qm/action，会话带类型前缀', async () => {
+  const h = await setup()
+  try {
+    const actions: { channel: string; conversationId: string; actionId: string; actorId?: string }[] = []
+    h.ctx.events.on(EVENTS.action, (action: { channel: string; conversationId: string; actionId: string; actorId?: string }) => actions.push(action))
+    const toast = h.transport.triggerAction({
+      actionId: 'approval:allow:a1',
+      kind: 'group',
+      conversationId: 'G1',
+      interactionId: 'i1',
+      actorId: 'u2',
+    })
+    assert.deepEqual(actions, [
+      { channel: 'qq', conversationId: 'group:G1', actionId: 'approval:allow:a1', actorId: 'u2' },
+    ])
+    assert.equal(toast, '已收到')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('parseInteractionEvent：只认 type=11，并区分单聊/群聊', () => {
+  assert.deepEqual(
+    qqPlugin.parseInteractionEvent({
+      id: 'i1',
+      type: 11,
+      scene: 'c2c',
+      user_openid: 'u1',
+      data: { resolved: { button_data: 'approval:allow:x', button_id: 'b1' } },
+    }),
+    { actionId: 'approval:allow:x', kind: 'dm', conversationId: 'u1', interactionId: 'i1', actorId: 'u1' },
+  )
+  assert.equal(qqPlugin.parseInteractionEvent({ id: 'i1', type: 13, data: {} }), null)
+  assert.equal(qqPlugin.parseInteractionEvent({ id: 'i1', type: 11, scene: 'c2c' }), null)
+})
+
+test('toQqKeyboardButton：回调按钮、所有人可点、带兜底文案', () => {
+  const button = qqPlugin.toQqKeyboardButton({ id: 'approval:allow:x', label: '同意', style: 'primary' }) as {
+    id: string
+    render_data: { label: string; style: number }
+    action: { type: number; permission: { type: number }; data: string; unsupport_tips: string }
+  }
+  assert.equal(button.id, 'approval:allow:x')
+  assert.equal(button.render_data.label, '同意')
+  assert.equal(button.action.type, 1)
+  assert.equal(button.action.permission.type, 2)
+  assert.equal(button.action.data, 'approval:allow:x')
+  assert.match(button.action.unsupport_tips, /批准/)
 })

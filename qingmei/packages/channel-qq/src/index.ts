@@ -35,9 +35,9 @@ export const inject = ['channel']
 export const QQ_CHANNEL: ChannelId = 'qq'
 
 export const capabilities: ChannelCapabilities = {
-  markdown: false,
+  markdown: true,
   card: false,
-  button: false,
+  button: true,
   image: false,
   voice: false,
   file: false,
@@ -70,13 +70,33 @@ export interface QqInboundEvent {
   senderId: string
 }
 
+export interface QqButton {
+  id: string
+  label: string
+  style?: string
+}
+
+/** 用户点击消息按钮（INTERACTION_CREATE, type=11） */
+export interface QqCardAction {
+  actionId: string
+  kind: QqConversationKind
+  conversationId: string
+  interactionId: string
+  actorId?: string
+  messageId?: string
+}
+
 export interface QqTransport {
-  start(onInbound: (event: QqInboundEvent) => void): Promise<void>
+  start(
+    onInbound: (event: QqInboundEvent) => void,
+    onAction?: (action: QqCardAction) => string | void,
+  ): Promise<void>
   sendMessage(input: {
     kind: QqConversationKind
     conversationId: string
     text: string
     replyTo?: string
+    buttons?: QqButton[]
   }): Promise<{ messageId?: string }>
   stop(): Promise<void>
 }
@@ -105,35 +125,49 @@ export function createQqAdapter(ctx: Context, config: QqConfig, transport: QqTra
     id: QQ_CHANNEL,
     capabilities,
     async start(): Promise<void> {
-      await transport.start((event) => {
-        console.log(`[channel-qq] inbound ${event.kind} conv=${event.conversationId} msg=${event.messageId}`)
-        const text = typeof event.text === 'string' ? stripMentions(event.text) : ''
-        if (!text) return
-        const conversationId = encodeConversationId(event.kind, event.conversationId)
-        if (allowed.length > 0 && !allowed.includes(conversationId) && !allowed.includes(event.conversationId)) {
-          return
-        }
-        if (seen.has(event.messageId)) return
-        seen.add(event.messageId)
-        if (seen.size > SEEN_LIMIT) {
-          const oldest = seen.values().next().value
-          if (oldest !== undefined) seen.delete(oldest)
-        }
+      await transport.start(
+        (event) => {
+          console.log(`[channel-qq] inbound ${event.kind} conv=${event.conversationId} msg=${event.messageId}`)
+          const text = typeof event.text === 'string' ? stripMentions(event.text) : ''
+          if (!text) return
+          const conversationId = encodeConversationId(event.kind, event.conversationId)
+          if (allowed.length > 0 && !allowed.includes(conversationId) && !allowed.includes(event.conversationId)) {
+            return
+          }
+          if (seen.has(event.messageId)) return
+          seen.add(event.messageId)
+          if (seen.size > SEEN_LIMIT) {
+            const oldest = seen.values().next().value
+            if (oldest !== undefined) seen.delete(oldest)
+          }
 
-        const message: InboundMessage = {
-          platformMessageId: event.messageId,
-          channel: QQ_CHANNEL,
-          accountId: config.appId ?? 'qq',
-          conversation: {
-            kind: event.kind === 'dm' ? 'dm' : 'group',
-            id: conversationId,
-          },
-          sender: { platformUserId: event.senderId, displayName: event.senderId },
-          blocks: [{ type: 'text', text }],
-          receivedAt: new Date(),
-        }
-        ctx.events.emit(EVENTS.inbound, message)
-      })
+          const message: InboundMessage = {
+            platformMessageId: event.messageId,
+            channel: QQ_CHANNEL,
+            accountId: config.appId ?? 'qq',
+            conversation: {
+              kind: event.kind === 'dm' ? 'dm' : 'group',
+              id: conversationId,
+            },
+            sender: { platformUserId: event.senderId, displayName: event.senderId },
+            blocks: [{ type: 'text', text }],
+            receivedAt: new Date(),
+          }
+          ctx.events.emit(EVENTS.inbound, message)
+        },
+        (action) => {
+          console.log(`[channel-qq] card action ${action.actionId || 'none'}`)
+          if (!action.actionId) return '无法识别的操作'
+          ctx.events.emit(EVENTS.action, {
+            channel: QQ_CHANNEL,
+            conversationId: encodeConversationId(action.kind, action.conversationId),
+            actionId: action.actionId,
+            ...(action.actorId ? { actorId: action.actorId } : {}),
+            ...(action.messageId ? { messageId: action.messageId } : {}),
+          })
+          return '已收到'
+        },
+      )
     },
 
     async stop(): Promise<void> {
@@ -145,12 +179,14 @@ export function createQqAdapter(ctx: Context, config: QqConfig, transport: QqTra
       if (!decoded) return { ok: false, error: '无法从 conversationId 判断是私聊还是群聊' }
       const text = textOf(envelope.blocks)
       if (!text) return { ok: false, error: '空消息不发送' }
+      const buttons = buttonsOf(envelope.blocks)
       try {
         const result = await transport.sendMessage({
           kind: decoded.kind,
           conversationId: decoded.rawId,
           text,
           ...(envelope.replyTo ? { replyTo: envelope.replyTo } : {}),
+          ...(buttons.length > 0 ? { buttons } : {}),
         })
         return { ok: true, ...(result.messageId ? { platformMessageId: result.messageId } : {}) }
       } catch (error) {
@@ -158,6 +194,14 @@ export function createQqAdapter(ctx: Context, config: QqConfig, transport: QqTra
       }
     },
   }
+}
+
+/** 从 blocks 里取出按钮组（目前只支持一组） */
+export function buttonsOf(blocks: OutboundEnvelope['blocks']): QqButton[] {
+  for (const block of blocks) {
+    if (block.type === 'actions') return block.buttons
+  }
+  return []
 }
 
 /** 群消息里 @机器人 会带 `<@!123>` 之类占位符；去掉再当正文 */
@@ -174,6 +218,7 @@ export function createQqTransport(config: QqConfig & { appId: string; clientSecr
   let heartbeat: ReturnType<typeof setInterval> | null = null
   let sequence: number | null = null
   let handler: ((event: QqInboundEvent) => void) | null = null
+  let actionHandler: ((action: QqCardAction) => string | void) | null = null
   let stopped = false
   let token: { value: string; expiresAt: number } | null = null
   /** identify 之后要等 READY 才算真的上线 */
@@ -231,8 +276,8 @@ export function createQqTransport(config: QqConfig & { appId: string; clientSecr
       void handleFrame(String(event.data))
     })
     ws.addEventListener('close', (event) => {
-      log?.(`[channel-qq] 连接关闭 code=`)
-      readyWaiter?.reject(new Error(`QQ WebSocket 连接关闭（）`))
+      log?.(`[channel-qq] 连接关闭 code=${event.code}`)
+      readyWaiter?.reject(new Error(`QQ WebSocket 连接关闭（${event.code}）`))
       readyWaiter = null
       if (heartbeat) clearInterval(heartbeat)
       heartbeat = null
@@ -267,7 +312,7 @@ export function createQqTransport(config: QqConfig & { appId: string; clientSecr
           op: 2,
           d: {
             token: `QQBot ${current}`,
-            intents: 1 << 25,
+            intents: (1 << 25) | (1 << 26),
             shard: [0, 1],
             properties: { $os: 'linux', $browser: 'qingmei', $device: 'qingmei' },
           },
@@ -284,7 +329,22 @@ export function createQqTransport(config: QqConfig & { appId: string; clientSecr
         return
       }
       const event = parseDispatchEvent(frame.t, frame.d)
-      if (event) handler?.(event)
+      if (event) {
+        handler?.(event)
+        return
+      }
+      const interaction = parseInteractionEvent(frame.d)
+      if (interaction) {
+        let content = '已收到'
+        try {
+          const result = actionHandler?.(interaction)
+          if (typeof result === 'string' && result) content = result
+        } catch {
+          content = '处理失败'
+        }
+        log?.(`[channel-qq] interaction ${interaction.actionId}`)
+        await acknowledgeInteraction(interaction.interactionId).catch(() => undefined)
+      }
       return
     }
 
@@ -295,31 +355,64 @@ export function createQqTransport(config: QqConfig & { appId: string; clientSecr
     }
   }
 
+  /** 回应按钮点击，否则手机端会一直 loading 到超时 */
+  async function acknowledgeInteraction(interactionId: string): Promise<void> {
+    const current = await accessToken()
+    await fetch(`${apiBase}/interactions/${encodeURIComponent(interactionId)}`, {
+      method: 'PUT',
+      headers: { authorization: `QQBot ${current}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 0 }),
+    })
+  }
+
   return {
-    async start(onInbound) {
+    async start(onInbound, onAction) {
       handler = onInbound
+      actionHandler = onAction ?? null
       stopped = false
       const ready = waitReady(15_000)
       await connect()
       await ready
     },
-    async sendMessage({ kind, conversationId, text, replyTo }) {
+    async sendMessage({ kind, conversationId, text, replyTo, buttons }) {
       const current = await accessToken()
       const path =
         kind === 'group'
           ? `${apiBase}/v2/groups/${encodeURIComponent(conversationId)}/messages`
           : `${apiBase}/v2/users/${encodeURIComponent(conversationId)}/messages`
-      const response = await fetch(path, {
-        method: 'POST',
-        headers: {
-          authorization: `QQBot ${current}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ content: text, msg_type: 0, ...(replyTo ? { msg_id: replyTo } : {}) }),
-      })
-      const body = (await response.json()) as { id?: string; message?: string }
-      if (!response.ok) throw new Error(`QQ 发送失败：${body.message ?? response.status}`)
-      return { messageId: body.id }
+
+      const post = async (body: Record<string, unknown>): Promise<{ id?: string; message?: string }> => {
+        const response = await fetch(path, {
+          method: 'POST',
+          headers: {
+            authorization: `QQBot ${current}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        })
+        const parsed = (await response.json()) as { id?: string; message?: string }
+        if (!response.ok) throw new Error(`QQ 发送失败：${parsed.message ?? response.status}`)
+        return parsed
+      }
+
+      if (buttons && buttons.length > 0) {
+        try {
+          const sent = await post({
+            content: text,
+            msg_type: 2,
+            markdown: { content: text },
+            keyboard: { content: { rows: [{ buttons: buttons.map(toQqKeyboardButton) }] } },
+            ...(replyTo ? { msg_id: replyTo } : {}),
+          })
+          return { messageId: sent.id }
+        } catch (error) {
+          // 自定义按钮可能没开通：退回纯文本，审批仍可用文字回复
+          log?.(`[channel-qq] 按钮发送失败，退回文本：${messageOf(error)}`)
+        }
+      }
+
+      const sent = await post({ content: text, msg_type: 0, ...(replyTo ? { msg_id: replyTo } : {}) })
+      return { messageId: sent.id }
     },
     async stop() {
       stopped = true
@@ -358,6 +451,50 @@ export function parseDispatchEvent(
     return { messageId: payload.id, kind: 'group', conversationId: groupId, text, senderId: member }
   }
   return null
+}
+
+export function toQqKeyboardButton(button: QqButton): Record<string, unknown> {
+  return {
+    id: button.id,
+    render_data: {
+      label: button.label,
+      visited_label: button.label,
+      style: button.style === 'danger' ? 0 : 1,
+    },
+    action: {
+      type: 1,
+      permission: { type: 2 },
+      data: button.id,
+      unsupport_tips: '当前客户端不支持按钮，请回复「批准」或「拒绝」',
+    },
+  }
+}
+
+export function parseInteractionEvent(data: unknown): QqCardAction | null {
+  const payload = data as {
+    id?: string
+    type?: number
+    scene?: string
+    data?: { resolved?: { button_data?: string; message_id?: string } }
+    user_openid?: string
+    group_openid?: string
+    group_member_openid?: string
+  } | null
+  if (!payload?.id || payload.type !== 11) return null
+  const actionId = payload.data?.resolved?.button_data
+  if (!actionId) return null
+  const kind: QqConversationKind = payload.scene === 'group' ? 'group' : 'dm'
+  const conversationId = kind === 'group' ? payload.group_openid : payload.user_openid
+  if (!conversationId) return null
+  const actorId = payload.group_member_openid ?? payload.user_openid
+  return {
+    actionId,
+    kind,
+    conversationId,
+    interactionId: payload.id,
+    ...(actorId ? { actorId } : {}),
+    ...(payload.data?.resolved?.message_id ? { messageId: payload.data.resolved.message_id } : {}),
+  }
 }
 
 export function apply(ctx: Context, config: QqConfig = {}): void {

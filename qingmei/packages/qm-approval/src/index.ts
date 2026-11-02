@@ -24,8 +24,15 @@ import {
   type StoreService,
 } from '@qingmei/core'
 
+interface PushTarget {
+  channel: string
+  conversationId: string
+  /** 卡片消息 id；有它就能在决定后把按钮换掉 */
+  messageId?: string
+}
+
 interface ApprovalPush extends Row {
-  channels: string[]
+  targets: PushTarget[]
 }
 
 interface ChannelTarget extends Row {
@@ -76,8 +83,9 @@ export function apply(ctx: Context): void {
     if (!channel || rows.length === 0) return
     const pending = await approval.list('pending')
     const extra = pending.length > 1 ? `（还有 ${pending.length - 1} 条待确认）` : ''
+    const pushed: PushTarget[] = []
     for (const row of rows) {
-      await channel
+      const result = await channel
         .send({
           channel: row.id as ChannelId,
           conversationId: row.conversationId,
@@ -93,12 +101,16 @@ export function apply(ctx: Context): void {
           ],
         })
         .catch(() => undefined)
+      pushed.push({
+        channel: row.id,
+        conversationId: row.conversationId,
+        ...(result?.platformMessageId ? { messageId: result.platformMessageId } : {}),
+      })
     }
-    // 记下这条审批推到了哪些渠道，Web 面板要显示
-    const channels = rows.map((row) => row.id)
+    // 记下这条审批推到了哪些渠道/消息，决定后要用来更新卡片
     const existing = await pushes.get(request.id)
-    if (existing) await pushes.update(existing.id, { channels })
-    else await pushes.insert({ id: request.id, channels })
+    if (existing) await pushes.update(existing.id, { targets: pushed })
+    else await pushes.insert({ id: request.id, targets: pushed })
   }
 
   ctx.events.on(EVENTS.approvalRequested, (request: ApprovalRequest) => {
@@ -125,13 +137,29 @@ export function apply(ctx: Context): void {
       reason: `来自 ${action.channel} 的按钮`,
     })
     if (!decided || !channel) return
-    await channel
-      .send({
-        channel: action.channel,
-        conversationId: action.conversationId,
-        blocks: [{ type: 'text', text: `${allow ? '✅ 已批准' : '⛔ 已拒绝'}：${request.prompt}` }],
-      })
-      .catch(() => undefined)
+    await notifyDecision(request, allow, {
+      channel: action.channel,
+      conversationId: action.conversationId,
+      ...(action.messageId ? { messageId: action.messageId } : {}),
+    })
+  }
+
+  /** 决定后逐个会话更新：有卡片消息 id 的走编辑（按钮消失），没有的补一条文本 */
+  async function notifyDecision(request: ApprovalRequest, allow: boolean, fallback: PushTarget, extra = ''): Promise<void> {
+    if (!channel) return
+    const push = await pushes.get(request.id)
+    const targets = push?.targets && push.targets.length > 0 ? push.targets : [fallback]
+    const text = `${allow ? '✅ 已批准' : '⛔ 已拒绝'}：${request.prompt}${extra}`
+    for (const target of targets) {
+      await channel
+        .send({
+          channel: target.channel as ChannelId,
+          conversationId: target.conversationId,
+          blocks: [{ type: 'text', text }],
+          ...(target.messageId ? { editTarget: target.messageId } : {}),
+        })
+        .catch(() => undefined)
+    }
   }
   async function decideFromChannel(allow: boolean, message: InboundMessage): Promise<void> {
     const pending = (await approval.list('pending')).slice().sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
@@ -144,14 +172,12 @@ export function apply(ctx: Context): void {
     })
     if (!decided || !channel) return
     const remaining = pending.length - 1
-    const text = `${allow ? '✅ 已批准' : '⛔ 已拒绝'}：${target.prompt}${remaining > 0 ? `（还有 ${remaining} 条待确认）` : ''}`
-    await channel
-      .send({
-        channel: message.channel,
-        conversationId: message.conversation.id,
-        blocks: [{ type: 'text', text }],
-      })
-      .catch(() => undefined)
+    await notifyDecision(
+      target,
+      allow,
+      { channel: message.channel, conversationId: message.conversation.id },
+      remaining > 0 ? `（还有 ${remaining} 条待确认）` : '',
+    )
   }
   // 审批状态推给 SSE：Web 面板不需要轮询
   for (const [event, type] of [
@@ -172,7 +198,7 @@ export function apply(ctx: Context): void {
         const status = raw === 'pending' || raw === 'allowed' || raw === 'denied' ? raw : undefined
         const items = await approval.list(status)
         const pushRows = await pushes.find({})
-        const byId = new Map(pushRows.map((row) => [row.id, row.channels]))
+        const byId = new Map(pushRows.map((row) => [row.id, (row.targets ?? []).map((target) => target.channel)]))
         res.status(200).send({
           ok: true,
           items: items.map((item) => ({ ...item, notifiedTo: byId.get(item.id) ?? [] })),

@@ -85,6 +85,7 @@ export interface FeishuTransport {
   ): Promise<void>
   sendText(input: { receiveId: string; receiveIdType: string; text: string }): Promise<{ messageId: string }>
   sendCard(input: { receiveId: string; receiveIdType: string; card: unknown }): Promise<{ messageId: string }>
+  updateCard(input: { messageId: string; card: unknown }): Promise<{ ok: boolean }>
   stop(): Promise<void>
 }
 
@@ -158,6 +159,16 @@ export function createFeishuAdapter(
 
     async send(envelope: OutboundEnvelope): Promise<SendResult> {
       const text = textOf(envelope.blocks)
+      // 编辑已发送的卡片：点击按钮/文本回复后把按钮换掉，避免反复点
+      if (envelope.editTarget) {
+        try {
+          await transport.updateCard({ messageId: envelope.editTarget, card: buildResultCard(text) })
+          console.log('[channel-feishu] card updated', envelope.editTarget)
+          return { ok: true, platformMessageId: envelope.editTarget }
+        } catch (error) {
+          return { ok: false, error: messageOf(error) }
+        }
+      }
       const buttons = buttonsOf(envelope.blocks)
       if (!text && buttons.length === 0) return { ok: false, error: '空消息不发送' }
 
@@ -230,6 +241,10 @@ export function createLarkTransport(config: FeishuConfig & { appId: string; appS
     async sendCard(input) {
       if (!inner) throw new Error('飞书长连接尚未建立')
       return inner.sendCard(input)
+    },
+    async updateCard(input) {
+      if (!inner) throw new Error('飞书长连接尚未建立')
+      return inner.updateCard(input)
     },
     async stop() {
       await inner?.stop()
@@ -311,6 +326,16 @@ async function createRealTransport(
       }
       return { messageId: response.data?.message_id ?? '' }
     },
+    async updateCard({ messageId, card }) {
+      const response = await client.im.message.patch({
+        path: { message_id: messageId },
+        data: { content: JSON.stringify(card), msg_type: 'interactive' },
+      })
+      if (response.code !== 0) {
+        throw new Error(`feishu update card failed ${response.code}: ${response.msg ?? ''}`)
+      }
+      return { ok: true }
+    },
     async sendCard({ receiveId, receiveIdType, card }) {
       const response = await client.im.message.create({
         params: { receive_id_type: receiveIdType },
@@ -339,6 +364,14 @@ function parseContent(raw: unknown): string {
     return typeof parsed.text === 'string' ? parsed.text : ''
   } catch {
     return ''
+  }
+}
+
+export function buildResultCard(text: string): unknown {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '青梅 · 已处理' } },
+    elements: text ? [{ tag: 'div', text: { tag: 'lark_md', content: text } }] : [],
   }
 }
 

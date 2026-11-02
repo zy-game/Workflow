@@ -249,10 +249,12 @@ test('卡片按钮：同意/拒绝直接决定并回执', async () => {
       channel: 'feishu',
       conversationId: 'oc_card',
       actionId: `approval:allow:${allowOne.id}`,
+      messageId: 'om_card_1',
     })
     await new Promise((resolve) => setTimeout(resolve, 30))
     assert.equal((await h.approval.get(allowOne.id))?.status, 'allowed')
     assert.match((h.channel.sent.at(-1)!.blocks[0] as { text: string }).text, /已批准：按钮同意测试/)
+    assert.equal(h.channel.sent.at(-1)!.editTarget, 'om_card_1', '应编辑原卡片而不是再发一条')
 
     const denyOne = await h.approval.create({ action: 'tool.invoke:card', prompt: '按钮拒绝测试' })
     h.ctx.events.emit(EVENTS.action, {
