@@ -49,13 +49,20 @@ export class SqliteAudit extends AuditService {
     })
   }
 
-  async query(q: { since?: Date; actorId?: string; action?: string; limit?: number } = {}): Promise<AuditEntry[]> {
+  async query(q: {
+    since?: Date
+    actorId?: string
+    action?: string
+    decision?: 'allow' | 'deny'
+    limit?: number
+  } = {}): Promise<AuditEntry[]> {
     const rows = await this.collection.find()
     const since = q.since?.getTime()
     const filtered = rows
       .filter((row) => (since === undefined ? true : row.at >= since))
       .filter((row) => (q.actorId === undefined ? true : row.actor_id === q.actorId))
       .filter((row) => (q.action === undefined ? true : row.action === q.action))
+      .filter((row) => (q.decision === undefined ? true : row.decision === q.decision))
       .sort((a, b) => b.at - a.at)
 
     const limit = Math.min(MAX_LIMIT, Math.max(1, q.limit ?? DEFAULT_LIMIT))

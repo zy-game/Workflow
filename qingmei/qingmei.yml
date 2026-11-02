@@ -52,6 +52,9 @@
 # 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
 - name: '@qingmei/qm-approval'
 
+# 审计的只读查询面：GET /api/v1/audit
+- name: '@qingmei/qm-audit'
+
 # 自主循环（A1 建议模式）：每 5 分钟巡一次，值得打扰时给一条建议
 - name: '@qingmei/qm-autonomy'
   config:

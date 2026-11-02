@@ -90,7 +90,7 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
    采纳/忽略记账、忽略降频、可选自动升级、显式级别入口、只进摘要都已完成。
 6. **A2 后半**：排期器的优先级/时间窗/依赖/抢占（并发容量、FIFO 排队、重启恢复已完成）。
 7. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
-8. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
+8. 工程侧：路由挪回插件、`cron.ts` 拆包（`GET /api/v1/audit` 已完成）。
 
 ## 3. 已知技术债（按优先级）
 
@@ -131,6 +131,15 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 审计查询接口
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` / `provider-audit-sqlite` | `AuditService.query` 支持 `decision` 过滤 |
+| `packages/qm-audit`（新） | `GET /api/v1/audit?limit=&action=&actor=&decision=&since=`；只读，非法 `decision`/`since` 返回 400，limit 上限 200 |
+| 配置 | dev/prod 注册 `qm-audit`；`apps/server` 依赖 |
+| 测试 | 4 条（倒序与 limit、过滤、400）；全量 242 → 246 |
 
 ### 历史表结构化（M3 前置）
 

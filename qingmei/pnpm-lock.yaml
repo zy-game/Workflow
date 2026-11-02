@@ -62,6 +62,9 @@ importers:
       '@qingmei/qm-approval':
         specifier: workspace:*
         version: link:../../packages/qm-approval
+      '@qingmei/qm-audit':
+        specifier: workspace:*
+        version: link:../../packages/qm-audit
       '@qingmei/qm-autonomy':
         specifier: workspace:*
         version: link:../../packages/qm-autonomy
@@ -304,6 +307,25 @@ importers:
       '@qingmei/provider-approval-sqlite':
         specifier: workspace:*
         version: link:../provider-approval-sqlite
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-audit:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-audit-sqlite':
+        specifier: workspace:*
+        version: link:../provider-audit-sqlite
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite

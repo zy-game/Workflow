@@ -721,7 +721,13 @@ export abstract class AuditService extends Service {
     super(ctx, 'audit')
   }
   abstract append(entry: AuditEntry): Promise<void>
-  abstract query(q: { since?: Date; actorId?: string; action?: string; limit?: number }): Promise<AuditEntry[]>
+  abstract query(q: {
+    since?: Date
+    actorId?: string
+    action?: string
+    decision?: 'allow' | 'deny'
+    limit?: number
+  }): Promise<AuditEntry[]>
 }
 
 // ────────────────────────────────────────────── 审批

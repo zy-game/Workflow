@@ -26,6 +26,7 @@
     "@qingmei/qm-task": "workspace:*",
     "@qingmei/qm-approval": "workspace:*",
     "@qingmei/qm-autonomy": "workspace:*",
+    "@qingmei/qm-audit": "workspace:*",
     "@qingmei/service-memory": "workspace:*",
     "@qingmei/service-channel": "workspace:*",
     "@qingmei/service-gateway": "workspace:*",
