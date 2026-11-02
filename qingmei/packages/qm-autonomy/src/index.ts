@@ -106,6 +106,7 @@ interface StateRow extends Row {
   streak?: number
   pending_json?: string | null
   ignored_by_rule_json?: string
+  locked?: boolean
 }
 
 class AutonomyRunner extends AutonomyService {
@@ -178,7 +179,7 @@ class AutonomyRunner extends AutonomyService {
     if (quiet) {
       for (const candidate of candidates) suppressed.push({ id: candidate.id, reason: '静默时段' })
       reason = `静默时段（${this.config.quietStart}:00–${this.config.quietEnd}:00），只记录不说话`
-    } else if (this.config.mode === 'A0') {
+    } else if (state.mode === 'A0') {
       for (const candidate of candidates) suppressed.push({ id: candidate.id, reason: 'A0 观察模式' })
       reason = 'A0 观察模式：只记录，不动作'
     } else if (state.used >= this.config.dailyBudget) {
@@ -212,11 +213,10 @@ class AutonomyRunner extends AutonomyService {
       if (until <= now.getTime()) delete state.cooldowns[id]
     }
     const traceId = uid('aut')
-    state.mode = this.config.mode
     state.lastTickAt = now
 
     // 选中后要真的处理：能执行就执行，级别不够就降级成建议——但都要留回执
-    const execution = chosen ? await this.execute(chosen, now) : null
+    const execution = chosen ? await this.execute(chosen, now, state.mode) : null
 
     // 发出去的建议进入「等回应」：窗口内有人说话就算采纳，过了窗口下一次 tick 记忽略
     if (
@@ -238,10 +238,10 @@ class AutonomyRunner extends AutonomyService {
     if (
       this.config.autoUpgrade &&
       !this.config.trustLocked &&
-      this.config.mode === 'A1' &&
+      !state.locked &&
+      state.mode === 'A1' &&
       state.streak >= this.config.upgradeAfter
     ) {
-      this.config.mode = 'A2'
       state.mode = 'A2'
       upgraded = true
     }
@@ -255,7 +255,7 @@ class AutonomyRunner extends AutonomyService {
       id: traceId,
       at: now,
       trigger,
-      mode: this.config.mode,
+      mode: state.mode,
       snapshot,
       candidates,
       chosen,
@@ -277,7 +277,7 @@ class AutonomyRunner extends AutonomyService {
    * 两级闸（docs/13 §4）：级别不够不执行；不可逆动作永远人工。
    * 执行结果写成回执——没有回执的主动行为等同于「声称做了但没做」。
    */
-  private async execute(chosen: AutonomyCandidate, at: Date): Promise<AutonomyExecution> {
+  private async execute(chosen: AutonomyCandidate, at: Date, mode: AutonomyLevel): Promise<AutonomyExecution> {
     const spec = AUTONOMY_ACTIONS[chosen.action]
     if (!spec) {
       return { status: 'skipped', action: chosen.action, detail: '不在行动白名单，拒绝执行', at }
@@ -286,14 +286,14 @@ class AutonomyRunner extends AutonomyService {
       return { status: 'skipped', action: chosen.action, detail: '不可逆动作必须人工确认，自主循环不执行', at }
     }
 
-    if (levelOf(this.config.mode) < levelOf(spec.minLevel)) {
-      if (this.config.mode === 'A0') {
+    if (levelOf(mode) < levelOf(spec.minLevel)) {
+      if (mode === 'A0') {
         return { status: 'skipped', action: chosen.action, detail: `需要 ${spec.minLevel}，A0 只记录`, at }
       }
       // 级别不够：至少把「建议」发出去，让人有机会点头
       const sent = await this.notify(`💡 ${chosen.title}\n${chosen.reason}`)
       return sent.ok
-        ? { status: 'suggested', action: 'notify.self', detail: `需要 ${spec.minLevel}，当前 ${this.config.mode}：已按建议发出`, at }
+        ? { status: 'suggested', action: 'notify.self', detail: `需要 ${spec.minLevel}，当前 ${mode}：已按建议发出`, at }
         : { status: 'failed', action: 'notify.self', detail: `建议发送失败：${sent.error ?? '未知原因'}`, at }
     }
 
@@ -432,6 +432,7 @@ class AutonomyRunner extends AutonomyService {
         streak: 0,
         pending: null,
         ignoredByRule: {},
+        locked: false,
       }
     }
     return {
@@ -445,6 +446,7 @@ class AutonomyRunner extends AutonomyService {
       streak: Number(row.streak) || 0,
       pending: parseJson<AutonomyState['pending']>(row.pending_json ?? null, null),
       ignoredByRule: parseJson<Record<string, number>>(row.ignored_by_rule_json ?? null, {}),
+      locked: Boolean(row.locked),
     }
   }
 
@@ -461,6 +463,7 @@ class AutonomyRunner extends AutonomyService {
       streak: state.streak,
       pending_json: state.pending ? JSON.stringify(state.pending) : null,
       ignored_by_rule_json: JSON.stringify(state.ignoredByRule),
+      locked: state.locked,
     }
     if (rows[0]) await this.states.update(rows[0].id, changes)
     else await this.states.insert({ id: 'state', ...changes })
@@ -469,6 +472,17 @@ class AutonomyRunner extends AutonomyService {
   /** 收到一条入站消息：如果最近有等待回应的建议，就算被采纳 */
   async noteEngagement(): Promise<void> {
     return this.serialize(() => this.noteEngagementInner())
+  }
+
+  /** 主人手动设置级别/锁死：优先于配置文件，也优先于自动升级 */
+  async setTrust(input: { level?: AutonomyLevel; locked?: boolean }): Promise<AutonomyState> {
+    return this.serialize(async () => {
+      const state = await this.getState()
+      if (input.level) state.mode = input.level
+      if (typeof input.locked === 'boolean') state.locked = input.locked
+      await this.saveState(state)
+      return state
+    })
   }
 
   private async noteEngagementInner(): Promise<void> {
@@ -606,11 +620,37 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
         res.status(200).send({
           ok: true,
           mode: status.mode,
+          locked: status.locked,
           budget: { limit: config.dailyBudget ?? DEFAULTS.dailyBudget, used: status.used },
           trust: { accepted: status.accepted, ignored: status.ignored, streak: status.streak },
           lastTickAt: status.lastTickAt,
           items: await runner.list(),
         })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/autonomy/trust',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const raw = typeof body.level === 'string' ? body.level.trim() : ''
+        const locked = typeof body.locked === 'boolean' ? body.locked : undefined
+        if (!raw && locked === undefined) {
+          res.status(400).send({ ok: false, error: 'level 或 locked 至少给一个' })
+          return
+        }
+        if (raw && !['A0', 'A1', 'A2', 'A3'].includes(raw)) {
+          res.status(400).send({ ok: false, error: 'level 只能是 A0 / A1 / A2 / A3' })
+          return
+        }
+        const state = await runner.setTrust({
+          ...(raw ? { level: raw as AutonomyLevel } : {}),
+          ...(locked !== undefined ? { locked } : {}),
+        })
+        res.status(200).send({ ok: true, mode: state.mode, locked: state.locked })
       },
     }),
   )

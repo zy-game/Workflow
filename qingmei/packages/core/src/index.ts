@@ -308,6 +308,8 @@ export interface AutonomyState {
   pending: { traceId: string; candidateId: string; at: number; expiresAt: number } | null
   /** 规则 id → 被忽略的次数；达到阈值后冷却翻倍 */
   ignoredByRule: Record<string, number>
+  /** 主人锁死当前级别：自动升级不再生效（手动设置仍然可以） */
+  locked: boolean
 }
 
 /** 自主循环：世界状态快照 → 候选 → 过滤 → 选择 → 记账（docs/13 §3） */

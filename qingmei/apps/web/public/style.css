@@ -486,6 +486,18 @@ body {
   gap: 4px;
 }
 
+.autonomy-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.autonomy-trust .ghost[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .autonomy-budget {
   margin: 0 0 8px;
   color: var(--text-dim);

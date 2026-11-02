@@ -12,6 +12,7 @@ const ENDPOINTS = {
   approvalDecide: './api/v1/approvals/decide',
   autonomy: './api/v1/autonomy',
   autonomyTick: './api/v1/autonomy/tick',
+  autonomyTrust: './api/v1/autonomy/trust',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -52,6 +53,8 @@ const el = {
   autonomyRefresh: document.getElementById('autonomy-refresh'),
   autonomyTick: document.getElementById('autonomy-tick'),
   autonomyClose: document.getElementById('autonomy-close'),
+  autonomyLevels: Array.from(document.querySelectorAll('.autonomy-level')),
+  autonomyLock: document.getElementById('autonomy-lock'),
 }
 
 const state = {
@@ -71,6 +74,8 @@ const state = {
   tasksLoading: false,
   autonomyOpen: false,
   autonomyLoading: false,
+  autonomyMode: 'A1',
+  autonomyLocked: false,
 }
 
 // ── 令牌 ─────────────────────────────────────
@@ -830,6 +835,15 @@ function renderAutonomy(body) {
   const budget = body?.budget ?? { used: 0, limit: 0 }
   const trust = body?.trust ?? { accepted: 0, ignored: 0, streak: 0 }
   el.autonomyBudget.textContent = `模式 ${body?.mode ?? 'A1'} · 今日建议 ${budget.used}/${budget.limit} · 采纳 ${trust.accepted} · 忽略 ${trust.ignored} · 连续 ${trust.streak}`
+  state.autonomyMode = body?.mode ?? 'A1'
+  state.autonomyLocked = Boolean(body?.locked)
+  for (const button of el.autonomyLevels ?? []) {
+    button.setAttribute('aria-pressed', button.dataset.level === state.autonomyMode ? 'true' : 'false')
+  }
+  if (el.autonomyLock) {
+    el.autonomyLock.setAttribute('aria-pressed', state.autonomyLocked ? 'true' : 'false')
+    el.autonomyLock.textContent = state.autonomyLocked ? '已锁死级别' : '锁死级别'
+  }
   el.autonomyEmpty.hidden = items.length > 0
   el.autonomyList.replaceChildren()
 
@@ -890,6 +904,25 @@ async function loadAutonomy() {
     showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '读取主动建议失败')
   } finally {
     state.autonomyLoading = false
+  }
+}
+
+async function setAutonomyTrust(payload) {
+  if (!state.token) return
+  try {
+    const res = await fetch(ENDPOINTS.autonomyTrust, {
+      method: 'POST',
+      headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null)
+      throw new Error(detail?.error || `设置失败（HTTP ）`)
+    }
+    showAutonomyError('')
+    await loadAutonomy()
+  } catch (error) {
+    showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '设置失败')
   }
 }
 
@@ -1134,6 +1167,10 @@ function bindEvents() {
   el.autonomyRefresh?.addEventListener('click', () => void loadAutonomy())
   el.autonomyTick?.addEventListener('click', () => void tickAutonomy())
   el.autonomyClose?.addEventListener('click', () => setAutonomyOpen(false))
+  for (const button of el.autonomyLevels ?? []) {
+    button.addEventListener('click', () => void setAutonomyTrust({ level: button.dataset.level }))
+  }
+  el.autonomyLock?.addEventListener('click', () => void setAutonomyTrust({ locked: !state.autonomyLocked }))
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.schedulesOpen) setSchedulesOpen(false)

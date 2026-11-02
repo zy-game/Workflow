@@ -91,6 +91,12 @@
           </div>
         </div>
         <p id="autonomy-budget" class="autonomy-budget"></p>
+        <div id="autonomy-trust" class="autonomy-trust" role="group" aria-label="主动级别">
+          <button class="ghost autonomy-level" type="button" data-level="A0" aria-pressed="false">A0 观察</button>
+          <button class="ghost autonomy-level" type="button" data-level="A1" aria-pressed="false">A1 建议</button>
+          <button class="ghost autonomy-level" type="button" data-level="A2" aria-pressed="false">A2 代理</button>
+          <button id="autonomy-lock" class="ghost" type="button" aria-pressed="false">锁死级别</button>
+        </div>
         <p id="autonomy-empty" class="autonomy-empty">
           还没有决策记录。自主循环每 5 分钟看一次世界状态，值得打扰时才给建议。
         </p>

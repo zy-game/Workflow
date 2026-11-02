@@ -624,3 +624,46 @@ test('信任升级：autoUpgrade 默认关闭时只记账，不改变级别', as
     await h.dispose()
   }
 })
+
+test('信任接口：手动切级别、锁死，非法级别 400', async () => {
+  const h = await setup({ autoUpgrade: true, upgradeAfter: 1, cooldownMinutes: 0 })
+  try {
+    const set = await h.call({ method: 'POST', path: '/api/v1/autonomy/trust', query: {}, headers: {}, body: { level: 'A2' } })
+    assert.equal(set.status, 200)
+    assert.deepEqual(set.body, { ok: true, mode: 'A2', locked: false })
+
+    const listed = await h.call({ method: 'GET', path: '/api/v1/autonomy', query: {}, headers: {} })
+    assert.equal((listed.body as { mode: string }).mode, 'A2')
+    assert.equal((listed.body as { locked: boolean }).locked, false)
+
+    const lock = await h.call({ method: 'POST', path: '/api/v1/autonomy/trust', query: {}, headers: {}, body: { locked: true } })
+    assert.equal(lock.status, 200)
+    assert.deepEqual(lock.body, { ok: true, mode: 'A2', locked: true })
+
+    const bad = await h.call({ method: 'POST', path: '/api/v1/autonomy/trust', query: {}, headers: {}, body: { level: 'A9' } })
+    assert.equal(bad.status, 400)
+    const empty = await h.call({ method: 'POST', path: '/api/v1/autonomy/trust', query: {}, headers: {}, body: {} })
+    assert.equal(empty.status, 400)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('锁死后即使 autoUpgrade 打开也不升级', async () => {
+  const h = await setup({ autoUpgrade: true, upgradeAfter: 1, acceptWindowMinutes: 60, cooldownMinutes: 0 })
+  try {
+    await h.call({ method: 'POST', path: '/api/v1/autonomy/trust', query: {}, headers: {}, body: { level: 'A1', locked: true } })
+    h.approval.pending = [approvalRequest()]
+    await h.autonomy.tick('tick')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    h.ctx.events.emit(EVENTS.inbound, {})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    h.approval.pending = []
+    await h.autonomy.tick('tick')
+    const state = await h.autonomy.status()
+    assert.equal(state.mode, 'A1')
+    assert.equal(state.locked, true)
+  } finally {
+    await h.dispose()
+  }
+})
