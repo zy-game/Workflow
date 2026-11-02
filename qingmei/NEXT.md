@@ -88,7 +88,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 5. **A5 剩余**：回滚/投诉信号。
    采纳/忽略记账、忽略降频、可选自动升级、显式级别入口、只进摘要都已完成。
 6. **A2 后半**：排期器的优先级/时间窗/依赖/抢占（并发容量、FIFO 排队、重启恢复已完成）。
-7. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
+7. **渠道联调（M3）**：飞书/QQ 适配器已实现，等真实凭据；要做群策略（@ 才回）、
+   审批回复映射、平台重投演练。审批目前只有 Web 入口。
 8. 工程侧：路由挪回插件、`cron.ts` 拆包（`GET /api/v1/audit` 已完成）。
 
 ## 3. 已知技术债（按优先级）
@@ -130,6 +131,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### M3 渠道骨架：飞书与 QQ 机器人
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/channel-feishu`（新） | 官方机器人 WebSocket 长连接；入站 `im.message.receive_v1` → `qm/inbound`；出站 `im/v1/messages`；同一 message_id 去重；`allowedChatIds` 白名单；凭据缺失不注册 |
+| `packages/channel-qq`（新） | QQ 开放平台机器人：token → `/gateway` → identify（`GROUP_AND_C2C_EVENT`）→ 心跳/重连；入站 C2C 与群 @；出站 `/v2/users|groups/.../messages`；会话 id 带 `dm:`/`group:` 前缀 |
+| 配置 | dev/prod 注册两个渠道（无凭据时 info 日志跳过）；`apps/server` 依赖 |
+| 测试 | 飞书 7 条（入站归一化/去重/过滤/出站/失败/凭据缺失）+ QQ 8 条（编码、入站、出站、帧解析、凭据缺失）；全量 248 → 263 |
+
+> 两地实现参考了 workflow-core 历史提交里的 `feishu/client.js` / `feishu/service.js`（WebSocket 长连接、事件去重、审批回复），按青梅的渠道契约重写。
 
 ### 历史表索引与查询下推
 

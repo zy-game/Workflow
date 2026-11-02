@@ -65,6 +65,12 @@
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 
+# 飞书渠道：配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET）才启用
+- name: '@qingmei/channel-feishu'
+
+# QQ 机器人渠道：配置 appId/clientSecret（或 QM_QQ_APP_ID / QM_QQ_CLIENT_SECRET）才启用
+- name: '@qingmei/channel-qq'
+
 - name: '@qingmei/host-gateway'
   config:
     host: '127.0.0.1'

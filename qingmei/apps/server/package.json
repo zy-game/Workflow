@@ -6,6 +6,8 @@
   "main": "./src/index.ts",
   "dependencies": {
     "@qingmei/channel-web": "workspace:*",
+    "@qingmei/channel-feishu": "workspace:*",
+    "@qingmei/channel-qq": "workspace:*",
     "@qingmei/core": "workspace:*",
     "@qingmei/host-gateway": "workspace:*",
     "@qingmei/provider-llm-echo": "workspace:*",
