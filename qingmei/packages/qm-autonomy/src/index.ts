@@ -242,7 +242,7 @@ class AutonomyRunner extends AutonomyService {
         id: 'task.failed',
         action: 'task.retry',
         title: `${snapshot.failedTasks} 个任务失败`,
-        reason: `最近失败：${latest.title}（${latest.error ?? '没有错误信息'}）`,
+        reason: `最近失败：${latest.title}（${(latest.error ?? '没有错误信息').slice(0, 80)}）`,
         value: 70,
         risk: 'medium',
         payload: { runId: latest.id },
