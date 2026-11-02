@@ -4,6 +4,7 @@ import { Context } from 'cordis'
 import {
   ApprovalService,
   AuditService,
+  HarnessService,
   MemoryService,
   PermissionService,
   ScheduleService,
@@ -13,6 +14,7 @@ import {
   type AuditEntry,
   type CreateApprovalInput,
   type Decision,
+  type HarnessEvent,
   type MemoryRecord,
   type RecallQuery,
   type RecallResult,
@@ -146,20 +148,37 @@ class FakeRunner extends TaskRunnerService {
   }
 }
 
-function setup() {
+class FakeHarness extends HarnessService {
+  private readonly ok: boolean
+
+  constructor(ctx: Context, ok: boolean) {
+    super(ctx)
+    this.ok = ok
+  }
+  async available(): Promise<boolean> {
+    return this.ok
+  }
+  async *run(): AsyncIterable<HarnessEvent> {
+    yield { type: 'done', stopReason: 'end_turn' }
+  }
+  async close(): Promise<void> {}
+}
+
+function setup(options: { harness?: boolean } = {}) {
   const ctx = new Context()
   const memory = new FakeMemory(ctx)
   const schedule = new FakeSchedule(ctx)
   const task = new FakeTask(ctx)
   const runner = new FakeRunner(ctx)
-  const tools = createTools({ memory, schedule, task, runner })
+  const harness = options.harness === undefined ? undefined : new FakeHarness(ctx, options.harness)
+  const tools = createTools({ memory, schedule, task, runner, ...(harness ? { harness } : {}) })
   const byName = new Map(tools.map((tool) => [tool.name, tool]))
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const tool = byName.get(name)
     assert.ok(tool, `缺少工具 ${name}`)
     return tool.call(args)
   }
-  return { memory, schedule, task, runner, tools, byName, call }
+  return { memory, schedule, task, runner, harness, tools, byName, call }
 }
 
 function textOf(result: { content: { type: string; text: string }[] }): string {
@@ -184,6 +203,7 @@ class FakeTask extends TaskService {
       title: prompt,
       prompt,
       project: null,
+      kind: 'task',
       harnessId: 'dsh',
       sessionId: 'session-1',
       cwd: `/tmp/${id}`,
@@ -201,13 +221,14 @@ class FakeTask extends TaskService {
     return run
   }
 
-  async create(input: { prompt: string; title?: string; project?: string; cwd?: string }): Promise<TaskRun> {
+  async create(input: { prompt: string; title?: string; project?: string; kind?: 'task' | 'inventory'; cwd?: string }): Promise<TaskRun> {
     const id = `run_create${++this.seq}`
     const run = this.seed(id, input.prompt)
     run.status = 'queued'
     run.startedAt = null
     if (input.title) run.title = input.title
     if (input.project) run.project = input.project
+    if (input.kind) run.kind = input.kind
     if (input.cwd) run.cwd = input.cwd
     return run
   }
@@ -773,4 +794,45 @@ test('qm_project_status：数据超过 2 小时要提示，阻塞与失败要单
   assert.match(result, /数据已经超过 2 小时/)
   assert.match(result, /阻塞：1 个任务在等人确认/)
   assert.match(result, /失败：1 个/)
+})
+
+test('qm_project_status：数据过期且 harness 可用时，派只读盘点并避免混入别的任务', async () => {
+  const { task, runner, call } = setup({ harness: true })
+  const stale = task.seed('run_stale', '旧盘点')
+  stale.project = '青梅'
+  stale.status = 'done'
+  stale.result = '旧结论'
+  stale.finishedAt = new Date(Date.now() - 3 * 3600_000)
+
+  const result = textOf(await call('qm_project_status', { project: '青梅' }))
+  assert.match(result, /已派 run_create1 去做只读盘点/)
+  assert.equal(runner.dispatched.length, 1)
+  const created = task.runs.get('run_create1')!
+  assert.equal(created.kind, 'inventory')
+  assert.equal(created.project, '青梅')
+  assert.equal(created.cwd, stale.cwd, '盘点沿用上一次 run 的目录')
+  assert.match(created.prompt, /只读盘点/)
+})
+
+test('qm_project_status：数据过期但 harness 不可用时降级成快照', async () => {
+  const { task, runner, call } = setup({ harness: false })
+  const stale = task.seed('run_stale', '旧盘点')
+  stale.project = '青梅'
+  stale.finishedAt = new Date(Date.now() - 3 * 3600_000)
+
+  const result = textOf(await call('qm_project_status', { project: '青梅' }))
+  assert.match(result, /harness 当前不可用/)
+  assert.equal(runner.dispatched.length, 0)
+  assert.equal(task.runs.size, 1, '不该建盘点 run')
+})
+
+test('qm_project_status：数据新鲜时不派人', async () => {
+  const { task, runner, call } = setup({ harness: true })
+  const fresh = task.seed('run_fresh', '刚跑完')
+  fresh.project = '青梅'
+  fresh.finishedAt = new Date()
+
+  const result = textOf(await call('qm_project_status', { project: '青梅' }))
+  assert.doesNotMatch(result, /已派/)
+  assert.equal(runner.dispatched.length, 0)
 })

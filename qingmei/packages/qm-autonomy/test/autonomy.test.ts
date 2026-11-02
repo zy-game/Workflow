@@ -8,6 +8,7 @@ import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as autonomyPlugin from '../src/index.ts'
 import {
+  EVENTS,
   ApprovalService,
   ChannelService,
   ScheduleService,
@@ -497,6 +498,22 @@ test('账本保留期：超过 retentionDays 的 trace 被清掉，新的保留'
     const ids = (await h.autonomy.list(50)).map((trace) => trace.id)
     assert.ok(!ids.includes('aut_old'), '过期 trace 应被清理')
     assert.ok(ids.length >= 1)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('盘点任务收尾后把结论回推给主人，普通任务不回推', async () => {
+  const h = await setup()
+  try {
+    h.ctx.events.emit(EVENTS.taskFinished, taskRun({ id: 'run_inv', kind: 'inventory', project: '青梅', status: 'done', result: '现状：正常' }))
+    assert.equal(h.channel.sent.length, 1)
+    const text = (h.channel.sent[0]!.blocks[0] as { text: string }).text
+    assert.match(text, /盘点完成（青梅）/)
+    assert.match(text, /现状：正常/)
+
+    h.ctx.events.emit(EVENTS.taskFinished, taskRun({ id: 'run_task', kind: 'task', project: '青梅', status: 'done', result: '普通任务' }))
+    assert.equal(h.channel.sent.length, 1, '普通任务不应该触发汇报')
   } finally {
     await h.dispose()
   }

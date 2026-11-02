@@ -47,6 +47,8 @@ interface TaskRow extends Row {
   prompt: string
   /** 老数据没有这一列 */
   project?: string | null
+  /** task = 正常任务；inventory = 只读盘点 */
+  kind?: string | null
   harness_id: string
   session_id: string | null
   cwd: string
@@ -92,6 +94,7 @@ export class SqliteTask extends TaskService {
       title: input.title?.trim() || prompt.slice(0, 40),
       prompt,
       project: input.project?.trim() || null,
+      kind: input.kind === 'inventory' ? 'inventory' : 'task',
       harness_id: input.harnessId ?? this.harnessId,
       session_id: null,
       cwd: input.cwd ?? `${this.workspaceRoot}/${id}`,
@@ -267,6 +270,7 @@ function toRun(row: TaskRow): TaskRun {
     title: row.title,
     prompt: row.prompt,
     project: row.project?.trim() || null,
+    kind: row.kind === 'inventory' ? 'inventory' : 'task',
     harnessId: row.harness_id,
     sessionId: row.session_id,
     cwd: row.cwd,

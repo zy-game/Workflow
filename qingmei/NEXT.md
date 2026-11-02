@@ -82,8 +82,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 2. **M1 剩余**：`audience` + `validTo` + 群聊零注入 ✅、memory 必需化 ✅；
    还差画像最小版（docs/05 M1 交付物）、`summarize`、情节/决策/教训类型、断网抽取补偿队列。
 3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
-4. **A3 收尾**：数据过期（>2h）时自动派只读盘点任务，并把盘点结论回推聊天；
-   QQ/飞书渠道等 M3。读取面（`qm_project_status` + `project` 字段）已完成。
+4. **A3 收尾**：QQ/飞书渠道等 M3；盘点结论的追问闭环（「那个盘点结果呢」直接回最近的 inventory run）。
+   自动盘点与结论回推已完成。
 5. **A2 后半**：排期器（优先级/时间窗/依赖/抢占/容量）+ 信任升降级（连续采纳升级、忽略降频）。
    行动白名单与执行回执已完成，`notify.self` 会真的发消息（每日 ≤3 条）。
 6. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
@@ -129,6 +129,15 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### A3 收尾：过期自动盘点与结论回推
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` / `provider-task-sqlite` | `TaskRun.kind`（`task` / `inventory`，老数据读作 task） |
+| `packages/host-mcp` | `qm_project_status` 数据超 2 小时且 harness 可用时，派 `kind: 'inventory'` 的只读盘点 run（沿用上一次 cwd）；harness 不可用降级成快照 |
+| `packages/qm-autonomy` | 订阅 `taskFinished`：盘点 run 收尾后把结论（📋）回推到主人私聊 |
+| 测试 | 3 条（过期派单、harness 不可用降级、新鲜不派单）+ 1 条回推；全量 221 → 225 |
+
 ### A3 读取面：项目审问
 
 | 文件 | 改了什么 |
@@ -137,6 +146,8 @@ sudo journalctl -u qingmei -n 50 --no-pager
 | `packages/host-mcp` | 新工具 `qm_project_status`：按项目汇总最近 run、进度、产物、阻塞、失败，标注数据截止；>2 小时提示「可能不是最新」，无记录时列出最近任务并问要不要盘点 |
 | `apps/web/public/app.js` | 任务行显示项目名 |
 | 测试 | 4 条（project 透传、项目过滤、无记录、过期/阻塞提示）；全量 217 → 221 |
+
+> 后续：过期时自动派盘点在「A3 收尾」一节，qm_project_status 的输出会带上盘点 run 的 id。
 
 ### A2 前半：行动白名单与执行回执
 

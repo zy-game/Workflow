@@ -119,7 +119,7 @@ interface NewSessionOptions {
 | `qm_request_approval` | 危险操作前要授权 | 走 permission + 渠道确认 |
 | `qm_memory_recall` / `qm_memory_remember` | 读写青梅记忆 | 受敏感度策略约束 |
 | `qm_schedule_query` / `qm_schedule_add` | 查/加日程提醒 | 写日程表 |
-| `qm_project_status` | 汇总项目最近 run/进度/产物/阻塞（项目审问的读取面） | 只读账本，标注数据截止时间 |
+| `qm_project_status` | 汇总项目最近 run/进度/产物/阻塞（项目审问的读取面） | 只读账本；数据过期时派只读盘点 run |
 | `qm_publish_artifact` | 交付产物（文件、链接、摘要） | 存 blob + 关联 TaskRun |
 | `qm_finish_task` | 收尾：结论、状态、未完成项、**结构化任务记忆** | 关闭 TaskRun + 写入记忆 |
 

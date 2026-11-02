@@ -463,6 +463,18 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
     })
   }
 
+  // 盘点任务收尾后把结论回推给主人：这是 A3 的「汇报」环节
+  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
+  if (channel) {
+    ctx.events.on(EVENTS.taskFinished, (run: TaskRun) => {
+      if (run.kind !== 'inventory') return
+      const text = `📋 盘点完成（${run.project ?? '项目'}）：${run.result ?? run.error ?? '没有结论'}`
+      void channel
+        .send({ channel: 'web', conversationId: 'owner', blocks: [{ type: 'text', text }] })
+        .catch(() => undefined)
+    })
+  }
+
   const gateway = ctx.reflect.get('gateway', false) as GatewayService
   ctx.effect(() =>
     gateway.route({

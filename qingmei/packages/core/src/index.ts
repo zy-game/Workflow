@@ -571,6 +571,7 @@ export interface TaskRun {
   prompt: string
   /** 归属项目；老数据没有这一列，读取为 null */
   project: string | null
+  kind: 'task' | 'inventory'
   harnessId: string
   /** harness 侧会话 id，用于 resume */
   sessionId: string | null
@@ -592,6 +593,8 @@ export interface CreateTaskInput {
   title?: string
   /** 归属项目；项目审问按它过滤（docs/13 §7） */
   project?: string
+  /** task = 正常任务；inventory = 只读盘点（结论要回推给主人） */
+  kind?: 'task' | 'inventory'
   /** 不传则用 provider 的 workspaceRoot/<id> */
   cwd?: string
   harnessId?: string

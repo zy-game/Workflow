@@ -12,6 +12,7 @@ import {
   uid,
   type Actor,
   type ApprovalService,
+  type HarnessService,
   type AuditService,
   type ChannelId,
   type MemoryRecord,
@@ -165,6 +166,8 @@ export interface ToolDeps {
   schedule: ScheduleService
   task: TaskService
   runner: TaskRunnerService
+  /** 有就用它判断能不能派人盘点；没有就只给账本快照 */
+  harness?: HarnessService
 }
 
 /** 工具注册表：新增能力只在这里加一项，schema、描述、处理逻辑都在一处 */
@@ -384,7 +387,28 @@ export function createTools(deps: ToolDeps): HostTool[] {
         if (failed.length > 0) lines.push(`失败：${failed.length} 个（最近：${failed[0]!.title}）`)
 
         if (Date.now() - cutoff > 2 * 3600_000) {
-          lines.push(`注：数据已经超过 2 小时，可能不是最新；需要我派人盘点吗？`)
+          // 过期就用一次只读盘点换新鲜度；harness 不可用时只能降级成账本快照
+          const staleNote = `注：数据已经超过 2 小时（截止 ${formatWhen(new Date(cutoff))}），可能不是最新。`
+          const available = deps.harness ? await deps.harness.available().catch(() => false) : false
+          if (!available) {
+            lines.push(`${staleNote}harness 当前不可用，只能给你这份快照；要我稍后再试吗？`)
+            return textResult(lines.join('\n'))
+          }
+          const latest = matched[0]!
+          try {
+            const run = await deps.task.create({
+              prompt: inventoryPrompt(project),
+              title: `盘点：${project}`,
+              project,
+              kind: 'inventory',
+              cwd: latest.cwd,
+            })
+            deps.runner.dispatch(run)
+            lines.push(`${staleNote}已派 ${run.id} 去做只读盘点（沿用上一次的工作目录），结论出来我会发给你。`)
+          } catch (error) {
+            lines.push(`${staleNote}派人盘点失败：${messageOf(error)}`)
+          }
+          return textResult(lines.join('\n'))
         }
         return textResult(lines.join('\n'))
       },
@@ -534,6 +558,14 @@ function runDetail(run: TaskRun): string {
   return parts.length > 0 ? ` ｜ ${parts.join(' ｜ ')}` : ''
 }
 
+function inventoryPrompt(project: string): string {
+  return (
+    `只读盘点（不要修改任何文件、不要安装依赖）：项目「」的当前状态。` +
+    '查看当前目录的文件与最近变更（有 git 就用 git status/log），用不超过三行回答：现状、阻塞、建议下一步。' +
+    '最后必须调用 qm_finish_task：status 用 done，summary 写这三行结论。'
+  )
+}
+
 function formatWhen(at: Date): string {
   return at.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
@@ -590,7 +622,8 @@ export class McpHost extends McpService {
     const approval = ctx.reflect.get('approval', false) as ApprovalService | undefined
     if (!approval) throw new Error('[host-mcp] 缺少 approval 服务')
 
-    this.tools = createTools({ memory, schedule, task, runner })
+    const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
+    this.tools = createTools({ memory, schedule, task, runner, ...(harness ? { harness } : {}) })
     this.toolsByName = new Map(this.tools.map((tool) => [tool.name, tool]))
     this.guard = {
       permission,
