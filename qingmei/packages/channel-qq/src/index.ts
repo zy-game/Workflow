@@ -106,6 +106,7 @@ export function createQqAdapter(ctx: Context, config: QqConfig, transport: QqTra
     capabilities,
     async start(): Promise<void> {
       await transport.start((event) => {
+        console.log(`[channel-qq] inbound ${event.kind} conv=${event.conversationId} msg=${event.messageId}`)
         const text = typeof event.text === 'string' ? stripMentions(event.text) : ''
         if (!text) return
         const conversationId = encodeConversationId(event.kind, event.conversationId)

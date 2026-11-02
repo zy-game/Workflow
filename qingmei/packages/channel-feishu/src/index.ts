@@ -93,6 +93,7 @@ export function createFeishuAdapter(
     capabilities,
     async start(): Promise<void> {
       await transport.start((event) => {
+        console.log(`[channel-feishu] inbound chat=${event.chatId} msg=${event.messageId} mentioned=${event.mentioned === true}`)
         if (config.allowedChatIds && config.allowedChatIds.length > 0 && !config.allowedChatIds.includes(event.chatId)) {
           return
         }
