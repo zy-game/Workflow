@@ -103,6 +103,11 @@
     minConfidence: 0.7
     maxFacts: 5
 
+# 夜间巩固：每天 4 点压缩同主题低价值事实
+- name: '@qingmei/qm-consolidate'
+  config:
+    hour: 4
+
 - name: '@qingmei/channel-web'
 
 # 飞书渠道：配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET）才启用

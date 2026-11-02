@@ -132,6 +132,18 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P4：夜间巩固最小版
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `MemoryService.consolidate`（默认不做）+ `ConsolidationReport` |
+| `packages/provider-memory-sqlite` | 每个 subject 保留价值最高的 5 条，其余低置信/过旧事实软压缩（`valid_to` 置位） |
+| `packages/qm-consolidate`（新） | 每天 4 点执行；落 `qm_memory_consolidation`；有压缩才发报告；`POST /api/v1/memory/consolidate` 手动触发 |
+| 配置 | dev/prod 各加一项（23 项插件） |
+| 测试 | 301 全绿 |
+
+> 未做：embedding 种子、情节聚类/抽取式完整巩固。
+
 ### P4：工作记忆层
 
 | 文件 | 改了什么 |

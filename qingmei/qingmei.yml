@@ -62,6 +62,11 @@
     quietStart: 23
     quietEnd: 8
 
+# 夜间巩固：每天 4 点压缩同主题低价值事实（POST /api/v1/memory/consolidate 可手动触发）
+- name: '@qingmei/qm-consolidate'
+  config:
+    hour: 4
+
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 

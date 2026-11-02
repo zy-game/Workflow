@@ -11,6 +11,7 @@ import type { Context } from 'cordis'
 import {
   MemoryService,
   uid,
+  type ConsolidationReport,
   type MemoryRecord,
   type ProfileEntry,
   type RecallQuery,
@@ -41,6 +42,9 @@ const INITIAL_WEIGHT = 0.2
 const WORKING_HALF_LIFE_MS = 2 * 60 * 60 * 1000
 const WORKING_BOOST = 0.7
 const WORKING_LIMIT = 8
+const KEEP_PER_SUBJECT = 5
+const COMPRESS_CONFIDENCE = 0.75
+const COMPRESS_AGE_MS = 120 * DAY_MS
 const PRUNE_WEIGHT = 0.05
 const PRUNE_AGE_MS = 180 * DAY_MS
 
@@ -267,6 +271,36 @@ export class SqliteMemory extends MemoryService {
     }
   }
 
+  /**
+   * 夜间巩固：每个 subject 只保留价值最高的 5 条；
+   * 其余里置信度低或过旧的事实软压缩（valid_to 置位，不删除），可追溯。
+   */
+  async consolidate(now = Date.now()): Promise<ConsolidationReport> {
+    const rows = (await this.collection.find({ where: { valid_to: null } })).filter((row) =>
+      visibleTo(row, 'owner'),
+    )
+    const bySubject = new Map<string, FactRow[]>()
+    for (const row of rows) {
+      const list = bySubject.get(row.subject) ?? []
+      list.push(row)
+      bySubject.set(row.subject, list)
+    }
+
+    const compressed: string[] = []
+    for (const facts of bySubject.values()) {
+      if (facts.length <= KEEP_PER_SUBJECT) continue
+      const sorted = facts.slice().sort((a, b) => valueOf(b) - valueOf(a))
+      for (const row of sorted.slice(KEEP_PER_SUBJECT)) {
+        const age = now - row.created_at
+        if (row.confidence >= COMPRESS_CONFIDENCE && age <= COMPRESS_AGE_MS) continue
+        await this.collection.update(row.id, { valid_to: now })
+        compressed.push(row.id)
+      }
+    }
+
+    await this.prune(now)
+    return { at: new Date(now), scanned: rows.length, compressed }
+  }
   /** 剪枝：弱（w<0.05）且 180 天未共同激活的突触删除；返回删除条数 */
   async prune(now = Date.now()): Promise<number> {
     const synapses = await this.synapses.find({})
@@ -329,6 +363,11 @@ function decay(at: number | null | undefined, halfLifeMs: number, now: number): 
 }
 
 /** score = 0.35·相似 + 0.25·激活 + 0.20·置信 + 0.10·时效 + 0.10·显著度（docs/09 §4） */
+function valueOf(row: FactRow): number {
+  const salience = clamp01(row.salience ?? Math.min(1, row.confidence))
+  return 0.6 * row.confidence + 0.4 * salience
+}
+
 function scoreOf(row: FactRow, similarity: number, now: number): number {
   const salience = clamp01(row.salience ?? Math.min(1, row.confidence))
   const activation = decay(row.last_fired_at ?? null, HALF_LIFE_MS * (1 + 2 * salience), now)

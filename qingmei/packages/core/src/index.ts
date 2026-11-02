@@ -616,6 +616,13 @@ export interface ProfileEntry {
   facts: ProfileFact[]
 }
 
+export interface ConsolidationReport {
+  at: Date
+  scanned: number
+  /** 被软压缩（valid_to 置位）的事实 id；不真删 */
+  compressed: string[]
+}
+
 export interface ProfileQuery {
   /** owner 视口才给画像；群聊返回空 */
   audience?: string
@@ -631,6 +638,11 @@ export abstract class MemoryService extends Service {
   abstract ingest(records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }>
   abstract recall(query: RecallQuery): Promise<RecallResult>
   abstract forget(ids: string[]): Promise<number>
+  /** 夜间巩固：压缩同主题低价值事实；默认不做，provider 可覆盖 */
+  async consolidate(): Promise<ConsolidationReport> {
+    return { at: new Date(), scanned: 0, compressed: [] }
+  }
+
   /** 稳定画像（按 subject 聚合的高置信事实）；默认空，provider 可覆盖 */
   async profile(_query?: ProfileQuery): Promise<ProfileEntry[]> {
     return []

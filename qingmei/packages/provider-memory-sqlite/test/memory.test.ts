@@ -275,3 +275,27 @@ test('工作记忆：同一会话上一轮点亮的事实，下一轮无关键�
     await dispose()
   }
 })
+
+test('巩固：每个 subject 保留价值最高的 5 条，其余软压缩不删除', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest(
+      Array.from({ length: 8 }, (_, index) => fact('主人', `偏好${index}`, `值${index}`, 0.6)),
+    )
+    const report = await ctx.memory.consolidate()
+    assert.equal(report.scanned, 8)
+    assert.equal(report.compressed.length, 3)
+
+    const hit = await ctx.memory.recall({ text: '偏好', limit: 10 })
+    assert.equal(hit.facts.length, 5, '召回只剩 5 条有效事实')
+
+    const store = (ctx as unknown as { reflect: { get(name: string, required: false): unknown } }).reflect.get('store', false) as {
+      collection(name: string): { find(): Promise<{ valid_to: number | null }[]> }
+    }
+    const rows = await store.collection('qm_mem_fact').find()
+    assert.equal(rows.length, 8, '压缩是软失效，不删除')
+    assert.equal(rows.filter((row) => row.valid_to !== null).length, 3)
+  } finally {
+    await dispose()
+  }
+})
