@@ -96,7 +96,15 @@ export class AcpClient {
   async start(): Promise<void> {
     if (this.ready && this.child) return
     if (!this.child) this.spawnChild()
-    await this.request('initialize', { protocolVersion: 1, clientCapabilities: {} })
+    await this.request('initialize', {
+      protocolVersion: 1,
+      clientInfo: { name: 'qingmei', version: '0.1.0' },
+      // 必须显式声明：默认 fs/terminal 都是 false，agent 会因此不提供文件/命令工具
+      clientCapabilities: {
+        fs: { readTextFile: true, writeTextFile: true },
+        terminal: true,
+      },
+    })
     this.ready = true
   }
 

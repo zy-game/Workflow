@@ -340,3 +340,25 @@ test('AcpClient：实现 terminal/*，能跑命令并读到输出与退出码', 
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('AcpClient：initialize 声明 fs 与 terminal 能力', async () => {
+  const texts: string[] = []
+  const client = new AcpClient({
+    command: process.execPath,
+    args: [FAKE],
+    cwd: process.cwd(),
+    env: { FAKE_MODE: 'caps' },
+    onUpdate: (update) => {
+      const content = update.update.content as { text?: string } | undefined
+      if (typeof content?.text === 'string') texts.push(content.text)
+    },
+  })
+  try {
+    await client.start()
+    const sessionId = await client.newSession(process.cwd())
+    await client.prompt(sessionId, '看能力')
+    assert.equal(texts.join(''), 'caps:ok', '不声明 clientCapabilities 的话，agent 不会给文件/终端工具')
+  } finally {
+    client.stop()
+  }
+})

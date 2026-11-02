@@ -91,6 +91,8 @@ rl.on('line', (line) => {
   }
 
   if (method === 'initialize') {
+    const caps = params?.clientCapabilities ?? {}
+    state.caps = caps.fs?.writeTextFile === true && caps.fs?.readTextFile === true && caps.terminal === true
     send({ jsonrpc: '2.0', id, result: { protocolVersion: 1, agentInfo: { name: 'fake-acp' } } })
     return
   }
@@ -114,6 +116,11 @@ rl.on('line', (line) => {
           ],
         },
       })
+      return
+    }
+    if (mode === 'caps') {
+      chunk(state.caps ? 'caps:ok' : 'caps:missing')
+      finish()
       return
     }
     if (mode === 'fs') {
