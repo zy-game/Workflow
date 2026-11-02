@@ -31,6 +31,8 @@ export interface TaskConfig {
   timeoutMs?: number
   /** 派给哪个 harness */
   harnessId?: string
+  /** 同时最多跑几个 run；超出的排队，默认 2 */
+  maxConcurrent?: number
 }
 
 export const name = 'qm-task'
@@ -38,16 +40,21 @@ export const inject = ['task', 'gateway']
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_HARNESS = 'dsh'
+const DEFAULT_MAX_CONCURRENT = 2
 const LIST_LIMIT = 20
 
 interface RunnerDeps {
   task: TaskService
   timeoutMs: number
+  maxConcurrent: number
 }
 
 export class TaskRunner extends TaskRunnerService {
   private readonly ctx: Context
   private readonly deps: RunnerDeps
+  private readonly queue: TaskRun[] = []
+  private readonly active = new Set<string>()
+  private pumping = false
 
   constructor(ctx: Context, deps: RunnerDeps) {
     super(ctx)
@@ -61,7 +68,34 @@ export class TaskRunner extends TaskRunnerService {
   }
 
   dispatch(run: TaskRun): void {
-    void this.execute(run)
+    this.queue.push(run)
+    this.pump()
+  }
+
+  /** 当前占用与排队长度（诊断用） */
+  stats(): { active: number; queued: number } {
+    return { active: this.active.size, queued: this.queue.length }
+  }
+
+  /**
+   * 并发容量：最多 maxConcurrent 个 run 同时跑，其余排队。
+   * 一个结束就补下一个——docs/13 §6 的「容量」在 P1 的最小实现。
+   */
+  private pump(): void {
+    if (this.pumping) return
+    this.pumping = true
+    try {
+      while (this.active.size < this.deps.maxConcurrent && this.queue.length > 0) {
+        const run = this.queue.shift()!
+        this.active.add(run.id)
+        void this.execute(run).finally(() => {
+          this.active.delete(run.id)
+          this.pump()
+        })
+      }
+    } finally {
+      this.pumping = false
+    }
   }
 
   private async execute(run: TaskRun): Promise<void> {
@@ -129,7 +163,8 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const harnessId = config.harnessId ?? DEFAULT_HARNESS
-  const runner = new TaskRunner(ctx, { task, timeoutMs })
+  const maxConcurrent = Math.max(1, Number(config.maxConcurrent) || DEFAULT_MAX_CONCURRENT)
+  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent })
 
   // 任务状态变化推给 SSE，Web 任务面板直接订阅
   for (const [event, type] of [
@@ -142,6 +177,29 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
     })
   }
 
+
+  // 重启恢复：排队中的重新排队；执行中的没有 resume，就如实记失败
+  void (async () => {
+    try {
+      const runs = (await task.list(50)).slice().reverse()
+      const available = harness ? await harness.available().catch(() => false) : false
+      for (const run of runs) {
+        if (run.harnessId !== harnessId) continue
+        if (run.status === 'queued') {
+          if (available) runner.dispatch(run)
+          continue
+        }
+        if (run.status === 'running' || run.status === 'needs_approval') {
+          await task.finish(run.id, {
+            status: 'failed',
+            error: '进程重启：任务在执行中被中断（resume 未实现）',
+          })
+        }
+      }
+    } catch (error) {
+      ctx.logger.warn(`[qm-task] 重启恢复失败：${messageOf(error)}`)
+    }
+  })()
   ctx.effect(() =>
     gateway.route({
       method: 'POST',

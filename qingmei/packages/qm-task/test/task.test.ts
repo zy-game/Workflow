@@ -24,6 +24,8 @@ interface FakeHarnessOptions {
   failWith?: string
   streamError?: string
   available?: boolean
+  /** 卡住执行，直到测试放行（验证并发/排队） */
+  hold?: Promise<void>
 }
 
 class FakeHarness extends HarnessService {
@@ -44,6 +46,7 @@ class FakeHarness extends HarnessService {
     this.requests.push(req)
     req.onSession?.('sess_fake')
     if (this.options.failWith) throw new Error(this.options.failWith)
+    if (this.options.hold) await this.options.hold
     for (const text of this.options.chunks ?? []) {
       await new Promise((resolve) => setTimeout(resolve, 1))
       yield { type: 'text', text }
@@ -98,7 +101,10 @@ async function waitFor<T>(fn: () => Promise<T | null>, label: string, timeoutMs 
   throw new Error(`等待超时：${label}`)
 }
 
-async function setup(harnessOptions: FakeHarnessOptions | null = {}) {
+async function setup(
+  harnessOptions: FakeHarnessOptions | null = {},
+  options: { maxConcurrent?: number; pre?: (task: TaskService) => Promise<void> } = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-task-orch-'))
   const workspaceRoot = join(dir, 'workspaces')
   const ctx = new Context()
@@ -107,11 +113,16 @@ async function setup(harnessOptions: FakeHarnessOptions | null = {}) {
   const taskFiber = ctx.plugin(taskPlugin, { workspaceRoot })
   await taskFiber
   await ctx.plugin(gatewayPlugin)
+  const task = ctx.reflect.get('task', false) as TaskService
+  if (options.pre) await options.pre(task)
   const harness = harnessOptions ? new FakeHarness(ctx, harnessOptions) : null
-  const orchestratorFiber = ctx.plugin(taskOrchestrator, { workspaceRoot, timeoutMs: 3000 })
+  const orchestratorFiber = ctx.plugin(taskOrchestrator, {
+    workspaceRoot,
+    timeoutMs: 3000,
+    ...(options.maxConcurrent ? { maxConcurrent: options.maxConcurrent } : {}),
+  })
   await orchestratorFiber
 
-  const task = ctx.reflect.get('task', false) as TaskService
   return {
     ctx,
     task,
@@ -249,6 +260,87 @@ test('GET /api/v1/tasks：列表与按 id 查询，未知 id 404', async () => {
 
     const missing = await h.call(request('GET', '/api/v1/tasks', undefined, { id: 'run_nope' }))
     assert.equal(missing.status, 404)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('并发容量：maxConcurrent=1 时第二个 run 排队，第一个结束后才开始', async () => {
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const h = await setup({ chunks: ['好'], hold }, { maxConcurrent: 1 })
+  try {
+    const first = await h.call(request('POST', '/api/v1/tasks', { prompt: '第一个' }))
+    const second = await h.call(request('POST', '/api/v1/tasks', { prompt: '第二个' }))
+    const firstRun = (first.body as { run: TaskRun }).run
+    const secondRun = (second.body as { run: TaskRun }).run
+
+    await waitFor(async () => (h.harness!.requests.length === 1 ? true : null), '第一个开始执行')
+    assert.equal((await h.task.get(secondRun.id))?.status, 'queued', '第二个应排队')
+    assert.equal((await h.task.get(firstRun.id))?.status, 'running')
+
+    release()
+
+    const doneSecond = await waitFor(async () => {
+      const current = await h.task.get(secondRun.id)
+      return current && current.finishedAt ? current : null
+    }, '第二个收尾')
+    assert.equal(doneSecond.status, 'done')
+    assert.deepEqual(
+      h.harness!.requests.map((req) => req.text.includes('第一个') ? 'first' : 'second'),
+      ['first', 'second'],
+      '按 FIFO 顺序执行',
+    )
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('重启恢复：排队中的 run 会重新排队并执行', async () => {
+  let queuedId = ''
+  const h = await setup(
+    { chunks: ['恢复完成'] },
+    {
+      pre: async (task) => {
+        const run = await task.create({ prompt: '重启前的排队任务', title: '排队任务' })
+        queuedId = run.id
+      },
+    },
+  )
+  try {
+    const done = await waitFor(async () => {
+      const current = await h.task.get(queuedId)
+      return current && current.finishedAt ? current : null
+    }, '恢复后收尾')
+    assert.equal(done.status, 'done')
+    assert.equal(done.result, '恢复完成')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('重启恢复：执行中的 run 没有 resume，如实记 failed', async () => {
+  let runningId = ''
+  const h = await setup(
+    { chunks: ['不会跑到这里'] },
+    {
+      pre: async (task) => {
+        const run = await task.create({ prompt: '重启前正在跑的任务', title: '中断任务' })
+        await task.start(run.id)
+        runningId = run.id
+      },
+    },
+  )
+  try {
+    const failed = await waitFor(async () => {
+      const current = await h.task.get(runningId)
+      return current && current.finishedAt ? current : null
+    }, '中断任务收尾')
+    assert.equal(failed.status, 'failed')
+    assert.match(failed.error ?? '', /进程重启/)
+    assert.equal(h.harness!.requests.length, 0, '不应再拉起执行')
   } finally {
     await h.dispose()
   }

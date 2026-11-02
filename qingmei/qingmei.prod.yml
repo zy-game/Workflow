@@ -63,6 +63,8 @@
   config:
     workspaceRoot: './data/workspaces'
     timeoutMs: 600000
+    # 同时最多 2 个 harness run，其余排队；重启时排队任务会重新排队
+    maxConcurrent: 2
 
 # 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
 - name: '@qingmei/qm-approval'

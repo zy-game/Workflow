@@ -86,7 +86,7 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
    自动盘点与结论回推已完成。
 5. **A5 剩余**：回滚/投诉信号。
    采纳/忽略记账、忽略降频、可选自动升级、显式级别入口、只进摘要都已完成。
-6. **A2 后半**：排期器（优先级/时间窗/依赖/抢占/容量）。行动白名单与执行回执已完成。
+6. **A2 后半**：排期器的优先级/时间窗/依赖/抢占（并发容量、FIFO 排队、重启恢复已完成）。
 7. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
 8. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
 
@@ -129,6 +129,14 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### A2 排期器最小版：并发容量与重启恢复
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/qm-task` | `maxConcurrent`（默认 2）限制同时执行，超出的 FIFO 排队，一个结束补下一个；启动时把 `queued` 重新排队，`running`/`needs_approval` 记 failed（resume 未实现） |
+| `qingmei.prod.yml` | `maxConcurrent: 2` |
+| 测试 | 3 条（容量与 FIFO、排队恢复、中断记 failed）；全量 235 → 238 |
 
 ### A5 收尾：只进摘要
 
