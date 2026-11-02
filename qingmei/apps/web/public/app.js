@@ -725,7 +725,8 @@ function renderTasks(items) {
     const status = TASK_STATUS_TEXT[run.status] ?? run.status
     const tokens = run.usage && Number.isFinite(run.usage.totalTokens) ? ` · ${run.usage.totalTokens} tokens` : ''
     const project = typeof run.project === 'string' && run.project ? ` · ${run.project}` : ''
-    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}${project}${tokens}`
+    const priority = Number.isFinite(run.priority) && run.priority !== 5 ? ` · P${run.priority}` : ''
+    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}${project}${priority}${tokens}`
     row.append(title, meta)
 
     if (run.progress && typeof run.progress.phase === 'string') {

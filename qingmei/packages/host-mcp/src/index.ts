@@ -329,6 +329,10 @@ export function createTools(deps: ToolDeps): HostTool[] {
           title: { type: 'string', description: '短标题，缺省取 prompt 前 40 字' },
           project: { type: 'string', description: '归属项目；项目审问按它过滤' },
           cwd: { type: 'string', description: '工作目录；缺省用青梅分配的任务目录' },
+          priority: {
+            type: 'number',
+            description: '0-9，越大越先跑；静默时段只有 >=8 的任务会启动（缺省 5）',
+          },
         },
         required: ['prompt'],
       },
@@ -340,6 +344,9 @@ export function createTools(deps: ToolDeps): HostTool[] {
           ...(typeof args.title === 'string' && args.title.trim() ? { title: args.title.trim() } : {}),
           ...(typeof args.project === 'string' && args.project.trim() ? { project: args.project.trim() } : {}),
           ...(typeof args.cwd === 'string' && args.cwd.trim() ? { cwd: args.cwd.trim() } : {}),
+          ...(args.priority !== undefined && Number.isFinite(Number(args.priority))
+            ? { priority: Number(args.priority) }
+            : {}),
         })
         deps.runner.dispatch(run)
         return textResult(`已派出：${run.id}「${run.title}」，进度会记在任务账本里`)

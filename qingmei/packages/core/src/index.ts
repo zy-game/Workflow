@@ -635,6 +635,8 @@ export interface TaskRun {
   /** 归属项目；老数据没有这一列，读取为 null */
   project: string | null
   kind: 'task' | 'inventory'
+  /** 0-9，越大越先跑；缺省 5 */
+  priority: number
   harnessId: string
   /** harness 侧会话 id，用于 resume */
   sessionId: string | null
@@ -658,6 +660,8 @@ export interface CreateTaskInput {
   project?: string
   /** task = 正常任务；inventory = 只读盘点（结论要回推给主人） */
   kind?: 'task' | 'inventory'
+  /** 0-9，越大越先跑；静默时段只有 >= urgentPriority 的任务会跑 */
+  priority?: number
   /** 不传则用 provider 的 workspaceRoot/<id> */
   cwd?: string
   harnessId?: string

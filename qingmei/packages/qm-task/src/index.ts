@@ -33,6 +33,10 @@ export interface TaskConfig {
   harnessId?: string
   /** 同时最多跑几个 run；超出的排队，默认 2 */
   maxConcurrent?: number
+  /** 静默时段（如 23:00-08:00）：非紧急任务不启动，跨午夜也支持 */
+  quietHours?: { start: string; end: string }
+  /** 静默时段仍允许启动的优先级下限，默认 8 */
+  urgentPriority?: number
 }
 
 export const name = 'qm-task'
@@ -47,6 +51,8 @@ interface RunnerDeps {
   task: TaskService
   timeoutMs: number
   maxConcurrent: number
+  quietHours: QuietRange | null
+  urgentPriority: number
 }
 
 export class TaskRunner extends TaskRunnerService {
@@ -55,6 +61,7 @@ export class TaskRunner extends TaskRunnerService {
   private readonly queue: TaskRun[] = []
   private readonly active = new Set<string>()
   private pumping = false
+  private quietTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(ctx: Context, deps: RunnerDeps) {
     super(ctx)
@@ -73,20 +80,25 @@ export class TaskRunner extends TaskRunnerService {
   }
 
   /** 当前占用与排队长度（诊断用） */
-  stats(): { active: number; queued: number } {
-    return { active: this.active.size, queued: this.queue.length }
+  stats(): { active: number; queued: number; quiet: boolean } {
+    return {
+      active: this.active.size,
+      queued: this.queue.length,
+      quiet: this.deps.quietHours !== null && inQuietHours(new Date(), this.deps.quietHours),
+    }
   }
 
   /**
-   * 并发容量：最多 maxConcurrent 个 run 同时跑，其余排队。
-   * 一个结束就补下一个——docs/13 §6 的「容量」在 P1 的最小实现。
+   * 并发容量 + 优先级 + 静默时间窗（docs/13 的「现在做哪个、什么时候做」）。
+   * 先按 priority 降序、再按到达顺序；静默时段只放行优先级 >= urgentPriority 的。
    */
   private pump(): void {
     if (this.pumping) return
     this.pumping = true
     try {
-      while (this.active.size < this.deps.maxConcurrent && this.queue.length > 0) {
-        const run = this.queue.shift()!
+      while (this.active.size < this.deps.maxConcurrent) {
+        const run = this.pick()
+        if (!run) break
         this.active.add(run.id)
         void this.execute(run).finally(() => {
           this.active.delete(run.id)
@@ -96,6 +108,42 @@ export class TaskRunner extends TaskRunnerService {
     } finally {
       this.pumping = false
     }
+  }
+
+  /** 取出下一个该跑的；静默时段没有紧急任务就安排窗后重试 */
+  private pick(): TaskRun | null {
+    if (this.queue.length === 0) return null
+    this.queue.sort(
+      (a, b) => (b.priority ?? 5) - (a.priority ?? 5) || a.createdAt.getTime() - b.createdAt.getTime(),
+    )
+
+    const quiet = this.deps.quietHours !== null && inQuietHours(new Date(), this.deps.quietHours)
+    if (!quiet) return this.queue.shift() ?? null
+
+    const index = this.queue.findIndex((run) => (run.priority ?? 5) >= this.deps.urgentPriority)
+    if (index < 0) {
+      this.scheduleAfterQuiet()
+      return null
+    }
+    return this.queue.splice(index, 1)[0] ?? null
+  }
+
+  /** 静默时段结束时再泵一次，否则队列会一直停到下一个事件 */
+  /** 插件卸载时清掉窗口定时器 */
+  stop(): void {
+    if (this.quietTimer) clearTimeout(this.quietTimer)
+    this.quietTimer = null
+  }
+
+  private scheduleAfterQuiet(): void {
+    const range = this.deps.quietHours
+    if (!range || this.quietTimer) return
+    const delay = Math.max(1_000, msUntilQuietEnd(new Date(), range))
+    this.quietTimer = setTimeout(() => {
+      this.quietTimer = null
+      this.pump()
+    }, delay)
+    this.quietTimer.unref?.()
   }
 
   private async execute(run: TaskRun): Promise<void> {
@@ -164,7 +212,12 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const harnessId = config.harnessId ?? DEFAULT_HARNESS
   const maxConcurrent = Math.max(1, Number(config.maxConcurrent) || DEFAULT_MAX_CONCURRENT)
-  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent })
+  const quietHours = parseQuietHours(config.quietHours)
+  const urgentPriority = Number.isFinite(Number(config.urgentPriority))
+    ? Math.min(9, Math.max(0, Math.round(Number(config.urgentPriority))))
+    : DEFAULT_URGENT_PRIORITY
+  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority })
+  ctx.effect(() => () => runner.stop())
 
   // 任务状态变化推给 SSE，Web 任务面板直接订阅
   for (const [event, type] of [
@@ -266,6 +319,52 @@ function taskPrompt(run: TaskRun, cwd: string): string {
   ].join('\n')
 }
 
+const DEFAULT_URGENT_PRIORITY = 8
+
+/** 解析 "HH:MM" 为分钟；两端都合法才生效 */
+export function parseQuietHours(input?: { start?: string; end?: string }): QuietRange | null {
+  if (!input?.start || !input?.end) return null
+  const start = clockMinutes(input.start)
+  const end = clockMinutes(input.end)
+  if (start === null || end === null || start === end) return null
+  return { start, end }
+}
+
+export interface QuietRange {
+  /** 0..1439 */
+  start: number
+  end: number
+}
+
+function clockMinutes(value: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim())
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (hours > 23 || minutes > 59) return null
+  return hours * 60 + minutes
+}
+
+function minutesOfDay(date: Date): number {
+  return date.getHours() * 60 + date.getMinutes()
+}
+
+/** 支持跨午夜（23:00-08:00） */
+export function inQuietHours(now: Date, range: QuietRange): boolean {
+  const minutes = minutesOfDay(now)
+  return range.start < range.end
+    ? minutes >= range.start && minutes < range.end
+    : minutes >= range.start || minutes < range.end
+}
+
+/** 距离静默时段结束还有多久（毫秒），用于安排窗后重泵 */
+export function msUntilQuietEnd(now: Date, range: QuietRange): number {
+  const minutes = minutesOfDay(now)
+  const target = range.end
+  const diff = target > minutes ? target - minutes : 24 * 60 - minutes + target
+  const secondsIntoMinute = now.getSeconds() * 1000 + now.getMilliseconds()
+  return diff * 60_000 - secondsIntoMinute
+}
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

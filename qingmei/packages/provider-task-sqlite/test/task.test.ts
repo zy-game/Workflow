@@ -241,3 +241,22 @@ test('落库在 qm_task_run 集合，列名与 docs/07 §5 的字段对应', asy
     await h.dispose()
   }
 })
+
+test('priority：缺省 5，越界夹到 0..9，并持久化', async () => {
+  const h = await setup()
+  try {
+    const normal = await h.task.create({ prompt: '普通' })
+    assert.equal(normal.priority, 5)
+
+    const high = await h.task.create({ prompt: '紧急', priority: 12 })
+    assert.equal(high.priority, 9)
+
+    const low = await h.task.create({ prompt: '低', priority: -3 })
+    assert.equal(low.priority, 0)
+
+    const reread = await h.task.get(high.id)
+    assert.equal(reread?.priority, 9)
+  } finally {
+    await h.dispose()
+  }
+})

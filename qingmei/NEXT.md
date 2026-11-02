@@ -132,6 +132,19 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### A2 排期器：优先级 + 静默时间窗
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `TaskRun.priority` / `CreateTaskInput.priority`（0–9，默认 5） |
+| `packages/provider-task-sqlite` | 存 priority，越界夹到 0..9，老数据按 5 |
+| `packages/qm-task` | 队列按优先级降序、同级到达顺序；`quietHours`（默认 23:00–08:00）内只有 `priority >= urgentPriority`（默认 8）才启动，窗口结束自动重泵 |
+| `packages/host-mcp` | `qm_dispatch_task` 支持 `priority` |
+| `apps/web` | 任务条目显示非默认优先级（`P9`） |
+| 测试 | 284 全绿 |
+
+> 未做：DAG 依赖、抢占（低优需 checkpoint）。
+
 ### M1 画像最小版
 
 | 文件 | 改了什么 |

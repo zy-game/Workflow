@@ -65,6 +65,10 @@
     timeoutMs: 600000
     # 同时最多 2 个 harness run，其余排队；重启时排队任务会重新排队
     maxConcurrent: 2
+    # 静默时段：优先级 < 8 的任务不启动（跨午夜支持）
+    quietHours:
+      start: '23:00'
+      end: '08:00'
 
 # 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
 - name: '@qingmei/qm-approval'

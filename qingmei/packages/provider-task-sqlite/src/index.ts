@@ -49,6 +49,8 @@ interface TaskRow extends Row {
   project?: string | null
   /** task = 正常任务；inventory = 只读盘点 */
   kind?: string | null
+  /** 0-9，老数据没有这一列 */
+  priority?: number
   harness_id: string
   session_id: string | null
   cwd: string
@@ -95,6 +97,7 @@ export class SqliteTask extends TaskService {
       prompt,
       project: input.project?.trim() || null,
       kind: input.kind === 'inventory' ? 'inventory' : 'task',
+      priority: clampPriority(input.priority),
       harness_id: input.harnessId ?? this.harnessId,
       session_id: null,
       cwd: input.cwd ?? `${this.workspaceRoot}/${id}`,
@@ -271,6 +274,7 @@ function toRun(row: TaskRow): TaskRun {
     prompt: row.prompt,
     project: row.project?.trim() || null,
     kind: row.kind === 'inventory' ? 'inventory' : 'task',
+    priority: clampPriority(row.priority),
     harnessId: row.harness_id,
     sessionId: row.session_id,
     cwd: row.cwd,
@@ -284,6 +288,13 @@ function toRun(row: TaskRow): TaskRun {
     startedAt: row.started_at === null ? null : new Date(row.started_at),
     finishedAt: row.finished_at === null ? null : new Date(row.finished_at),
   }
+}
+
+/** 缺省 5，夹在 0..9；老数据按 5 处理 */
+function clampPriority(value: unknown): number {
+  const priority = Number(value)
+  if (!Number.isFinite(priority)) return 5
+  return Math.min(9, Math.max(0, Math.round(priority)))
 }
 
 function parseProgress(raw: string | null): TaskProgress | null {

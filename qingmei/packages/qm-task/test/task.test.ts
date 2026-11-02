@@ -103,7 +103,12 @@ async function waitFor<T>(fn: () => Promise<T | null>, label: string, timeoutMs 
 
 async function setup(
   harnessOptions: FakeHarnessOptions | null = {},
-  options: { maxConcurrent?: number; pre?: (task: TaskService) => Promise<void> } = {},
+  options: {
+    maxConcurrent?: number
+    pre?: (task: TaskService) => Promise<void>
+    quietHours?: { start: string; end: string }
+    urgentPriority?: number
+  } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-task-orch-'))
   const workspaceRoot = join(dir, 'workspaces')
@@ -120,6 +125,8 @@ async function setup(
     workspaceRoot,
     timeoutMs: 3000,
     ...(options.maxConcurrent ? { maxConcurrent: options.maxConcurrent } : {}),
+    ...(options.quietHours ? { quietHours: options.quietHours } : {}),
+    ...(options.urgentPriority !== undefined ? { urgentPriority: options.urgentPriority } : {}),
   })
   await orchestratorFiber
 
@@ -341,6 +348,60 @@ test('重启恢复：执行中的 run 没有 resume，如实记 failed', async (
     assert.equal(failed.status, 'failed')
     assert.match(failed.error ?? '', /进程重启/)
     assert.equal(h.harness!.requests.length, 0, '不应再拉起执行')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('排队按优先级：高优先跑，同级按到达顺序', async () => {
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const h = await setup({ chunks: ['ok'], hold }, { maxConcurrent: 1 })
+  try {
+    const a = await h.task.create({ prompt: 'A', priority: 1 })
+    const b = await h.task.create({ prompt: 'B', priority: 9 })
+    const c = await h.task.create({ prompt: 'C', priority: 5 })
+    const d = await h.task.create({ prompt: 'D', priority: 5 })
+
+    h.ctx.taskRunner.dispatch(a)
+    await waitFor(() => h.harness!.requests.length === 1, 'A 开始')
+    h.ctx.taskRunner.dispatch(b)
+    h.ctx.taskRunner.dispatch(c)
+    h.ctx.taskRunner.dispatch(d)
+    release()
+
+    await waitFor(() => h.harness!.requests.length === 4, '四个都开始')
+    const prompts = h.harness!.requests.map((request) => /任务：(.+)$/m.exec(request.text)?.[1] ?? '?')
+    assert.deepEqual(prompts, ['A', 'B', 'C', 'D'])
+    await waitFor(() => h.ctx.taskRunner.stats().active === 0, '全部收尾')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('静默时段：非紧急任务不启动，紧急任务照跑', async () => {
+  const now = new Date()
+  const clock = (offsetMinutes: number): string => {
+    const date = new Date(now.getTime() + offsetMinutes * 60_000)
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  }
+  const h = await setup(
+    { chunks: ['ok'] },
+    { maxConcurrent: 1, quietHours: { start: clock(-60), end: clock(60) }, urgentPriority: 8 },
+  )
+  try {
+    const normal = await h.task.create({ prompt: '普通任务', priority: 5 })
+    const urgent = await h.task.create({ prompt: '紧急任务', priority: 9 })
+    h.ctx.taskRunner.dispatch(normal)
+    h.ctx.taskRunner.dispatch(urgent)
+
+    await waitFor(() => h.harness!.requests.length === 1, '紧急任务启动')
+    const prompts = h.harness!.requests.map((request) => /任务：(.+)$/m.exec(request.text)?.[1] ?? '?')
+    assert.deepEqual(prompts, ['紧急任务'], '静默时段只放行紧急任务')
+    assert.equal(h.ctx.taskRunner.stats().queued, 1)
+    assert.equal(h.ctx.taskRunner.stats().quiet, true)
   } finally {
     await h.dispose()
   }
