@@ -97,7 +97,7 @@ export function createFeishuAdapter(
         if (config.allowedChatIds && config.allowedChatIds.length > 0 && !config.allowedChatIds.includes(event.chatId)) {
           return
         }
-        const text = typeof event.text === 'string' ? event.text.trim() : ''
+        const text = typeof event.text === 'string' ? stripMentions(event.text) : ''
         if (!text) return
         if (event.chatType === 'group' && requireMention && event.mentioned !== true) return
         if (seen.has(event.messageId)) return
@@ -239,6 +239,10 @@ function parseContent(raw: unknown): string {
   } catch {
     return ''
   }
+}
+
+export function stripMentions(text: string): string {
+  return text.replace(/@_user_\d+/g, '').trim()
 }
 
 export function apply(ctx: Context, config: FeishuConfig = {}): void {

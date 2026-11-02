@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Context } from 'cordis'
 import * as channelPlugin from '@qingmei/service-channel'
 import * as feishuPlugin from '../src/index.ts'
+import { stripMentions } from '../src/index.ts'
 import {
   EVENTS,
   type InboundMessage,
