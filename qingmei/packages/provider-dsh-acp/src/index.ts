@@ -79,6 +79,7 @@ export class DshHarness extends HarnessService {
     let sessionId: string
     try {
       sessionId = await this.ensureSession(client, req.conversationId, req.cwd)
+      req.onSession?.(sessionId)
     } catch (error) {
       yield { type: 'error', message: `建立会话失败：${messageOf(error)}` }
       return

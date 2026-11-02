@@ -104,6 +104,21 @@ test('reportProgress：写入最近一条进度并发事件', async () => {
   }
 })
 
+test('start：已在 running 时补记 sessionId', async () => {
+  const h = await setup()
+  try {
+    const run = await h.task.create({ prompt: '跑测试' })
+    await h.task.start(run.id)
+    assert.equal((await h.task.get(run.id))?.sessionId, null)
+
+    const updated = await h.task.start(run.id, { sessionId: 'sess_1' })
+    assert.equal(updated?.sessionId, 'sess_1')
+    assert.equal(h.events.filter((event) => event.type === 'started').length, 1, '补记 sessionId 不应重复发 run-started')
+  } finally {
+    await h.dispose()
+  }
+})
+
 test('setStatus：running ⇄ needs_approval', async () => {
   const h = await setup()
   try {

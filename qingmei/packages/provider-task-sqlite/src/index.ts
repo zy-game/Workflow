@@ -111,7 +111,13 @@ export class SqliteTask extends TaskService {
   async start(id: string, patch: { sessionId?: string } = {}): Promise<TaskRun | null> {
     const row = await this.collection.get(id)
     if (!row || row.finished_at !== null) return null
-    if (row.status === 'running') return toRun(row)
+    if (row.status === 'running') {
+      // 已经在跑：只补记 harness 侧 sessionId（resume 要用）
+      if (patch.sessionId && patch.sessionId !== row.session_id) {
+        return this.patch(row, { session_id: patch.sessionId })
+      }
+      return toRun(row)
+    }
     if (!RUNNING.includes(row.status)) return null
     return this.patch(row, {
       status: 'running',

@@ -42,6 +42,7 @@ class FakeHarness extends HarnessService {
 
   async *run(req: HarnessRequest): AsyncIterable<HarnessEvent> {
     this.requests.push(req)
+    req.onSession?.('sess_fake')
     if (this.options.failWith) throw new Error(this.options.failWith)
     for (const text of this.options.chunks ?? []) {
       await new Promise((resolve) => setTimeout(resolve, 1))
@@ -158,6 +159,7 @@ test('POST /api/v1/tasks：建 run、派给 harness、正常收尾为 done', asy
     assert.match(sent.text, /qm_report_progress/)
     assert.match(sent.text, /把测试跑一遍/)
     assert.equal(sent.cwd, path.resolve(done.cwd))
+    assert.equal(done.sessionId, 'sess_fake', 'harness 侧 sessionId 应回填进账本')
     assert.deepEqual(h.harness!.closed, [`task_${run.id}`])
   } finally {
     await h.dispose()

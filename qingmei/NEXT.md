@@ -70,8 +70,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 
 按这个位置，下一步按价值排：
 
-1. **H 收尾**：任务面板 ✅、H3 审批桥 ✅；还差 `qm doctor harness`、
-   `session_id` 回填与 resume、预算（token/时长）、产物（`qm_publish_artifact`）。
+1. **H 收尾**：任务面板 ✅、H3 审批桥 ✅、`session_id` 回填 ✅、`qm doctor` 的 harness 段 ✅；
+   还差 resume（拿 session_id 调 `session/resume`）、token 预算、产物（`qm_publish_artifact`）。
    做完这些「执行」这条主线才算完整，A1 才有东西可催。
 2. **M1 补记忆语义（P1 欠账）**：`audience` + `validTo`（新值让旧值失效而不是覆盖）+ 画像最小版。
    现在「我养猫→我养狗」只能覆盖，查不到「猫的记录已失效」，与 docs/05 M1 验收不符。
@@ -89,8 +89,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
    长对话后要按 `session_id + created_at` 建真实列或加二级索引 —— 与第 2 节第 3 条一起做。
 5. **MCP 工具命名未统一**：对话车道是 `memory_*` / `schedule_*`，任务数据面已经是 `qm_*`；
    两套并存，接更多 harness 前要统一。
-6. **任务执行侧还缺**：`session_id` 没回填（`harness.run` 不暴露）、没有 resume/预算/产物、
-   H3 审批桥、`qm doctor harness`；被 kill 的 run 依赖 harness 抛错记 failed，没有进程级兜底。
+6. **任务执行侧还缺**：resume（session_id 有了，但没接 `session/resume`）、token 预算、产物；
+   被 kill 的 run 依赖 harness 抛错记 failed，没有进程级兜底（`qm doctor` 能看到最近失败）。
 7. **审计没有查询接口**：只能查库或写脚本；等路由挪回插件时一起给 `GET /api/v1/audit`。
 8. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
 
@@ -282,7 +282,7 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
 | `docs/02` memory | 标注当前只做 fact 子集、`qm-agent` 把 memory 当可选的偏离 |
 | `docs/02` 事件表 | `qm/schedule/due` 的消费者改成 `qm-reminder` |
 | `docs/02` 服务清单 | 标注 11 个服务已实现（含 `task` / `permission` / `audit`），其余未实现 |
-| `docs/02` task | 新增 `task` 契约（`TaskRun` / 状态机 / `TaskService`），标注当前实现与缺口（session_id / resume / 预算 / 产物） |
+| `docs/02` task | 新增 `task` 契约（`TaskRun` / 状态机 / `TaskService`），标注当前实现与缺口（resume / 预算 / 产物） |
 | `docs/02` permission / audit | 标注实现口径：静态策略 + 工具风险分级、群聊默认拒绝、`ask` 先拒；审计落 `qm_audit`、只追加、记工具调用 |
 | `docs/03` §8 | 标注当前 HTTP 面只实现了 messages/events/schedules/healthz，会话资源与幂等键未做 |
 | `docs/05` M2 | 按 ADR-013 重写交付物与验收：工具面 = MCP 注册表 + 白名单/审批，删除「自研工具循环 6 步/90s」这类已作废的验收；状态更新为「静态准入 + 审计已完成，渠道确认未做」 |

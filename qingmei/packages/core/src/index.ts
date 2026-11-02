@@ -316,6 +316,8 @@ export interface HarnessRequest {
   text: string
   cwd?: string
   signal?: AbortSignal
+  /** 会话建好后回调一次，用于把 harness 侧 sessionId 记进账本（resume 要用） */
+  onSession?: (sessionId: string) => void
 }
 
 export type HarnessEvent =

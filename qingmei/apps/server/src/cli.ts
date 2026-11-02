@@ -10,7 +10,7 @@
 import path from 'node:path'
 import { FiberState } from 'cordis'
 import type { Fiber } from 'cordis'
-import { listenerCount } from '@qingmei/core'
+import { listenerCount, type HarnessService, type TaskService } from '@qingmei/core'
 import {
   DEFAULT_CONFIG,
   failureReason,
@@ -56,6 +56,7 @@ async function doctor(options: CliOptions): Promise<number> {
   try {
     const problems = diagnose(app)
     const lines = doctorLines(app, configPath)
+    lines.push(...(await harnessLines(app)))
     lines.push(
       problems.length === 0
         ? '结论：健康'
@@ -66,6 +67,35 @@ async function doctor(options: CliOptions): Promise<number> {
   } finally {
     await app.dispose()
   }
+}
+
+/**
+ * harness / 任务账本的体检（docs/05 H 的 `qm doctor harness`）。
+ *
+ * 能拉起就报「可拉起」；顺便带最近一次任务的结局，失败时能直接看到原因。
+ */
+async function harnessLines(app: App): Promise<string[]> {
+  const harness = app.ctx.reflect.get('harness', false) as HarnessService | undefined
+  if (!harness) return ['  harness    none（清单里没有 harness 提供方）']
+
+  const available = await harness.available().catch(() => false)
+  const lines = [
+    `  harness    ${harness.constructor?.name ?? 'unknown'}  ${available ? '可拉起' : '不可拉起'}`,
+  ]
+
+  const task = app.ctx.reflect.get('task', false) as TaskService | undefined
+  if (!task) return lines
+  const runs = await task.list(5).catch(() => [])
+  if (runs.length === 0) {
+    lines.push('  最近任务  （还没有任务）')
+    return lines
+  }
+  const latest = runs[0]!
+  const detail = latest.error ? `：${latest.error}` : latest.result ? `：${latest.result.slice(0, 60)}` : ''
+  lines.push(`  最近任务  ${latest.id} ${latest.status} ${latest.title}${detail}`)
+  const failed = runs.filter((run) => run.status === 'failed').length
+  if (failed > 0) lines.push(`  失败任务  ${failed} 条（详见任务账本）`)
+  return lines
 }
 
 function doctorLines(app: App, configPath: string): string[] {

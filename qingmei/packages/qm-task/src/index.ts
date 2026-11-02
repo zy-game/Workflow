@@ -87,6 +87,10 @@ export class TaskRunner extends TaskRunnerService {
         text: taskPrompt(run, cwd),
         cwd,
         signal: controller.signal,
+        // 会话建好后把 harness 侧 id 记进账本（以后 resume 用）
+        onSession: (sessionId) => {
+          void task.start(run.id, { sessionId }).catch(() => undefined)
+        },
       })) {
         if (event.type === 'text') collected += event.text
         else if (event.type === 'error') failure = event.message
