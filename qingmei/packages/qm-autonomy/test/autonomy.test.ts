@@ -667,3 +667,104 @@ test('锁死后即使 autoUpgrade 打开也不升级', async () => {
     await h.dispose()
   }
 })
+
+test('摘要：被忽略太多次的规则不再即时打扰，只进摘要队列', async () => {
+  const h = await setup({ digestAfter: 2, digestHour: 25 })
+  try {
+    await h.ctx.store.collection('qm_autonomy_state').insert({
+      id: 'state',
+      mode: 'A1',
+      day: '',
+      used: 0,
+      last_tick_at: null,
+      cooldowns_json: '{}',
+      accepted: 0,
+      ignored: 0,
+      streak: 0,
+      pending_json: null,
+      ignored_by_rule_json: JSON.stringify({ 'approval.pending': 2 }),
+      locked: false,
+      digest_json: JSON.stringify({ day: '', items: [] }),
+    })
+
+    h.approval.pending = [approvalRequest()]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.chosen, null)
+    assert.equal(trace.execution, null)
+    assert.match(trace.reason, /已降级到摘要/)
+    assert.equal(trace.suppressed[0]?.reason, '已降级到摘要')
+    assert.equal(h.channel.sent.length, 0, '降级后不应即时发消息')
+    assert.equal((await h.autonomy.status()).used, 0, '摘要不消耗即时预算')
+
+    const listed = await h.call({ method: 'GET', path: '/api/v1/autonomy', query: {}, headers: {} })
+    assert.equal((listed.body as { digest: { count: number } }).digest.count, 1)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('摘要：手动发送后清空，再发返回 400', async () => {
+  const h = await setup({ digestAfter: 2, digestHour: 25 })
+  try {
+    await h.ctx.store.collection('qm_autonomy_state').insert({
+      id: 'state',
+      mode: 'A1',
+      day: '',
+      used: 0,
+      last_tick_at: null,
+      cooldowns_json: '{}',
+      accepted: 0,
+      ignored: 0,
+      streak: 0,
+      pending_json: null,
+      ignored_by_rule_json: JSON.stringify({ 'approval.pending': 2 }),
+      locked: false,
+      digest_json: JSON.stringify({ day: '', items: [] }),
+    })
+    h.approval.pending = [approvalRequest()]
+    await h.autonomy.tick('tick')
+
+    const sent = await h.call({ method: 'POST', path: '/api/v1/autonomy/digest', query: {}, headers: {} })
+    assert.equal(sent.status, 200)
+    assert.deepEqual(sent.body, { ok: true, sent: 1 })
+    assert.match((h.channel.sent.at(-1)!.blocks[0] as { text: string }).text, /📥 今日摘要（1 条）/)
+
+    const again = await h.call({ method: 'POST', path: '/api/v1/autonomy/digest', query: {}, headers: {} })
+    assert.equal(again.status, 400)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('摘要：到点自动发一次，同一天不重复', async () => {
+  const h = await setup({ digestAfter: 2, digestHour: 0 })
+  try {
+    await h.ctx.store.collection('qm_autonomy_state').insert({
+      id: 'state',
+      mode: 'A1',
+      day: '',
+      used: 0,
+      last_tick_at: null,
+      cooldowns_json: '{}',
+      accepted: 0,
+      ignored: 0,
+      streak: 0,
+      pending_json: null,
+      ignored_by_rule_json: JSON.stringify({ 'approval.pending': 2 }),
+      locked: false,
+      digest_json: JSON.stringify({ day: '', items: [] }),
+    })
+    h.approval.pending = [approvalRequest()]
+    await h.autonomy.tick('tick')
+    assert.equal(h.channel.sent.filter((envelope) => JSON.stringify(envelope.blocks).includes('📥')).length, 1)
+
+    await h.autonomy.tick('tick')
+    assert.equal(
+      h.channel.sent.filter((envelope) => JSON.stringify(envelope.blocks).includes('📥')).length,
+      1,
+      '每天只发一次',
+    )
+  } finally {
+    await h.dispose()
+  }
+})

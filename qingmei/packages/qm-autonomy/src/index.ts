@@ -57,6 +57,10 @@ export interface AutonomyConfig {
   autoUpgrade?: boolean
   /** 锁死当前级别：忽略升级 */
   trustLocked?: boolean
+  /** 同一规则被忽略多少次后只进摘要 */
+  digestAfter?: number
+  /** 每天几点发摘要（本地小时） */
+  digestHour?: number
 }
 
 export const name = 'qm-autonomy'
@@ -80,6 +84,8 @@ const DEFAULTS = {
   ignoreBeforeSlowdown: 3,
   autoUpgrade: false,
   trustLocked: false,
+  digestAfter: 6,
+  digestHour: 20,
 }
 
 interface TraceRow extends Row {
@@ -107,6 +113,7 @@ interface StateRow extends Row {
   pending_json?: string | null
   ignored_by_rule_json?: string
   locked?: boolean
+  digest_json?: string
 }
 
 class AutonomyRunner extends AutonomyService {
@@ -175,19 +182,33 @@ class AutonomyRunner extends AutonomyService {
     let chosen: AutonomyCandidate | null = null
     let reason = ''
 
+    // 被忽略太多次的规则不再即时打扰：进摘要队列，等每天一次汇总
+    const immediate: AutonomyCandidate[] = []
+    for (const candidate of candidates) {
+      if ((state.ignoredByRule[candidate.id] ?? 0) >= this.config.digestAfter) {
+        if (!state.digest.items.some((item) => item.id === candidate.id)) {
+          state.digest.items.push({ id: candidate.id, title: candidate.title, reason: candidate.reason, at: now.getTime() })
+          if (state.digest.items.length > 20) state.digest.items.shift()
+        }
+        suppressed.push({ id: candidate.id, reason: '已降级到摘要' })
+        continue
+      }
+      immediate.push(candidate)
+    }
+
     const quiet = isQuiet(now, this.config.quietStart, this.config.quietEnd)
     if (quiet) {
-      for (const candidate of candidates) suppressed.push({ id: candidate.id, reason: '静默时段' })
+      for (const candidate of immediate) suppressed.push({ id: candidate.id, reason: '静默时段' })
       reason = `静默时段（${this.config.quietStart}:00–${this.config.quietEnd}:00），只记录不说话`
     } else if (state.mode === 'A0') {
-      for (const candidate of candidates) suppressed.push({ id: candidate.id, reason: 'A0 观察模式' })
+      for (const candidate of immediate) suppressed.push({ id: candidate.id, reason: 'A0 观察模式' })
       reason = 'A0 观察模式：只记录，不动作'
     } else if (state.used >= this.config.dailyBudget) {
-      for (const candidate of candidates) suppressed.push({ id: candidate.id, reason: '今日预算用完' })
+      for (const candidate of immediate) suppressed.push({ id: candidate.id, reason: '今日预算用完' })
       reason = `今日建议已用 ${state.used}/${this.config.dailyBudget}，不再打扰`
     } else {
       const allowed: AutonomyCandidate[] = []
-      for (const candidate of candidates) {
+      for (const candidate of immediate) {
         const until = state.cooldowns[candidate.id] ?? 0
         if (until > now.getTime()) {
           suppressed.push({ id: candidate.id, reason: `冷却中（至 ${new Date(until).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}）` })
@@ -196,7 +217,12 @@ class AutonomyRunner extends AutonomyService {
         allowed.push(candidate)
       }
       if (allowed.length === 0) {
-        reason = candidates.length === 0 ? '没有值得打扰的事' : '候选都在冷却中'
+        reason =
+          candidates.length === 0
+            ? '没有值得打扰的事'
+            : immediate.length === 0
+              ? '候选都已降级到摘要'
+              : '候选都在冷却中'
       } else {
         chosen = allowed.sort((a, b) => b.value - a.value || a.id.localeCompare(b.id))[0]!
         state.used += 1
@@ -249,6 +275,15 @@ class AutonomyRunner extends AutonomyService {
     await this.saveState(state)
     if (upgraded) {
       await this.notify(`🎉 连续 ${state.streak} 次采纳，已升到 A2：以后失败任务可以自己重试`)
+    }
+
+    // 摘要每天最多发一次：到点、有积压、今天还没发过
+    if (now.getHours() >= this.config.digestHour && state.digest.items.length > 0 && state.digest.day !== day) {
+      const sent = await this.sendDigest(state.digest.items)
+      if (sent) {
+        state.digest = { day, items: [] }
+        await this.saveState(state)
+      }
     }
 
     const trace: AutonomyTrace = {
@@ -323,6 +358,27 @@ class AutonomyRunner extends AutonomyService {
     }
 
     return { status: 'skipped', action: chosen.action, detail: '这个动作还没有执行器', at }
+  }
+
+  private async sendDigest(items: { id: string; title: string; reason: string }[]): Promise<boolean> {
+    const lines = items.map((item) => `- ${item.title}：${item.reason}`).join('\n')
+    const sent = await this.notify(`📥 今日摘要（${items.length} 条）\n${lines}`)
+    return sent.ok
+  }
+
+  /** 手动把积压的摘要发出去（测试与「现在发」入口） */
+  async flushDigest(): Promise<{ sent: number; ok: boolean }> {
+    return this.serialize(async () => {
+      const state = await this.getState()
+      if (state.digest.items.length === 0) return { sent: 0, ok: false }
+      const items = state.digest.items
+      const ok = await this.sendDigest(items)
+      if (ok) {
+        state.digest = { day: dayKey(new Date()), items: [] }
+        await this.saveState(state)
+      }
+      return { sent: ok ? items.length : 0, ok }
+    })
   }
 
   private async notify(text: string): Promise<{ ok: boolean; error?: string }> {
@@ -433,6 +489,7 @@ class AutonomyRunner extends AutonomyService {
         pending: null,
         ignoredByRule: {},
         locked: false,
+        digest: { day: '', items: [] },
       }
     }
     return {
@@ -447,6 +504,7 @@ class AutonomyRunner extends AutonomyService {
       pending: parseJson<AutonomyState['pending']>(row.pending_json ?? null, null),
       ignoredByRule: parseJson<Record<string, number>>(row.ignored_by_rule_json ?? null, {}),
       locked: Boolean(row.locked),
+      digest: parseJson<AutonomyState['digest']>(row.digest_json ?? null, { day: '', items: [] }),
     }
   }
 
@@ -464,6 +522,7 @@ class AutonomyRunner extends AutonomyService {
       pending_json: state.pending ? JSON.stringify(state.pending) : null,
       ignored_by_rule_json: JSON.stringify(state.ignoredByRule),
       locked: state.locked,
+      digest_json: JSON.stringify(state.digest),
     }
     if (rows[0]) await this.states.update(rows[0].id, changes)
     else await this.states.insert({ id: 'state', ...changes })
@@ -623,6 +682,7 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
           locked: status.locked,
           budget: { limit: config.dailyBudget ?? DEFAULTS.dailyBudget, used: status.used },
           trust: { accepted: status.accepted, ignored: status.ignored, streak: status.streak },
+          digest: { count: status.digest.items.length },
           lastTickAt: status.lastTickAt,
           items: await runner.list(),
         })
@@ -651,6 +711,21 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
           ...(locked !== undefined ? { locked } : {}),
         })
         res.status(200).send({ ok: true, mode: state.mode, locked: state.locked })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/autonomy/digest',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const result = await runner.flushDigest()
+        if (!result.ok) {
+          res.status(400).send({ ok: false, error: '没有待发的摘要' })
+          return
+        }
+        res.status(200).send({ ok: true, sent: result.sent })
       },
     }),
   )

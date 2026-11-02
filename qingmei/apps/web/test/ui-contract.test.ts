@@ -80,6 +80,8 @@ test('主动面板与 qm-autonomy 的路由/事件对得上', async () => {
   assert.match(script, /autonomy\/tick/, '应有「立即巡一次」的入口')
   assert.match(script, /autonomyTrust: '\.\/api\/v1\/autonomy\/trust'/, '应有显式级别切换入口')
   assert.match(script, /autonomy-level/, '应有 A0/A1/A2 级别按钮')
+  assert.match(script, /autonomyDigest: '\.\/api\/v1\/autonomy\/digest'/, '应有发摘要入口')
+  assert.match(script, /autonomy-digest/, '面板应有发摘要按钮')
 
   assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy'/, 'qm-autonomy 应注册 GET /api/v1/autonomy')
   assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy\/tick'/, 'qm-autonomy 应注册 tick')

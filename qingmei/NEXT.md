@@ -84,8 +84,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
 4. **A3 收尾**：QQ/飞书渠道等 M3；盘点结论的追问闭环（「那个盘点结果呢」直接回最近的 inventory run）。
    自动盘点与结论回推已完成。
-5. **A5 剩余**：回滚/投诉信号、低价值只进摘要（每天/每周一次）。
-   采纳/忽略记账、忽略降频、可选自动升级、显式级别入口都已完成。
+5. **A5 剩余**：回滚/投诉信号。
+   采纳/忽略记账、忽略降频、可选自动升级、显式级别入口、只进摘要都已完成。
 6. **A2 后半**：排期器（优先级/时间窗/依赖/抢占/容量）。行动白名单与执行回执已完成。
 7. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
 8. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
@@ -129,6 +129,18 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### A5 收尾：只进摘要
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `AutonomyState.digest`（`day` + 待发条目） |
+| `packages/qm-autonomy` | 同一规则被忽略 `digestAfter`（默认 6）次后不进即时消息，改入摘要队列；每天 `digestHour`（默认 20 点）后最多发一次「📥 今日摘要」；`POST /api/v1/autonomy/digest` 手动发；摘要不消耗即时预算 |
+| `apps/web/public/*` | 面板显示「摘要 N 条」，有积压时「发摘要」按钮可用 |
+| 测试 | 3 条（降级入队、手动发送与 400、到点自动发一次）；全量 232 → 235 |
+
+验证：本地把 `ignoredByRule` 置为 2、`digestAfter: 2` → tick 不再发 💡，GET 显示 `digest.count=1`；
+点「发摘要」→ 收到「📥 今日摘要（1 条）」，按钮变灰。
 
 ### A5 收尾：显式级别入口与锁死
 

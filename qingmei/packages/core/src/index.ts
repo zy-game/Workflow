@@ -310,6 +310,8 @@ export interface AutonomyState {
   ignoredByRule: Record<string, number>
   /** 主人锁死当前级别：自动升级不再生效（手动设置仍然可以） */
   locked: boolean
+  /** 被降级到摘要的候选（每天最多发一次） */
+  digest: { day: string; items: { id: string; title: string; reason: string; at: number }[] }
 }
 
 /** 自主循环：世界状态快照 → 候选 → 过滤 → 选择 → 记账（docs/13 §3） */

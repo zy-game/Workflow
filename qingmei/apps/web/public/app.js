@@ -13,6 +13,7 @@ const ENDPOINTS = {
   autonomy: './api/v1/autonomy',
   autonomyTick: './api/v1/autonomy/tick',
   autonomyTrust: './api/v1/autonomy/trust',
+  autonomyDigest: './api/v1/autonomy/digest',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -52,6 +53,7 @@ const el = {
   autonomyError: document.getElementById('autonomy-error'),
   autonomyRefresh: document.getElementById('autonomy-refresh'),
   autonomyTick: document.getElementById('autonomy-tick'),
+  autonomyDigest: document.getElementById('autonomy-digest'),
   autonomyClose: document.getElementById('autonomy-close'),
   autonomyLevels: Array.from(document.querySelectorAll('.autonomy-level')),
   autonomyLock: document.getElementById('autonomy-lock'),
@@ -834,7 +836,10 @@ function renderAutonomy(body) {
   const items = Array.isArray(body?.items) ? body.items : []
   const budget = body?.budget ?? { used: 0, limit: 0 }
   const trust = body?.trust ?? { accepted: 0, ignored: 0, streak: 0 }
-  el.autonomyBudget.textContent = `模式 ${body?.mode ?? 'A1'} · 今日建议 ${budget.used}/${budget.limit} · 采纳 ${trust.accepted} · 忽略 ${trust.ignored} · 连续 ${trust.streak}`
+  const digestCount = Number(body?.digest?.count) || 0
+  const digestText = digestCount > 0 ? ` · 摘要 ${digestCount} 条` : ''
+  el.autonomyBudget.textContent = `模式 ${body?.mode ?? 'A1'} · 今日建议 ${budget.used}/${budget.limit} · 采纳 ${trust.accepted} · 忽略 ${trust.ignored} · 连续 ${trust.streak}${digestText}`
+  if (el.autonomyDigest) el.autonomyDigest.disabled = digestCount === 0
   state.autonomyMode = body?.mode ?? 'A1'
   state.autonomyLocked = Boolean(body?.locked)
   for (const button of el.autonomyLevels ?? []) {
@@ -923,6 +928,24 @@ async function setAutonomyTrust(payload) {
     await loadAutonomy()
   } catch (error) {
     showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '设置失败')
+  }
+}
+
+async function flushAutonomyDigest() {
+  if (!state.token || el.autonomyDigest?.disabled) return
+  try {
+    const res = await fetch(ENDPOINTS.autonomyDigest, {
+      method: 'POST',
+      headers: withAuth({ Accept: 'application/json' }),
+    })
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null)
+      throw new Error(detail?.error || `发摘要失败（HTTP ）`)
+    }
+    showAutonomyError('')
+    await loadAutonomy()
+  } catch (error) {
+    showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '发摘要失败')
   }
 }
 
@@ -1167,6 +1190,7 @@ function bindEvents() {
   el.autonomyRefresh?.addEventListener('click', () => void loadAutonomy())
   el.autonomyTick?.addEventListener('click', () => void tickAutonomy())
   el.autonomyClose?.addEventListener('click', () => setAutonomyOpen(false))
+  el.autonomyDigest?.addEventListener('click', () => void flushAutonomyDigest())
   for (const button of el.autonomyLevels ?? []) {
     button.addEventListener('click', () => void setAutonomyTrust({ level: button.dataset.level }))
   }
