@@ -134,7 +134,7 @@ sudo journalctl -u qingmei -n 50 --no-pager
 | `packages/core/src/index.ts` | `AutonomyLevel` / `AutonomyActionSpec` / `AUTONOMY_ACTIONS`（7 个动作带风险、可逆、最低级别）；`AutonomyTrace.execution` |
 | `packages/qm-autonomy` | 选中后过两级闸：白名单外拒绝、不可逆不执行、级别不够降级成建议；`notify.self` 真发消息（进 `qm_message`）、`task.retry`（A2 起）重建 run 并派发；回执写进 trace |
 | `apps/web/public/app.js` | 主动面板显示回执（已执行 / 已发建议 / 跳过 / 失败 + 详情） |
-| 测试 | 4 条执行语义（A1 降级、A2 重试、发送失败、A0 无回执）；全量 212 → 216 |
+| 测试 | 4 条执行语义（A1 降级、A2 重试、发送失败、A0 无回执）；全量 212 → 217 |
 
 验证：本地 A1 + 失败任务 → `suggested` 且私聊收到「💡 …」；A2 → `executed` 且 `runId` 指向新 run。
 
