@@ -257,3 +257,21 @@ test('剪枝：弱且长期未共同激活的突触被删除，强突触保留',
     await dispose()
   }
 })
+
+test('工作记忆：同一会话上一轮点亮的事实，下一轮无关键词也能召回', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([fact('主人', '养', '狗')])
+
+    const first = await ctx.memory.recall({ text: '狗', sessionId: 's1' })
+    assert.equal(first.facts.length, 1)
+
+    const next = await ctx.memory.recall({ text: '它叫什么', sessionId: 's1' })
+    assert.ok(next.facts.some((item) => item.object === '狗'), '工作记忆应带回上一轮的事实')
+
+    const other = await ctx.memory.recall({ text: '它叫什么', sessionId: 's2' })
+    assert.equal(other.facts.length, 0, '其他会话不继承')
+  } finally {
+    await dispose()
+  }
+})

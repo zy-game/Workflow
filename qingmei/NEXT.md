@@ -132,6 +132,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P4：工作记忆层
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `RecallQuery.sessionId` |
+| `packages/provider-memory-sqlite` | 同一会话上一轮点亮的前 8 个节点，按 2 小时半衰期继承；不同会话隔离 |
+| `packages/qm-agent` | 召回时带上 sessionId |
+| 测试 | 298 全绿 |
+
+> 工作记忆在进程内，重启清空；持久化留给巩固阶段。
+
 ### P4：多跳扩散与突触剪枝
 
 | 文件 | 改了什么 |

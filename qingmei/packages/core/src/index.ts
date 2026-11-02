@@ -593,6 +593,8 @@ export interface RecallQuery {
   limit?: number
   /** 当前视口：'owner'（缺省）或 'group:<id>'；群聊只注入 public 且 audience 匹配的记忆 */
   audience?: string
+  /** 会话 id：用于工作记忆（上一轮点亮的节点） */
+  sessionId?: string
 }
 
 export interface RecallResult {

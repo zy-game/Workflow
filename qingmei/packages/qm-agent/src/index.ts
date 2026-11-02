@@ -188,7 +188,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
     let profileText = ''
     if (memory) {
       try {
-        memoryText = (await memory.recall({ text: userText, audience })).text
+        memoryText = (await memory.recall({ text: userText, audience, sessionId })).text
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
       }

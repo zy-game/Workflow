@@ -38,6 +38,9 @@ const SPREAD = 0.6
 const MAX_SPREAD_HOPS = 3
 const MIN_SCORE = 0.005
 const INITIAL_WEIGHT = 0.2
+const WORKING_HALF_LIFE_MS = 2 * 60 * 60 * 1000
+const WORKING_BOOST = 0.7
+const WORKING_LIMIT = 8
 const PRUNE_WEIGHT = 0.05
 const PRUNE_AGE_MS = 180 * DAY_MS
 
@@ -70,6 +73,8 @@ interface SynapseRow extends Row {
 export class SqliteMemory extends MemoryService {
   private readonly collection
   private readonly synapses
+  /** 会话 → 上一轮点亮的节点（工作记忆；进程内，重启清空） */
+  private readonly working = new Map<string, { ids: string[]; at: number }>()
   private readonly limit: number
   private readonly minConfidence: number
 
@@ -146,6 +151,18 @@ export class SqliteMemory extends MemoryService {
       candidates.set(row.id, scoreOf(row, score, now))
     }
 
+    // ①.5 工作记忆：同一会话上一轮点亮的节点按 2 小时半衰期继承，不依赖关键词
+    const working = query.sessionId ? this.working.get(query.sessionId) : undefined
+    if (working && working.ids.length > 0) {
+      const decayed = Math.exp((-Math.LN2 * (now - working.at)) / WORKING_HALF_LIFE_MS)
+      for (const id of working.ids) {
+        const row = byId.get(id)
+        if (!row) continue
+        const boosted = WORKING_BOOST * decayed * scoreOf(row, 1, now)
+        if (boosted > (candidates.get(id) ?? 0)) candidates.set(id, boosted)
+      }
+    }
+
     // ② 扩散：从种子沿突触走 ≤3 跳，每跳 γ 打折；只收可见节点
     const seedIds = [...candidates.entries()]
       .sort((a, b) => b[1] - a[1])
@@ -189,7 +206,12 @@ export class SqliteMemory extends MemoryService {
       .slice(0, query.limit ?? this.limit)
       .map(([id, score]) => ({ row: byId.get(id)!, score }))
 
-    // ③ 召回无副作用：强化放到返回后异步做
+    // ③ 更新工作记忆：本轮点亮的前 N 个节点留给下一轮
+    if (query.sessionId && scored.length > 0) {
+      this.working.set(query.sessionId, { ids: scored.slice(0, WORKING_LIMIT).map((entry) => entry.row.id), at: now })
+    }
+
+    // ④ 召回无副作用：强化放到返回后异步做
     if (scored.length > 1) {
       void this.reinforce(scored.slice(0, 5).map((entry) => entry.row.id)).catch(() => undefined)
     }
