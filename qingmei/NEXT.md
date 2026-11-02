@@ -46,10 +46,12 @@ qm-history（qm_message 的唯一写入方）
   - `dangerous` 或 `ask` 一律先拒（渠道确认链路未做）；被拒绝的调用也写审计
   - 审计落 `qm_audit`（只追加），列名按 docs/04；每次调用一条，带 `trace_id`
 - 人格白名单 + 输出卫生（内部工具名/路径不外泄）
-- **派任务给 DSH**：`POST /api/v1/tasks` → `qm-task` 建 run、分配 `data/workspaces/<runId>`、
-  调 `harness.run`，子 agent 经 MCP 上报进度/收尾，账本落 `qm_task_run`
-  - H1（ACP 拉起）与 H2（子 agent 主动上报）2026-11-02 已在生产验证
-  - 状态机 `queued → running ⇄ needs_approval → done|failed|cancelled`，事件推到 SSE
+- **派任务给 DSH**：对话里说「派个任务」→ DSH 调 `qm_dispatch_task` → `qm-task` 建 run、
+  分配 `data/workspaces/<runId>`、调 `harness.run`；子 agent 经 `qm_report_progress` /
+  `qm_finish_task` 回报，账本落 `qm_task_run`
+  - H1（ACP 拉起）、H2（子 agent 主动上报）、H 验收第 1/2 条 2026-11-02 已在生产验证
+  - Web 顶栏「任务」面板：状态 / 进度 / 结论，订阅 `task-started|progress|finished` 自动刷新
+  - 也可以绕开对话直接 `POST /api/v1/tasks`
 
 ## 2. 下一步（按整体方案排，不按清单）
 
@@ -83,7 +85,7 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 5. **MCP 工具命名未统一**：对话车道是 `memory_*` / `schedule_*`，任务数据面已经是 `qm_*`；
    两套并存，接更多 harness 前要统一。
 6. **任务执行侧还缺**：`session_id` 没回填（`harness.run` 不暴露）、没有 resume/预算/产物、
-   没有任务面板；被 kill 的 run 依赖 harness 抛错记 failed，没有进程级兜底。
+   H3 审批桥、`qm doctor harness`；被 kill 的 run 依赖 harness 抛错记 failed，没有进程级兜底。
 7. **审计没有查询接口**：只能查库或写脚本；等路由挪回插件时一起给 `GET /api/v1/audit`。
 8. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
 
@@ -111,6 +113,16 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 任务派发工具与 Web 任务面板
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/index.ts` | `TaskRunnerService`：`dispatch(run)`，把「派发」从「记账」里拆出来 |
+| `packages/qm-task` | 提供 `taskRunner`；harness 改成每次派发现取（不再在建插件时捕获，避开加载顺序）；POST 路由复用 runner |
+| `packages/host-mcp` | 新工具 `qm_dispatch_task`（对话车道可以直接把活派给 DSH），`inject` 加 `taskRunner` |
+| `apps/web/public/*` | 顶栏「任务」面板：状态/进度/结论，订阅 `task-started/progress/finished` 自动刷新，与日程面板互斥 |
+| 测试 | `qm_dispatch_task`、runner、面板契约；全量 172 → 174 |
 
 ### 任务账本与派发（H1/H2）
 
