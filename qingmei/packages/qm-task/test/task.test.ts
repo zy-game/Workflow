@@ -406,3 +406,19 @@ test('静默时段：非紧急任务不启动，紧急任务照跑', async () =>
     await h.dispose()
   }
 })
+
+test('POST /api/v1/tasks 支持 priority，并持久化到 run', async () => {
+  const h = await setup({ chunks: ['ok'] })
+  try {
+    const created = await h.call(request('POST', '/api/v1/tasks', { prompt: '紧急任务', priority: 9 }))
+    assert.equal(created.status, 202)
+    const run = (created.body as { run: TaskRun }).run
+    assert.equal(run.priority, 9)
+    await waitFor(async () => {
+      const current = await h.task.get(run.id)
+      return current?.finishedAt ? current : null
+    }, '任务收尾')
+  } finally {
+    await h.dispose()
+  }
+})

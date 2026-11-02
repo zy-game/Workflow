@@ -276,6 +276,7 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           ...(typeof body.title === 'string' && body.title.trim() ? { title: body.title.trim() } : {}),
           ...(typeof body.project === 'string' && body.project.trim() ? { project: body.project.trim() } : {}),
           ...(typeof body.cwd === 'string' && body.cwd.trim() ? { cwd: body.cwd.trim() } : {}),
+          ...(Number.isFinite(Number(body.priority)) ? { priority: Number(body.priority) } : {}),
           harnessId,
         })
         res.status(202).send({ ok: true, run })
