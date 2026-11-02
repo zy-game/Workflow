@@ -94,6 +94,9 @@ export const EVENTS = {
   channelOnline: 'qm/channel/online',
   channelOffline: 'qm/channel/offline',
   scheduleDue: 'qm/schedule/due',
+  taskRunStarted: 'qm/task/run-started',
+  taskProgress: 'qm/task/progress',
+  taskFinished: 'qm/task/finished',
 } as const
 
 // ────────────────────────────────────────────── 日程
@@ -376,6 +379,73 @@ export abstract class MemoryService extends Service {
   abstract ingest(records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }>
   abstract recall(query: RecallQuery): Promise<RecallResult>
   abstract forget(ids: string[]): Promise<number>
+}
+
+// ────────────────────────────────────────────── 任务账本
+
+export type TaskStatus = 'queued' | 'running' | 'needs_approval' | 'done' | 'failed' | 'cancelled'
+
+export interface TaskProgress {
+  phase: string
+  /** 0..100；模型给的百分比通常不准，只当参考 */
+  percent?: number
+  note?: string
+  at: Date
+}
+
+/**
+ * 一次执行（docs/07 §5）。
+ *
+ * `taskId` 是长期任务，`TaskRun` 是一次执行；两次重试/换 harness 是两个 run。
+ * P1 一任务一 run，`taskId === id`。
+ */
+export interface TaskRun {
+  id: string
+  taskId: string
+  title: string
+  prompt: string
+  harnessId: string
+  /** harness 侧会话 id，用于 resume */
+  sessionId: string | null
+  /** 青梅分配的 run 目录，不是用户任意路径 */
+  cwd: string
+  status: TaskStatus
+  progress: TaskProgress | null
+  result: string | null
+  error: string | null
+  createdAt: Date
+  startedAt: Date | null
+  finishedAt: Date | null
+}
+
+export interface CreateTaskInput {
+  prompt: string
+  title?: string
+  /** 不传则用 provider 的 workspaceRoot/<id> */
+  cwd?: string
+  harnessId?: string
+}
+
+export abstract class TaskService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'task')
+  }
+  abstract create(input: CreateTaskInput): Promise<TaskRun>
+  abstract get(id: string): Promise<TaskRun | null>
+  abstract list(limit?: number): Promise<TaskRun[]>
+  /** queued|needs_approval → running */
+  abstract start(id: string, patch?: { sessionId?: string }): Promise<TaskRun | null>
+  /** running → needs_approval（等主人确认）或回到 running */
+  abstract setStatus(id: string, status: 'running' | 'needs_approval'): Promise<TaskRun | null>
+  abstract reportProgress(
+    id: string,
+    progress: { phase: string; percent?: number; note?: string },
+  ): Promise<TaskRun | null>
+  /** 收尾；对已结束的 run 幂等返回当前值 */
+  abstract finish(
+    id: string,
+    input: { status: 'done' | 'failed' | 'cancelled'; result?: string; error?: string },
+  ): Promise<TaskRun | null>
 }
 
 // ────────────────────────────────────────────── 权限与审计

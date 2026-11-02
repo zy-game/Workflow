@@ -21,6 +21,8 @@
     "@qingmei/provider-memory-sqlite": "workspace:*",
     "@qingmei/provider-permission-static": "workspace:*",
     "@qingmei/provider-audit-sqlite": "workspace:*",
+    "@qingmei/provider-task-sqlite": "workspace:*",
+    "@qingmei/qm-task": "workspace:*",
     "@qingmei/service-memory": "workspace:*",
     "@qingmei/service-channel": "workspace:*",
     "@qingmei/service-gateway": "workspace:*",

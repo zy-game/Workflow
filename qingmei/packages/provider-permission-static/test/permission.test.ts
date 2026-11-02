@@ -39,6 +39,8 @@ test('私聊里当前全部日程/记忆工具都放行', async () => {
     'schedule_pause',
     'schedule_resume',
     'schedule_list',
+    'qm_report_progress',
+    'qm_finish_task',
   ]) {
     const decision = await permission.check(request(`tool.invoke:${tool}`))
     assert.equal(decision.effect, 'allow', `${tool} 在私聊里应放行`)

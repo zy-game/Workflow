@@ -50,6 +50,9 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-store-sqlite
+      '@qingmei/provider-task-sqlite':
+        specifier: workspace:*
+        version: link:../../packages/provider-task-sqlite
       '@qingmei/qm-agent':
         specifier: workspace:*
         version: link:../../packages/qm-agent
@@ -62,6 +65,9 @@ importers:
       '@qingmei/qm-reminder':
         specifier: workspace:*
         version: link:../../packages/qm-reminder
+      '@qingmei/qm-task':
+        specifier: workspace:*
+        version: link:../../packages/qm-task
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../../packages/service-channel
@@ -229,6 +235,19 @@ importers:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
 
+  packages/provider-task-sqlite:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+
   packages/qm-agent:
     dependencies:
       '@qingmei/core':
@@ -291,6 +310,25 @@ importers:
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../service-channel
+
+  packages/qm-task:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/provider-task-sqlite':
+        specifier: workspace:*
+        version: link:../provider-task-sqlite
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
 
   packages/service-channel:
     dependencies:

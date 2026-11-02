@@ -27,6 +27,11 @@
 
 - name: '@qingmei/provider-audit-sqlite'
 
+# 任务账本：qm-task 派发、子 agent 经 MCP 上报进度
+- name: '@qingmei/provider-task-sqlite'
+  config:
+    workspaceRoot: './data/workspaces'
+
 - name: '@qingmei/provider-llm-openai'
   config:
     baseURL: { $env: 'QM_LLM_BASE_URL' }
@@ -49,6 +54,12 @@
 
 # qm_message 的唯一写入方：对话、提醒、以后所有主动消息都经它落库
 - name: '@qingmei/qm-history'
+
+# 把任务派给 harness（POST /api/v1/tasks），进度经 MCP 回到账本
+- name: '@qingmei/qm-task'
+  config:
+    workspaceRoot: './data/workspaces'
+    timeoutMs: 600000
 
 # 回合结束后异步抽取事实；走 llm 车道，不阻塞回复
 - name: '@qingmei/provider-schedule-sqlite'

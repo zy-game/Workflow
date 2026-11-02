@@ -1,16 +1,18 @@
 # NEXT · 下个会话从这里开始
 
-> 写于 2026-10-30，技术债 1/2、日程暂停·继续、日程编辑、工具准入与审计完成并已部署；
-> 同一天把 `docs/` 与实现对齐（见第 7 节）。
-> 仓库全量测试 154/154（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
-> 新会话第一句建议：「读 qingmei/NEXT.md，做渠道确认链路」。
+> 写于 2026-11-02。**先读 `docs/00`（七段路线）+ `docs/05`（里程碑）再看本文件**：
+> 本文件只是「现在走到哪、下一步为什么是它」，不是任务清单。
+> 仓库全量测试 172/172（`node --test`），端到端 `node scripts/smoke.mjs` 通过。
+> 新会话第一句建议：「读 qingmei/NEXT.md，按整体方案继续」。
 
 ## 1. 现在是什么状态
 
 ```text
 Web/QQ ─▶ gateway ─▶ qm-agent ─┬─▶ harness（DSH 0.2.1 / ACP）  对话车道
                                 └─▶ llm（OpenAI 兼容 / sub2api） 降级 + 后台抽取
-memory（事实）· mcp（memory/schedule 工具）· schedule（at / everyMs / cron / 暂停）· channel · store
+qm-task ─▶ harness（run 目录 + 任务会话）                      执行车道
+memory（事实）· mcp（对话工具 + 任务上报工具）· schedule（at/everyMs/cron/暂停）
+task（qm_task_run 账本）· permission（静态策略）· audit（qm_audit）· channel · store
 qm-history（qm_message 的唯一写入方）
 ```
 
@@ -44,26 +46,31 @@ qm-history（qm_message 的唯一写入方）
   - `dangerous` 或 `ask` 一律先拒（渠道确认链路未做）；被拒绝的调用也写审计
   - 审计落 `qm_audit`（只追加），列名按 docs/04；每次调用一条，带 `trace_id`
 - 人格白名单 + 输出卫生（内部工具名/路径不外泄）
+- **派任务给 DSH**：`POST /api/v1/tasks` → `qm-task` 建 run、分配 `data/workspaces/<runId>`、
+  调 `harness.run`，子 agent 经 MCP 上报进度/收尾，账本落 `qm_task_run`
+  - H1（ACP 拉起）与 H2（子 agent 主动上报）2026-11-02 已在生产验证
+  - 状态机 `queued → running ⇄ needs_approval → done|failed|cancelled`，事件推到 SSE
 
-## 2. 下一步
+## 2. 下一步（按整体方案排，不按清单）
 
-> 2026-10-30 已把 `docs/` 与实现对齐（见第 7 节）。**现在以 docs/05 的 M2 清单为准**，
-> 下面按它的剩余项排。M2 只差「渠道确认链路」这一条。
+整体方案的分段（docs/00 §8）：P1 地基 = M0+M1+M2；P2 手与口 = M3+M3 的渠道 + H；
+P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 
-1. **渠道确认链路**（docs/05 M2 验收第 5 条的后半）。
-   现在 `permission` 的 `ask` 直接按拒绝处理。要做的闭环：
-   `ask` → 生成待确认请求（存一条 `qm_approval`）→ Web 面板/接口批准或拒绝 →
-   批准后短时（如 60s）放行同一 `action` → 过期作废。没有确认 UI 之前不要放开 `ask`。
-2. **历史表结构**（合并「历史表索引」）：按 docs/04 给 `qm_message` 结构化
-   （`blocks_json` / `direction` / `trace_id` + `(session_id, platform_message_id)` 幂等索引），
-   加 `qm_turn` 账本。现在消息被拍平成 `text`，接 QQ/飞书后图片/卡片会丢结构。
-3. **路由挪回插件**：`/api/v1/schedules`、`/api/v1/memory` 用 `ctx.gateway.route` 注册到
-   `qm-schedule-api` / `qm-memory-api`，host-gateway 只留 healthz / 静态 / SSE / dispatch
-   （docs/01 §3、docs/03 §8）。
-4. **contract 源拆分**：`core/src/cron.ts` 挪成独立 util 包，core 只留类型与抽象类
-   （docs/01 §5 已记录当前妥协）。
-5. **memory 收口**：`qm-agent` 把 memory 从可选改成必需（或启动期显式检查），
-   补 `audience` / `validTo` 的最小语义（docs/02 已标注当前实现缺口）。
+- **P1**：M0 完成；M2 日程侧完成（差渠道确认）；**M1 只做了事实子集**（没 audience / validTo / 画像）
+- **P2**：H 已通 H1/H2（任务账本、派发、上报），差任务面板 / H3 审批桥 / resume / 预算；
+  M3（QQ/飞书）**没有硬件条件**——需要账号、可能需要公网/长连接，先不碰
+- **P3**：A1 自主循环的前置（任务账本 + 日程 + 权限）已经具备
+
+按这个位置，下一步按价值排：
+
+1. **H 收口（P2 主线）**：任务面板（SSE 事件已经发出来了，只差 UI）+ H3 审批桥
+   （把 `permission.ask` 接到「任务停 needs_approval → 人批准 → 继续」）+ `qm doctor harness`。
+   做完「执行」这条主线才算闭环，A1 才有东西可催。
+2. **M1 补记忆语义（P1 欠账）**：`audience` + `validTo`（新值让旧值失效而不是覆盖）+ 画像最小版。
+   现在「我养猫→我养狗」只能覆盖，查不到「猫的记录已失效」，与 docs/05 M1 验收不符。
+3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
+4. **M2 收尾**：渠道确认链路（`ask` → 待确认 → 批准后短时放行）。
+5. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
 
 ## 3. 已知技术债（按优先级）
 
@@ -72,11 +79,13 @@ qm-history（qm_message 的唯一写入方）
 3. **前端没有构建与类型检查**：`apps/web/public/app.js` 是零构建原生模块，只靠
    `apps/web/test/ui-contract.test.ts` 守 DOM id 与接口路径。
 4. **历史表没有索引**：`qm_message` 每次 `find()` 都是全表扫（store 是通用 JSON 表），
-   长对话后要按 `session_id + created_at` 建真实列或加二级索引 —— 与第 2 节第 2 条一起做。
-5. **MCP 工具命名未统一**：对话车道是 `memory_*` / `schedule_*`，docs/07 的任务数据面是 `qm_*`；
-   接 H 阶段前要统一，否则模型会在同义工具里选错。
-6. **审计没有查询接口**：只能查库或写脚本；等路由挪回插件时一起给 `GET /api/v1/audit`。
-7. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
+   长对话后要按 `session_id + created_at` 建真实列或加二级索引 —— 与第 2 节第 3 条一起做。
+5. **MCP 工具命名未统一**：对话车道是 `memory_*` / `schedule_*`，任务数据面已经是 `qm_*`；
+   两套并存，接更多 harness 前要统一。
+6. **任务执行侧还缺**：`session_id` 没回填（`harness.run` 不暴露）、没有 resume/预算/产物、
+   没有任务面板；被 kill 的 run 依赖 harness 抛错记 failed，没有进程级兜底。
+7. **审计没有查询接口**：只能查库或写脚本；等路由挪回插件时一起给 `GET /api/v1/audit`。
+8. **部署不是自动的**：改完要手动 tar/scp/install/restart，见下。
 
 ## 4. 运维速查（139.155.78.241，用户 ubuntu，密钥 company.pem）
 
@@ -102,6 +111,29 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 任务账本与派发（H1/H2）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/index.ts` | `TaskStatus` / `TaskProgress` / `TaskRun` / `CreateTaskInput` / `TaskService`；事件 `qm/task/run-started`、`progress`、`finished` |
+| `packages/provider-task-sqlite`（新） | 账本 `qm_task_run`：create/get/list/start/setStatus/reportProgress/finish，状态机不允许跳步，已结束的 run 幂等 |
+| `packages/qm-task`（新） | 派发：`POST /api/v1/tasks` 建 run → mkdir 工作目录 → `harness.run`（prompt 里带 runId 与上报方式）→ 正常结束收尾；超时 abort 记 cancelled；没有 harness 时 503。`GET /api/v1/tasks[?id=]` |
+| `packages/host-mcp` | 新增任务数据面工具 `qm_report_progress` / `qm_finish_task`（后者可顺带写结构化记忆）；`inject` 加 `task` |
+| `packages/provider-permission-static` | 两个新工具的 risk = `write`（漏登记会被默认拒绝） |
+| 配置 | `provider-task-sqlite` + `qm-task` 进开发/生产清单；`apps/server` 依赖 |
+| 测试 | 账本 8 条、派发 6 条、MCP 工具 3 条；全量 154 → 172 |
+
+验证（2026-11-02，生产）：`POST /api/v1/tasks` → 约 1.5s 后 run `done`，
+`progress={phase:"连路验证"}`、`result="H2 通"`，`qm_audit` 里能看到子 agent 的两次工具调用。
+
+### 工具准入与审计
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/provider-permission-static`（新） | 静态策略 + 工具风险分级；群聊默认拒绝；未登记工具默认拒绝 |
+| `packages/provider-audit-sqlite`（新） | `qm_audit`，只追加 |
+| `packages/host-mcp` | `guardToolCall`：permission → 审计 → 拒绝抛可读原因 |
 
 ### 日程编辑
 
@@ -217,8 +249,9 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
 | `docs/02` schedule | 契约改成实现的形状：`ScheduleInput` / `SchedulePatch` / `Scheduled(pausedAt, firedAt)` / `create|list|cancel|pause|resume|update`，并写明 cron 语义与 `InvalidScheduleError → 400` |
 | `docs/02` memory | 标注当前只做 fact 子集、`qm-agent` 把 memory 当可选的偏离 |
 | `docs/02` 事件表 | `qm/schedule/due` 的消费者改成 `qm-reminder` |
-| `docs/02` 服务清单 | 标注 10 个服务已实现（含 `permission` / `audit`），其余未实现 |
-| `docs/02` permission / audit | 标注实现口径：静态策略 + 工具风险分级、群聊默认拒绝、`ask` 先拒；审计落 `qm_audit`、只追加、只记 MCP 工具调用 |
+| `docs/02` 服务清单 | 标注 11 个服务已实现（含 `task` / `permission` / `audit`），其余未实现 |
+| `docs/02` task | 新增 `task` 契约（`TaskRun` / 状态机 / `TaskService`），标注当前实现与缺口（session_id / resume / 预算 / 产物） |
+| `docs/02` permission / audit | 标注实现口径：静态策略 + 工具风险分级、群聊默认拒绝、`ask` 先拒；审计落 `qm_audit`、只追加、记工具调用 |
 | `docs/03` §8 | 标注当前 HTTP 面只实现了 messages/events/schedules/healthz，会话资源与幂等键未做 |
 | `docs/05` M2 | 按 ADR-013 重写交付物与验收：工具面 = MCP 注册表 + 白名单/审批，删除「自研工具循环 6 步/90s」这类已作废的验收；状态更新为「静态准入 + 审计已完成，渠道确认未做」 |
 | `docs/07` §4 | 标注目标工具集（`qm_*`）未实现，当前只有对话车道的 `memory_*` / `schedule_*` |

@@ -6,6 +6,7 @@ import {
   MemoryService,
   PermissionService,
   ScheduleService,
+  TaskService,
   type AuditEntry,
   type Decision,
   type MemoryRecord,
@@ -14,6 +15,7 @@ import {
   type Scheduled,
   type ScheduleInput,
   type SchedulePatch,
+  type TaskRun,
 } from '@qingmei/core'
 import * as permissionPlugin from '@qingmei/provider-permission-static'
 import { createTools, guardToolCall, scheduleInputFrom, type HostTool, type ToolGuard } from '../src/index.ts'
@@ -131,18 +133,96 @@ function setup() {
   const ctx = new Context()
   const memory = new FakeMemory(ctx)
   const schedule = new FakeSchedule(ctx)
-  const tools = createTools({ memory, schedule })
+  const task = new FakeTask(ctx)
+  const tools = createTools({ memory, schedule, task })
   const byName = new Map(tools.map((tool) => [tool.name, tool]))
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const tool = byName.get(name)
     assert.ok(tool, `缺少工具 ${name}`)
     return tool.call(args)
   }
-  return { memory, schedule, tools, byName, call }
+  return { memory, schedule, task, tools, byName, call }
 }
 
 function textOf(result: { content: { type: string; text: string }[] }): string {
   return result.content.map((block) => block.text).join('\n')
+}
+
+// ────────────────────────────────────────────── 假任务账本
+
+class FakeTask extends TaskService {
+  readonly runs = new Map<string, TaskRun>()
+  readonly finished: { id: string; status: string; result?: string; error?: string }[] = []
+
+  constructor(ctx: Context) {
+    super(ctx)
+  }
+
+  seed(id: string, prompt = '跑测试'): TaskRun {
+    const run: TaskRun = {
+      id,
+      taskId: id,
+      title: prompt,
+      prompt,
+      harnessId: 'dsh',
+      sessionId: 'session-1',
+      cwd: `/tmp/${id}`,
+      status: 'running',
+      progress: null,
+      result: null,
+      error: null,
+      createdAt: new Date('2026-10-30T12:00:00.000Z'),
+      startedAt: new Date('2026-10-30T12:00:01.000Z'),
+      finishedAt: null,
+    }
+    this.runs.set(id, run)
+    return run
+  }
+
+  async create(): Promise<TaskRun> {
+    throw new Error('测试任务账本不支持 create')
+  }
+
+  async get(id: string): Promise<TaskRun | null> {
+    return this.runs.get(id) ?? null
+  }
+
+  async list(): Promise<TaskRun[]> {
+    return [...this.runs.values()]
+  }
+
+  async start(): Promise<TaskRun | null> {
+    return null
+  }
+
+  async setStatus(): Promise<TaskRun | null> {
+    return null
+  }
+
+  async reportProgress(
+    id: string,
+    progress: { phase: string; percent?: number; note?: string },
+  ): Promise<TaskRun | null> {
+    const run = this.runs.get(id)
+    if (!run || run.finishedAt) return null
+    run.progress = { ...progress, at: new Date('2026-10-30T12:00:02.000Z') }
+    return run
+  }
+
+  async finish(
+    id: string,
+    input: { status: 'done' | 'failed' | 'cancelled'; result?: string; error?: string },
+  ): Promise<TaskRun | null> {
+    const run = this.runs.get(id)
+    if (!run) return null
+    if (run.finishedAt) return run
+    run.status = input.status
+    run.result = input.result ?? run.result
+    run.error = input.error ?? run.error
+    run.finishedAt = new Date('2026-10-30T12:05:00.000Z')
+    this.finished.push({ id, ...input })
+    return run
+  }
 }
 
 // ────────────────────────────────────────────── 鉴权替身
@@ -211,6 +291,8 @@ test('注册表覆盖全部工具，且 schema 与 handler 一一对应', () => 
       'schedule_update',
       'schedule_pause',
       'schedule_resume',
+      'qm_report_progress',
+      'qm_finish_task',
       'schedule_list',
     ],
   )
@@ -355,13 +437,70 @@ test('scheduleInputFrom：cron > at > seconds，秒级请求是一次性的', ()
   assert.ok((fallback.at?.getTime() ?? 0) >= before + 60_000)
 })
 
+test('qm_report_progress：写进账本；未知或已结束的 run 报错', async () => {
+  const { task, call } = setup()
+  task.seed('run_1')
+
+  const result = await call('qm_report_progress', { runId: 'run_1', phase: '跑测试', percent: 60, note: '3 个用例失败' })
+  assert.equal(textOf(result), '已记录进度：跑测试')
+  assert.deepEqual(task.runs.get('run_1')?.progress, {
+    phase: '跑测试',
+    percent: 60,
+    note: '3 个用例失败',
+    at: new Date('2026-10-30T12:00:02.000Z'),
+  })
+
+  await assert.rejects(call('qm_report_progress', { runId: 'run_nope', phase: '跑测试' }), /没有这个任务/)
+  await assert.rejects(call('qm_report_progress', { runId: 'run_1', phase: '  ' }), /phase 不能为空/)
+  await assert.rejects(call('qm_report_progress', { runId: '  ', phase: '跑测试' }), /runId 不能为空/)
+})
+
+test('qm_finish_task：收尾并写入结构化记忆', async () => {
+  const { task, memory, call } = setup()
+  task.seed('run_1')
+
+  const result = await call('qm_finish_task', {
+    runId: 'run_1',
+    status: 'done',
+    summary: '测试全绿，顺手修了一个用例',
+    memory: [{ subject: '项目:青梅', predicate: '测试状态', object: '全绿' }],
+  })
+
+  assert.match(textOf(result), /已收尾：done，写入 1 条记忆/)
+  assert.deepEqual(task.finished, [{ id: 'run_1', status: 'done', result: '测试全绿，顺手修了一个用例' }])
+  assert.equal(memory.ingested.length, 1)
+  const record = memory.ingested[0]![0]!
+  assert.equal(record.origin.kind, 'harness')
+  assert.equal(record.origin.id, 'task:run_1')
+  assert.equal(record.subject, '项目:青梅')
+})
+
+test('qm_finish_task：failed 记 error；空记忆条目被丢掉', async () => {
+  const { task, memory, call } = setup()
+  task.seed('run_1')
+
+  const result = await call('qm_finish_task', {
+    runId: 'run_1',
+    status: 'failed',
+    summary: '磁盘满了',
+    memory: [{ subject: '只有主语' }],
+  })
+
+  assert.match(textOf(result), /已收尾：failed/)
+  assert.deepEqual(task.finished, [{ id: 'run_1', status: 'failed', error: '磁盘满了' }])
+  assert.equal(memory.ingested.length, 0)
+
+  await assert.rejects(call('qm_finish_task', { runId: 'run_nope' }), /没有这个任务/)
+})
+
 test('工具定义是纯数据，handler 只通过依赖访问服务', async () => {
   const ctx = new Context()
   const memory = new FakeMemory(ctx)
   const schedule = new FakeSchedule(ctx)
-  const tools: HostTool[] = createTools({ memory, schedule })
+  const task = new FakeTask(ctx)
+  const tools: HostTool[] = createTools({ memory, schedule, task })
   // 同一份定义可以重复创建（没有模块级可变状态）
-  const again = createTools({ memory, schedule })
+  const again = createTools({ memory, schedule, task })
   assert.notEqual(tools[0], again[0])
   assert.deepEqual(
     tools.map((tool) => tool.name),

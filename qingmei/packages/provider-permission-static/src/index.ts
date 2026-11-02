@@ -38,6 +38,9 @@ const DEFAULT_TOOL_RISK: Record<string, 'read' | 'write' | 'dangerous'> = {
   schedule_cancel: 'write',
   schedule_pause: 'write',
   schedule_resume: 'write',
+  // 任务数据面：子 agent 上报进度/收尾
+  qm_report_progress: 'write',
+  qm_finish_task: 'write',
 }
 
 const DEFAULT_DENY_IN_GROUP = ['tool.invoke:schedule_', 'tool.invoke:memory_remember']

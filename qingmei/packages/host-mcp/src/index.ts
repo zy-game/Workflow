@@ -20,6 +20,7 @@ import {
   type ScheduleInput,
   type SchedulePatch,
   type ScheduleService,
+  type TaskService,
 } from '@qingmei/core'
 
 export interface McpConfig {
@@ -35,7 +36,7 @@ export interface McpConfig {
 }
 
 export const name = 'host-mcp'
-export const inject = ['memory', 'schedule', 'permission', 'audit']
+export const inject = ['memory', 'schedule', 'task', 'permission', 'audit']
 
 const PROTOCOL_VERSION = '2024-11-05'
 
@@ -99,6 +100,7 @@ export interface HostTool {
 export interface ToolDeps {
   memory: MemoryService
   schedule: ScheduleService
+  task: TaskService
 }
 
 /** 工具注册表：新增能力只在这里加一项，schema、描述、处理逻辑都在一处 */
@@ -249,6 +251,78 @@ export function createTools(deps: ToolDeps): HostTool[] {
       },
     },
     {
+      name: 'qm_report_progress',
+      description:
+        '向青梅上报当前任务进度。phase 必填；percent 可选（模型给的百分比通常不准）；note 用一句话说明卡在哪。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          runId: { type: 'string', description: '任务 id，如 run_xxx' },
+          phase: { type: 'string', description: '当前阶段，如「跑测试」' },
+          percent: { type: 'number', description: '0-100，可选' },
+          note: { type: 'string', description: '一句话进展/卡点' },
+        },
+        required: ['runId', 'phase'],
+      },
+      async call(args) {
+        const runId = String(args.runId ?? '').trim()
+        const phase = String(args.phase ?? '').trim()
+        if (!runId) throw new Error('runId 不能为空')
+        if (!phase) throw new Error('phase 不能为空')
+        const run = await deps.task.reportProgress(runId, {
+          phase,
+          ...(typeof args.percent === 'number' ? { percent: args.percent } : {}),
+          ...(typeof args.note === 'string' ? { note: args.note } : {}),
+        })
+        if (!run) throw new Error('没有这个任务，或它已经结束')
+        return textResult(`已记录进度：${run.progress?.phase ?? phase}`)
+      },
+    },
+    {
+      name: 'qm_finish_task',
+      description: '任务收尾：写入结论与状态；可以顺带把值得记住的事实写进青梅记忆。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          runId: { type: 'string' },
+          status: { type: 'string', enum: ['done', 'failed'], description: '默认 done' },
+          summary: { type: 'string', description: '结论/未完成项' },
+          memory: {
+            type: 'array',
+            description: '结构化记忆，可选',
+            items: {
+              type: 'object',
+              properties: {
+                subject: { type: 'string' },
+                predicate: { type: 'string' },
+                object: { type: 'string' },
+                confidence: { type: 'number' },
+              },
+              required: ['subject', 'predicate', 'object'],
+            },
+          },
+        },
+        required: ['runId'],
+      },
+      async call(args) {
+        const runId = String(args.runId ?? '').trim()
+        if (!runId) throw new Error('runId 不能为空')
+        const status = args.status === 'failed' ? 'failed' : 'done'
+        const summary = typeof args.summary === 'string' && args.summary.trim() ? args.summary.trim() : undefined
+
+        const records = memoryRecordsOf(args.memory, runId)
+        if (records.length > 0) await deps.memory.ingest(records)
+
+        const run = await deps.task.finish(runId, {
+          status,
+          ...(summary && status === 'done' ? { result: summary } : {}),
+          ...(summary && status === 'failed' ? { error: summary } : {}),
+        })
+        if (!run) throw new Error('没有这个任务')
+        return textResult(`已收尾：${status}${records.length > 0 ? `，写入 ${records.length} 条记忆` : ''}`)
+      },
+    },
+    {
       name: 'schedule_list',
       description: '列出所有未触发的提醒（含已暂停的，暂停状态会标出来）。',
       inputSchema: { type: 'object', properties: {} },
@@ -269,6 +343,30 @@ function textResult(text: string): ToolResult {
   return { content: [{ type: 'text', text }], isError: false }
 }
 
+/** 把 qm_finish_task 的 memory 参数折成可写入的记忆记录 */
+function memoryRecordsOf(raw: unknown, runId: string): MemoryRecord[] {
+  if (!Array.isArray(raw)) return []
+  const records: MemoryRecord[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const entry = item as Record<string, unknown>
+    const subject = String(entry.subject ?? '').trim()
+    const predicate = String(entry.predicate ?? '').trim()
+    const object = String(entry.object ?? '').trim()
+    if (!subject || !predicate || !object) continue
+    records.push({
+      kind: 'fact',
+      subject,
+      predicate,
+      object,
+      confidence: typeof entry.confidence === 'number' ? entry.confidence : 0.7,
+      sensitivity: 'private',
+      origin: { kind: 'harness', id: `task:${runId}` },
+    })
+  }
+  return records
+}
+
 export class McpHost extends McpService {
   private readonly server: Server
   private readonly options: Required<McpConfig>
@@ -282,12 +380,14 @@ export class McpHost extends McpService {
     if (!memory) throw new Error('[host-mcp] 缺少 memory 服务')
     const schedule = ctx.reflect.get('schedule', false) as ScheduleService | undefined
     if (!schedule) throw new Error('[host-mcp] 缺少 schedule 服务')
+    const task = ctx.reflect.get('task', false) as TaskService | undefined
+    if (!task) throw new Error('[host-mcp] 缺少 task 服务')
     const permission = ctx.reflect.get('permission', false) as PermissionService | undefined
     if (!permission) throw new Error('[host-mcp] 缺少 permission 服务')
     const audit = ctx.reflect.get('audit', false) as AuditService | undefined
     if (!audit) throw new Error('[host-mcp] 缺少 audit 服务')
 
-    this.tools = createTools({ memory, schedule })
+    this.tools = createTools({ memory, schedule, task })
     this.toolsByName = new Map(this.tools.map((tool) => [tool.name, tool]))
     this.guard = {
       permission,

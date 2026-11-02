@@ -26,6 +26,9 @@
 
 - name: '@qingmei/provider-audit-sqlite'
 
+# 任务账本：把任务派给 harness 并记录 run（host-mcp 的任务工具依赖它）
+- name: '@qingmei/provider-task-sqlite'
+
 # ── 业务
 - name: '@qingmei/qm-agent'
   config:
@@ -33,6 +36,9 @@
 
 # qm_message 的唯一写入方：qm-agent 只读历史，落库都走这里
 - name: '@qingmei/qm-history'
+
+# 把任务派给 harness；没有 harness 时 POST /api/v1/tasks 返回 503
+- name: '@qingmei/qm-task'
 
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
