@@ -141,7 +141,7 @@ sudo journalctl -u qingmei -n 50 --no-pager
 | `packages/qm-task` | 依赖未完成留在队列；前置失败/取消/不存在或成环 → 本任务 failed；`pumpQueued` 修复入队竞态 |
 | `packages/host-mcp` / HTTP | `qm_dispatch_task` 与 `POST /api/v1/tasks` 支持 `dependsOn` |
 | `apps/web` | 任务卡显示「等 N 个前置」 |
-| 测试 | 288 全绿 |
+| 测试 | 289 全绿 |
 
 > 未做：抢占（低优需 checkpoint）。
 
