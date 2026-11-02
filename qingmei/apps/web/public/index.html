@@ -19,6 +19,16 @@
         <h1 class="brand">青梅 · <span class="brand-phase">P1</span></h1>
         <div class="topbar-actions">
           <button
+            id="tasks-toggle"
+            class="ghost"
+            type="button"
+            aria-expanded="false"
+            aria-controls="tasks"
+            title="查看任务"
+          >
+            任务
+          </button>
+          <button
             id="schedules-toggle"
             class="ghost"
             type="button"
@@ -41,6 +51,21 @@
           </span>
         </div>
       </header>
+
+      <section id="tasks" class="tasks" hidden aria-labelledby="tasks-title">
+        <div class="tasks-head">
+          <h2 id="tasks-title" class="tasks-title">任务</h2>
+          <div class="tasks-tools">
+            <button id="tasks-refresh" class="ghost" type="button">刷新</button>
+            <button id="tasks-close" class="ghost" type="button">关闭</button>
+          </div>
+        </div>
+        <p id="tasks-empty" class="tasks-empty">
+          还没有任务。在对话里说「用 DSH 把测试跑一遍」，或者直接 POST /api/v1/tasks。
+        </p>
+        <p id="tasks-error" class="tasks-error" role="alert" hidden></p>
+        <ul id="tasks-list" class="tasks-list"></ul>
+      </section>
 
       <section id="schedules" class="schedules" hidden aria-labelledby="schedules-title">
         <div class="schedules-head">

@@ -6,6 +6,7 @@ import {
   MemoryService,
   PermissionService,
   ScheduleService,
+  TaskRunnerService,
   TaskService,
   type AuditEntry,
   type Decision,
@@ -129,19 +130,32 @@ class FakeSchedule extends ScheduleService {
   }
 }
 
+class FakeRunner extends TaskRunnerService {
+  readonly dispatched: string[] = []
+
+  constructor(ctx: Context) {
+    super(ctx)
+  }
+
+  dispatch(run: TaskRun): void {
+    this.dispatched.push(run.id)
+  }
+}
+
 function setup() {
   const ctx = new Context()
   const memory = new FakeMemory(ctx)
   const schedule = new FakeSchedule(ctx)
   const task = new FakeTask(ctx)
-  const tools = createTools({ memory, schedule, task })
+  const runner = new FakeRunner(ctx)
+  const tools = createTools({ memory, schedule, task, runner })
   const byName = new Map(tools.map((tool) => [tool.name, tool]))
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const tool = byName.get(name)
     assert.ok(tool, `缺少工具 ${name}`)
     return tool.call(args)
   }
-  return { memory, schedule, task, tools, byName, call }
+  return { memory, schedule, task, runner, tools, byName, call }
 }
 
 function textOf(result: { content: { type: string; text: string }[] }): string {
@@ -153,6 +167,7 @@ function textOf(result: { content: { type: string; text: string }[] }): string {
 class FakeTask extends TaskService {
   readonly runs = new Map<string, TaskRun>()
   readonly finished: { id: string; status: string; result?: string; error?: string }[] = []
+  private seq = 0
 
   constructor(ctx: Context) {
     super(ctx)
@@ -179,8 +194,14 @@ class FakeTask extends TaskService {
     return run
   }
 
-  async create(): Promise<TaskRun> {
-    throw new Error('测试任务账本不支持 create')
+  async create(input: { prompt: string; title?: string; cwd?: string }): Promise<TaskRun> {
+    const id = `run_create${++this.seq}`
+    const run = this.seed(id, input.prompt)
+    run.status = 'queued'
+    run.startedAt = null
+    if (input.title) run.title = input.title
+    if (input.cwd) run.cwd = input.cwd
+    return run
   }
 
   async get(id: string): Promise<TaskRun | null> {
@@ -291,6 +312,7 @@ test('注册表覆盖全部工具，且 schema 与 handler 一一对应', () => 
       'schedule_update',
       'schedule_pause',
       'schedule_resume',
+      'qm_dispatch_task',
       'qm_report_progress',
       'qm_finish_task',
       'schedule_list',
@@ -437,6 +459,19 @@ test('scheduleInputFrom：cron > at > seconds，秒级请求是一次性的', ()
   assert.ok((fallback.at?.getTime() ?? 0) >= before + 60_000)
 })
 
+test('qm_dispatch_task：建 run 并交给 runner，空 prompt 报错', async () => {
+  const { task, runner, call } = setup()
+  const result = await call('qm_dispatch_task', { prompt: '把测试跑一遍', title: '跑测试' })
+
+  assert.match(textOf(result), /已派出：run_create1「跑测试」/)
+  const run = task.runs.get('run_create1')!
+  assert.equal(run.prompt, '把测试跑一遍')
+  assert.equal(run.status, 'queued')
+  assert.deepEqual(runner.dispatched, ['run_create1'])
+
+  await assert.rejects(call('qm_dispatch_task', { prompt: '   ' }), /prompt 不能为空/)
+})
+
 test('qm_report_progress：写进账本；未知或已结束的 run 报错', async () => {
   const { task, call } = setup()
   task.seed('run_1')
@@ -498,9 +533,10 @@ test('工具定义是纯数据，handler 只通过依赖访问服务', async () 
   const memory = new FakeMemory(ctx)
   const schedule = new FakeSchedule(ctx)
   const task = new FakeTask(ctx)
-  const tools: HostTool[] = createTools({ memory, schedule, task })
+  const runner = new FakeRunner(ctx)
+  const tools: HostTool[] = createTools({ memory, schedule, task, runner })
   // 同一份定义可以重复创建（没有模块级可变状态）
-  const again = createTools({ memory, schedule, task })
+  const again = createTools({ memory, schedule, task, runner })
   assert.notEqual(tools[0], again[0])
   assert.deepEqual(
     tools.map((tool) => tool.name),

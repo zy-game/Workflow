@@ -321,6 +321,120 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* ── 任务面板 ───────────────────────────────── */
+
+.tasks {
+  flex: none;
+  max-height: min(46dvh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px clamp(14px, 4vw, 28px) 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-elev);
+  scrollbar-width: thin;
+  scrollbar-color: #2d3445 transparent;
+}
+
+.tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.tasks-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 650;
+}
+
+.tasks-tools {
+  display: flex;
+  gap: 8px;
+}
+
+.tasks-empty {
+  margin: 6px 0 2px;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+}
+
+.tasks-error {
+  margin: 6px 0;
+  color: #ffb4ae;
+  font-size: 0.8125rem;
+}
+
+.tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 12px;
+  background: var(--bg-input);
+}
+
+.task-item.is-running {
+  border-left-color: var(--accent);
+}
+
+.task-item.is-done {
+  border-left-color: var(--ok);
+}
+
+.task-item.is-failed {
+  border-left-color: var(--danger);
+}
+
+.task-item.is-needs_approval {
+  border-left-color: var(--warn);
+}
+
+.task-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.task-meta,
+.task-progress {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.task-progress {
+  color: var(--accent);
+}
+
+.task-result {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-error {
+  margin: 2px 0 0;
+  color: #ffb4ae;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
 /* ── 日程面板 ───────────────────────────────── */
 
 .schedules {
@@ -637,6 +751,10 @@ body {
   }
 
   .schedules {
+    max-height: 55dvh;
+  }
+
+  .tasks {
     max-height: 55dvh;
   }
 

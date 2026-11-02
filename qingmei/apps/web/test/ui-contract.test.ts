@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const PUBLIC = path.resolve(here, '../public')
 const GATEWAY = path.resolve(here, '../../../packages/host-gateway/src/index.ts')
+const QM_TASK = path.resolve(here, '../../../packages/qm-task/src/index.ts')
 
 async function readPublic(name: string): Promise<string> {
   return readFile(path.join(PUBLIC, name), 'utf8')
@@ -38,4 +39,18 @@ test('app.js 请求的日程接口与网关注册的路由一致', async () => {
   assert.match(gateway, /pathname\.startsWith\('\/api\/v1\/schedules\/'\) && method === 'PATCH'/, '网关应注册 PATCH')
   assert.match(gateway, /pathname\.startsWith\('\/api\/v1\/schedules\/'\) && method === 'DELETE'/, '网关应注册 DELETE')
   assert.match(gateway, /\(pause\|resume\)/, '网关应识别 /pause 与 /resume')
+})
+
+test('任务面板与 qm-task 的路由/事件对得上', async () => {
+  const script = await readPublic('app.js')
+  const taskPlugin = await readFile(QM_TASK, 'utf8')
+
+  assert.match(script, /tasks: '\.\/api\/v1\/tasks'/, 'app.js 应把任务接口写在 ENDPOINTS 里')
+  assert.match(script, /task-progress/, '任务面板应订阅 SSE 的 task-progress')
+  assert.match(script, /TASK_STATUS_TEXT/, '任务面板应有状态文案')
+
+  assert.match(taskPlugin, /path: '\/api\/v1\/tasks'/, 'qm-task 应注册 /api/v1/tasks')
+  assert.match(taskPlugin, /'task-started'/, 'qm-task 应把 run-started 推到 SSE')
+  assert.match(taskPlugin, /'task-progress'/, 'qm-task 应把 progress 推到 SSE')
+  assert.match(taskPlugin, /'task-finished'/, 'qm-task 应把 finished 推到 SSE')
 })

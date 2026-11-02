@@ -448,6 +448,17 @@ export abstract class TaskService extends Service {
   ): Promise<TaskRun | null>
 }
 
+/**
+ * 把 run 交给 harness 去跑。派发是异步的：调用方拿回 run 就该返回，
+ * 进度通过 `qm/task/*` 事件与账本查询。
+ */
+export abstract class TaskRunnerService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'taskRunner')
+  }
+  abstract dispatch(run: TaskRun): void
+}
+
 // ────────────────────────────────────────────── 权限与审计
 
 export interface Actor {

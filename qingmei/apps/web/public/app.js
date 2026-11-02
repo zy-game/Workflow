@@ -7,6 +7,7 @@ const ENDPOINTS = {
   events: './api/v1/events',
   messages: './api/v1/messages',
   schedules: './api/v1/schedules',
+  tasks: './api/v1/tasks',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -29,6 +30,13 @@ const el = {
   schedulesError: document.getElementById('schedules-error'),
   schedulesRefresh: document.getElementById('schedules-refresh'),
   schedulesClose: document.getElementById('schedules-close'),
+  tasksToggle: document.getElementById('tasks-toggle'),
+  tasks: document.getElementById('tasks'),
+  tasksList: document.getElementById('tasks-list'),
+  tasksEmpty: document.getElementById('tasks-empty'),
+  tasksError: document.getElementById('tasks-error'),
+  tasksRefresh: document.getElementById('tasks-refresh'),
+  tasksClose: document.getElementById('tasks-close'),
 }
 
 const state = {
@@ -44,6 +52,8 @@ const state = {
   retryTimer: 0,
   schedulesOpen: false,
   schedulesLoading: false,
+  tasksOpen: false,
+  tasksLoading: false,
 }
 
 // ── 令牌 ─────────────────────────────────────
@@ -179,6 +189,13 @@ function connect() {
   source.addEventListener('assistant', (event) => {
     handleAssistant(parseEventData(event.data))
   })
+
+  // 任务状态变化：面板开着就刷新，别让用户手动点
+  for (const type of ['task-started', 'task-progress', 'task-finished']) {
+    source.addEventListener(type, () => {
+      if (state.tasksOpen) void loadTasks()
+    })
+  }
 
   // 兼容把事件类型写在 data.type / data.event 里的服务端实现
   source.addEventListener('message', (event) => {
@@ -629,7 +646,100 @@ function setSchedulesOpen(open) {
   state.schedulesOpen = open
   el.schedules.hidden = !open
   el.schedulesToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
-  if (open) void loadSchedules()
+  if (open) {
+    setTasksOpen(false)
+    void loadSchedules()
+  }
+}
+
+// ── 任务 ─────────────────────────────────────
+
+const TASK_STATUS_TEXT = {
+  queued: '排队中',
+  running: '执行中',
+  needs_approval: '等确认',
+  done: '完成',
+  failed: '失败',
+  cancelled: '已取消',
+}
+
+function showTasksError(message) {
+  el.tasksError.textContent = message || ''
+  el.tasksError.hidden = !message
+}
+
+function renderTasks(items) {
+  const list = el.tasksList
+  list.replaceChildren()
+  el.tasksEmpty.hidden = items.length > 0
+  const running = items.filter((run) => run.status === 'running' || run.status === 'queued').length
+  el.tasksToggle.title = running ? `任务（${running} 个在跑）` : '任务'
+
+  for (const run of items) {
+    const row = document.createElement('li')
+    row.className = `task-item is-${run.status}`
+
+    const title = document.createElement('p')
+    title.className = 'task-title'
+    title.textContent = typeof run.title === 'string' && run.title ? run.title : '（未命名任务）'
+
+    const meta = document.createElement('p')
+    meta.className = 'task-meta'
+    const status = TASK_STATUS_TEXT[run.status] ?? run.status
+    meta.textContent = `${status} · ${formatWhen(run.createdAt, null)}`
+    row.append(title, meta)
+
+    if (run.progress && typeof run.progress.phase === 'string') {
+      const progress = document.createElement('p')
+      progress.className = 'task-progress'
+      const note = run.progress.note ? ` · ${run.progress.note}` : ''
+      progress.textContent = `进度：${run.progress.phase}${note}`
+      row.append(progress)
+    }
+    if (run.error) {
+      const error = document.createElement('p')
+      error.className = 'task-error'
+      error.textContent = `错误：${run.error}`
+      row.append(error)
+    } else if (run.result) {
+      const result = document.createElement('p')
+      result.className = 'task-result'
+      result.textContent = run.result.length > 300 ? `${run.result.slice(0, 300)}…` : run.result
+      row.append(result)
+    }
+    list.append(row)
+  }
+}
+
+async function loadTasks() {
+  if (!state.token || state.tasksLoading) return
+  state.tasksLoading = true
+  showTasksError('')
+  try {
+    const res = await fetch(`${ENDPOINTS.tasks}?limit=20`, {
+      headers: withAuth({ Accept: 'application/json' }),
+      cache: 'no-store',
+    })
+    if (res.status === 401 || res.status === 403) throw new Error('令牌无效或已过期')
+    if (!res.ok) throw new Error(`读取任务失败（HTTP ${res.status}）`)
+    const body = await res.json()
+    renderTasks(Array.isArray(body?.items) ? body.items : [])
+  } catch (error) {
+    showTasksError(error instanceof TypeError ? '无法连接服务' : error.message || '读取任务失败')
+  } finally {
+    state.tasksLoading = false
+  }
+}
+
+function setTasksOpen(open) {
+  state.tasksOpen = open
+  if (!el.tasks) return
+  el.tasks.hidden = !open
+  el.tasksToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    setSchedulesOpen(false)
+    void loadTasks()
+  }
 }
 
 // ── 发送 ─────────────────────────────────────
@@ -757,8 +867,13 @@ function bindEvents() {
   el.schedulesToggle?.addEventListener('click', () => setSchedulesOpen(!state.schedulesOpen))
   el.schedulesRefresh?.addEventListener('click', () => void loadSchedules())
   el.schedulesClose?.addEventListener('click', () => setSchedulesOpen(false))
+  el.tasksToggle?.addEventListener('click', () => setTasksOpen(!state.tasksOpen))
+  el.tasksRefresh?.addEventListener('click', () => void loadTasks())
+  el.tasksClose?.addEventListener('click', () => setTasksOpen(false))
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && state.schedulesOpen) setSchedulesOpen(false)
+    if (event.key !== 'Escape') return
+    if (state.schedulesOpen) setSchedulesOpen(false)
+    if (state.tasksOpen) setTasksOpen(false)
   })
 }
 
@@ -772,6 +887,7 @@ async function start() {
     el.input.disabled = true
     el.input.placeholder = '请用带 ?token= 的链接打开'
     if (el.schedulesToggle) el.schedulesToggle.disabled = true
+    if (el.tasksToggle) el.tasksToggle.disabled = true
     updateSendButton()
     appendNotice('地址里缺少 token，请用网关生成的带 ?token= 的链接重新打开。')
     return

@@ -39,6 +39,7 @@ test('私聊里当前全部日程/记忆工具都放行', async () => {
     'schedule_pause',
     'schedule_resume',
     'schedule_list',
+    'qm_dispatch_task',
     'qm_report_progress',
     'qm_finish_task',
   ]) {

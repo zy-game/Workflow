@@ -20,6 +20,8 @@ import {
   type ScheduleInput,
   type SchedulePatch,
   type ScheduleService,
+  type TaskRun,
+  type TaskRunnerService,
   type TaskService,
 } from '@qingmei/core'
 
@@ -36,7 +38,7 @@ export interface McpConfig {
 }
 
 export const name = 'host-mcp'
-export const inject = ['memory', 'schedule', 'task', 'permission', 'audit']
+export const inject = ['memory', 'schedule', 'task', 'taskRunner', 'permission', 'audit']
 
 const PROTOCOL_VERSION = '2024-11-05'
 
@@ -101,6 +103,7 @@ export interface ToolDeps {
   memory: MemoryService
   schedule: ScheduleService
   task: TaskService
+  runner: TaskRunnerService
 }
 
 /** 工具注册表：新增能力只在这里加一项，schema、描述、处理逻辑都在一处 */
@@ -251,6 +254,32 @@ export function createTools(deps: ToolDeps): HostTool[] {
       },
     },
     {
+      name: 'qm_dispatch_task',
+      description:
+        '把一件事派给 harness（DSH）去执行，立刻返回 runId。适合「跑测试」「整理文件」这类需要动手的活；' +
+        '进度会记在任务账本里，用 qm_report_progress / qm_finish_task 由执行方回报。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: '要执行的任务，写给子 agent 看' },
+          title: { type: 'string', description: '短标题，缺省取 prompt 前 40 字' },
+          cwd: { type: 'string', description: '工作目录；缺省用青梅分配的任务目录' },
+        },
+        required: ['prompt'],
+      },
+      async call(args) {
+        const prompt = String(args.prompt ?? '').trim()
+        if (!prompt) throw new Error('prompt 不能为空')
+        const run = await deps.task.create({
+          prompt,
+          ...(typeof args.title === 'string' && args.title.trim() ? { title: args.title.trim() } : {}),
+          ...(typeof args.cwd === 'string' && args.cwd.trim() ? { cwd: args.cwd.trim() } : {}),
+        })
+        deps.runner.dispatch(run)
+        return textResult(`已派出：${run.id}「${run.title}」，进度会记在任务账本里`)
+      },
+    },
+    {
       name: 'qm_report_progress',
       description:
         '向青梅上报当前任务进度。phase 必填；percent 可选（模型给的百分比通常不准）；note 用一句话说明卡在哪。',
@@ -382,12 +411,14 @@ export class McpHost extends McpService {
     if (!schedule) throw new Error('[host-mcp] 缺少 schedule 服务')
     const task = ctx.reflect.get('task', false) as TaskService | undefined
     if (!task) throw new Error('[host-mcp] 缺少 task 服务')
+    const runner = ctx.reflect.get('taskRunner', false) as TaskRunnerService | undefined
+    if (!runner) throw new Error('[host-mcp] 缺少 taskRunner 服务')
     const permission = ctx.reflect.get('permission', false) as PermissionService | undefined
     if (!permission) throw new Error('[host-mcp] 缺少 permission 服务')
     const audit = ctx.reflect.get('audit', false) as AuditService | undefined
     if (!audit) throw new Error('[host-mcp] 缺少 audit 服务')
 
-    this.tools = createTools({ memory, schedule, task })
+    this.tools = createTools({ memory, schedule, task, runner })
     this.toolsByName = new Map(this.tools.map((tool) => [tool.name, tool]))
     this.guard = {
       permission,
