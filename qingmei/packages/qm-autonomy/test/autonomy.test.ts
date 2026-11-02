@@ -9,15 +9,18 @@ import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as autonomyPlugin from '../src/index.ts'
 import {
   ApprovalService,
+  ChannelService,
   ScheduleService,
+  TaskRunnerService,
   TaskService,
   type ApprovalRequest,
+  type ChannelAdapter,
+  type OutboundEnvelope,
+  type SendResult,
   type AutonomyService,
   type CreateApprovalInput,
-  type Decision,
   type GatewayRequest,
   type GatewayResponse,
-  type PermissionService,
   type Scheduled,
   type ScheduleInput,
   type SchedulePatch,
@@ -47,11 +50,13 @@ class FakeApproval extends ApprovalService {
 class FakeTask extends TaskService {
   runs: TaskRun[] = []
 
-  async create(): Promise<TaskRun> {
-    throw new Error('not used')
+  async create(input: { prompt: string; title?: string }): Promise<TaskRun> {
+    const run = taskRun({ id: `run_` + (this.runs.length + 1), title: input.title ?? '任务', prompt: input.prompt, status: 'queued' })
+    this.runs.push(run)
+    return run
   }
-  async get(): Promise<TaskRun | null> {
-    return null
+  async get(id: string): Promise<TaskRun | null> {
+    return this.runs.find((run) => run.id === id) ?? null
   }
   async list(limit = 20): Promise<TaskRun[]> {
     return this.runs.slice(0, limit)
@@ -73,6 +78,31 @@ class FakeTask extends TaskService {
   }
   async finish(): Promise<TaskRun | null> {
     return null
+  }
+}
+
+class FakeChannel extends ChannelService {
+  readonly sent: OutboundEnvelope[] = []
+  fail = false
+
+  async register(_adapter: ChannelAdapter): Promise<() => void> {
+    return () => undefined
+  }
+  async send(envelope: OutboundEnvelope): Promise<SendResult> {
+    if (this.fail) return { ok: false, error: '渠道离线' }
+    this.sent.push(envelope)
+    return { ok: true, platformMessageId: `out_${this.sent.length}` }
+  }
+  status() {
+    return [{ id: 'web' as const, online: true }]
+  }
+}
+
+class FakeTaskRunner extends TaskRunnerService {
+  readonly dispatched: TaskRun[] = []
+
+  dispatch(run: TaskRun): void {
+    this.dispatched.push(run)
   }
 }
 
@@ -161,6 +191,8 @@ async function setup(config: Record<string, unknown> = {}) {
   await ctx.plugin(FakeApproval)
   await ctx.plugin(FakeTask)
   await ctx.plugin(FakeSchedule)
+  await ctx.plugin(FakeChannel)
+  await ctx.plugin(FakeTaskRunner)
   await ctx.plugin(gatewayPlugin)
   const autonomyFiber = ctx.plugin(autonomyPlugin, { tickMs: 0, quietStart: 0, quietEnd: 0, ...config })
   await autonomyFiber
@@ -176,6 +208,8 @@ async function setup(config: Record<string, unknown> = {}) {
     approval,
     task,
     schedule,
+    channel: ctx.reflect.get('channel', false) as FakeChannel,
+    taskRunner: ctx.reflect.get('taskRunner', false) as FakeTaskRunner,
     async call(req: GatewayRequest) {
       let status = 0
       let body: unknown
@@ -204,7 +238,7 @@ async function setup(config: Record<string, unknown> = {}) {
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(autonomyPlugin.name, 'qm-autonomy')
-  assert.deepEqual(autonomyPlugin.inject, ['store', 'approval', 'task', 'schedule', 'gateway'])
+  assert.deepEqual(autonomyPlugin.inject, ['store', 'approval', 'task', 'schedule', 'gateway', 'channel', 'taskRunner'])
 })
 
 test('tick：有待确认的审批 → 选它，预算 +1，账本留痕', async () => {
@@ -343,6 +377,8 @@ test('状态落库：重启后预算与冷却不丢', async () => {
       await ctx.plugin(FakeApproval)
       await ctx.plugin(FakeTask)
       await ctx.plugin(FakeSchedule)
+  await ctx.plugin(FakeChannel)
+  await ctx.plugin(FakeTaskRunner)
       await ctx.plugin(gatewayPlugin)
       const fiber = ctx.plugin(autonomyPlugin, { tickMs: 0, quietStart: 0, quietEnd: 0 })
       await fiber
@@ -365,5 +401,73 @@ test('状态落库：重启后预算与冷却不丢', async () => {
     await second.dispose()
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('执行：A1 遇到需要 A2 的动作，降级成建议并发出去', async () => {
+  const h = await setup({ mode: 'A1' })
+  try {
+    h.task.runs = [taskRun({ id: 'run_failed', status: 'failed', error: '测试挂了', finishedAt: new Date() })]
+    const trace = await h.autonomy.tick('tick')
+
+    assert.equal(trace.chosen?.action, 'task.retry')
+    assert.equal(trace.execution?.status, 'suggested')
+    assert.equal(trace.execution?.action, 'notify.self')
+    assert.match(trace.execution?.detail ?? '', /需要 A2/)
+    assert.equal(h.channel.sent.length, 1, '建议应真的发到主人私聊')
+    assert.match((h.channel.sent[0]!.blocks[0] as { text: string }).text, /💡/)
+    assert.equal(h.taskRunner.dispatched.length, 0, 'A1 不允许直接重试')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('执行：A2 才会真的重试失败任务，并带回执 runId', async () => {
+  const h = await setup({ mode: 'A2' })
+  try {
+    h.task.runs = [taskRun({ id: 'run_failed', status: 'failed', error: '测试挂了', finishedAt: new Date() })]
+    const trace = await h.autonomy.tick('tick')
+
+    assert.equal(trace.execution?.status, 'executed')
+    assert.equal(trace.execution?.action, 'task.retry')
+    assert.ok(trace.execution?.runId, '回执要带新 run 的 id')
+    assert.equal(h.taskRunner.dispatched.length, 1)
+    assert.equal(h.channel.sent.length, 0, 'A2 直接执行，不再重复发建议')
+    const created = h.task.runs.find((run) => run.id === trace.execution!.runId)
+    assert.equal(created?.title, '重试：跑测试')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('执行：notify.self 在 A1 就允许，发送失败要记 failed 回执', async () => {
+  const h = await setup({ mode: 'A1', cooldownMinutes: 0 })
+  try {
+    h.approval.pending = [approvalRequest()]
+    const ok = await h.autonomy.tick('tick')
+    assert.equal(ok.execution?.status, 'executed', ok.execution?.detail)
+    assert.equal(h.channel.sent.length, 1)
+
+    h.approval.pending = [approvalRequest()]
+    h.channel.fail = true
+    const failed = await h.autonomy.tick('tick')
+    assert.equal(failed.chosen?.id, 'approval.pending')
+    assert.equal(failed.execution?.status, 'failed')
+    assert.match(failed.execution?.detail ?? '', /渠道离线/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('执行：A0 只有记录，没有回执', async () => {
+  const h = await setup({ mode: 'A0' })
+  try {
+    h.approval.pending = [approvalRequest()]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.chosen, null)
+    assert.equal(trace.execution, null)
+    assert.equal(h.channel.sent.length, 0)
+  } finally {
+    await h.dispose()
   }
 })

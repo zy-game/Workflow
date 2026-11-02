@@ -8,29 +8,34 @@
  */
 import type { Context } from 'cordis'
 import {
+  AUTONOMY_ACTIONS,
   AutonomyService,
   EVENTS,
   uid,
   type ApprovalService,
+  type AutonomyExecution,
+  type AutonomyLevel,
   type AutonomyCandidate,
   type AutonomySnapshot,
   type AutonomyState,
   type AutonomyTrace,
   type GatewayRequest,
   type GatewayResponse,
+  type ChannelService,
   type GatewayService,
   type Row,
   type ScheduleService,
   type Scheduled,
   type StoreService,
   type TaskService,
+  type TaskRunnerService,
   type TaskRun,
 } from '@qingmei/core'
 
 export interface AutonomyConfig {
   /** tick 间隔；0 表示只手动触发（测试用） */
   tickMs?: number
-  mode?: 'A0' | 'A1' | 'A2' | 'A3'
+  mode?: AutonomyLevel
   /** 每日主动建议上限 */
   dailyBudget?: number
   /** 静默时段（本地小时，左闭右开，可跨零点） */
@@ -43,7 +48,7 @@ export interface AutonomyConfig {
 }
 
 export const name = 'qm-autonomy'
-export const inject = ['store', 'approval', 'task', 'schedule', 'gateway']
+export const inject = ['store', 'approval', 'task', 'schedule', 'gateway', 'channel', 'taskRunner']
 
 const TRACE = 'qm_autonomy_trace'
 const STATE = 'qm_autonomy_state'
@@ -66,6 +71,7 @@ interface TraceRow extends Row {
   snapshot_json: string
   candidates_json: string
   chosen_json: string | null
+  execution_json: string | null
   suppressed_json: string
   budget_json: string
   reason: string
@@ -87,6 +93,8 @@ class AutonomyRunner extends AutonomyService {
   private readonly task: TaskService
   private readonly schedule: ScheduleService
   private readonly gateway: GatewayService
+  private readonly channel: ChannelService
+  private readonly taskRunner: TaskRunnerService
   private lastAt = 0
 
   constructor(ctx: Context, config: AutonomyConfig = {}) {
@@ -98,6 +106,8 @@ class AutonomyRunner extends AutonomyService {
     this.task = ctx.reflect.get('task', false) as TaskService
     this.schedule = ctx.reflect.get('schedule', false) as ScheduleService
     this.gateway = ctx.reflect.get('gateway', false) as GatewayService
+    this.channel = ctx.reflect.get('channel', false) as ChannelService
+    this.taskRunner = ctx.reflect.get('taskRunner', false) as TaskRunnerService
     this.traces = store.collection<TraceRow>(TRACE)
     this.states = store.collection<StateRow>(STATE)
   }
@@ -155,6 +165,9 @@ class AutonomyRunner extends AutonomyService {
     state.lastTickAt = now
     await this.saveState(state)
 
+    // 选中后要真的处理：能执行就执行，级别不够就降级成建议——但都要留回执
+    const execution = chosen ? await this.execute(chosen, now) : null
+
     const trace: AutonomyTrace = {
       id: uid('aut'),
       at: now,
@@ -165,12 +178,80 @@ class AutonomyRunner extends AutonomyService {
       chosen,
       suppressed,
       budget: { day, limit: this.config.dailyBudget, used: state.used },
+      execution,
       reason,
     }
     await this.appendTrace(trace)
     this.ctx.events.emit(EVENTS.autonomyTick, trace)
     this.gateway.publish({ type: 'autonomy-tick', data: trace })
     return trace
+  }
+
+  /**
+   * 执行（或降级）选中项。
+   *
+   * 两级闸（docs/13 §4）：级别不够不执行；不可逆动作永远人工。
+   * 执行结果写成回执——没有回执的主动行为等同于「声称做了但没做」。
+   */
+  private async execute(chosen: AutonomyCandidate, at: Date): Promise<AutonomyExecution> {
+    const spec = AUTONOMY_ACTIONS[chosen.action]
+    if (!spec) {
+      return { status: 'skipped', action: chosen.action, detail: '不在行动白名单，拒绝执行', at }
+    }
+    if (!spec.reversible) {
+      return { status: 'skipped', action: chosen.action, detail: '不可逆动作必须人工确认，自主循环不执行', at }
+    }
+
+    if (levelOf(this.config.mode) < levelOf(spec.minLevel)) {
+      if (this.config.mode === 'A0') {
+        return { status: 'skipped', action: chosen.action, detail: `需要 ${spec.minLevel}，A0 只记录`, at }
+      }
+      // 级别不够：至少把「建议」发出去，让人有机会点头
+      const sent = await this.notify(`💡 ${chosen.title}\n${chosen.reason}`)
+      return sent.ok
+        ? { status: 'suggested', action: 'notify.self', detail: `需要 ${spec.minLevel}，当前 ${this.config.mode}：已按建议发出`, at }
+        : { status: 'failed', action: 'notify.self', detail: `建议发送失败：${sent.error ?? '未知原因'}`, at }
+    }
+
+    if (chosen.action === 'notify.self') {
+      const sent = await this.notify(`💡 ${chosen.title}\n${chosen.reason}`)
+      return sent.ok
+        ? { status: 'executed', action: 'notify.self', detail: '已发到主人私聊', at }
+        : { status: 'failed', action: 'notify.self', detail: `发送失败：${sent.error ?? '未知原因'}`, at }
+    }
+
+    if (chosen.action === 'task.retry') {
+      const runId = typeof chosen.payload?.runId === 'string' ? chosen.payload.runId : ''
+      const original = runId ? await this.task.get(runId) : null
+      if (!original) {
+        return { status: 'failed', action: 'task.retry', detail: '找不到要重试的原任务', at }
+      }
+      try {
+        const run = await this.task.create({
+          prompt: original.prompt,
+          title: `重试：${original.title}`,
+        })
+        this.taskRunner.dispatch(run)
+        return { status: 'executed', action: 'task.retry', detail: `已重新派发 ${run.id}`, runId: run.id, at }
+      } catch (error) {
+        return { status: 'failed', action: 'task.retry', detail: `派发失败：${messageOf(error)}`, at }
+      }
+    }
+
+    return { status: 'skipped', action: chosen.action, detail: '这个动作还没有执行器', at }
+  }
+
+  private async notify(text: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const result = await this.channel.send({
+        channel: 'web',
+        conversationId: 'owner',
+        blocks: [{ type: 'text', text }],
+      })
+      return result.ok ? { ok: true } : { ok: false, ...(result.error ? { error: result.error } : {}) }
+    } catch (error) {
+      return { ok: false, error: messageOf(error) }
+    }
   }
 
   async list(limit = LIST_LIMIT): Promise<AutonomyTrace[]> {
@@ -291,6 +372,7 @@ class AutonomyRunner extends AutonomyService {
       snapshot_json: JSON.stringify({ ...trace.snapshot, at: trace.snapshot.at.toISOString() }),
       candidates_json: JSON.stringify(trace.candidates),
       chosen_json: trace.chosen ? JSON.stringify(trace.chosen) : null,
+      execution_json: trace.execution ? JSON.stringify(trace.execution) : null,
       suppressed_json: JSON.stringify(trace.suppressed),
       budget_json: JSON.stringify(trace.budget),
       reason: trace.reason,
@@ -314,6 +396,7 @@ function toTrace(row: TraceRow): AutonomyTrace {
     },
     candidates: parseJson<AutonomyCandidate[]>(row.candidates_json, []),
     chosen: row.chosen_json ? parseJson<AutonomyCandidate | null>(row.chosen_json, null) : null,
+    execution: row.execution_json ? parseJson<AutonomyExecution | null>(row.execution_json, null) : null,
     suppressed: parseJson<{ id: string; reason: string }[]>(row.suppressed_json, []),
     budget: parseJson<AutonomyTrace['budget']>(row.budget_json, { day: '', limit: 0, used: 0 }),
     reason: row.reason,
@@ -327,6 +410,16 @@ function parseJson<T>(raw: string | null, fallback: T): T {
   } catch {
     return fallback
   }
+}
+
+const LEVELS: Record<string, number> = { A0: 0, A1: 1, A2: 2, A3: 3 }
+
+function levelOf(level: string): number {
+  return LEVELS[level] ?? 0
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function dayKey(date: Date): string {

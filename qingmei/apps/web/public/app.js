@@ -811,6 +811,13 @@ function setAutonomyOpen(open) {
   }
 }
 
+const AUTONOMY_EXEC_TEXT = {
+  executed: '已执行',
+  suggested: '已发建议',
+  skipped: '跳过',
+  failed: '失败',
+}
+
 function showAutonomyError(message) {
   if (!el.autonomyError) return
   el.autonomyError.textContent = message || ''
@@ -850,6 +857,10 @@ function renderAutonomy(body) {
     }
     if (Array.isArray(trace.suppressed) && trace.suppressed.length > 0) {
       details.push(`压制 ${trace.suppressed.map((item) => `${item.id}：${item.reason}`).join('；')}`)
+    }
+    if (trace.execution) {
+      const status = AUTONOMY_EXEC_TEXT[trace.execution.status] ?? trace.execution.status
+      details.push(`回执 ${status}：${trace.execution.detail}`)
     }
     details.push(`预算 ${trace.budget?.used ?? 0}/${trace.budget?.limit ?? 0}`)
     const meta = document.createElement('p')

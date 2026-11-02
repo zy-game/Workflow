@@ -198,23 +198,100 @@ export interface AutonomySnapshot {
   upcomingSchedules: number
 }
 
+export type AutonomyLevel = 'A0' | 'A1' | 'A2' | 'A3'
+
+/** 行动白名单：自主循环只能做这里登记过的动作（docs/13 §4） */
+export interface AutonomyActionSpec {
+  action: string
+  risk: 'low' | 'medium' | 'high'
+  /** 不可逆动作永远要人工确认，自主循环不执行 */
+  reversible: boolean
+  /** 最低可执行级别；低于它只能降级成建议 */
+  minLevel: AutonomyLevel
+  description: string
+}
+
+export const AUTONOMY_ACTIONS: Record<string, AutonomyActionSpec> = {
+  'notify.self': {
+    action: 'notify.self',
+    risk: 'low',
+    reversible: true,
+    minLevel: 'A1',
+    description: '给主人发一条消息（建议、提醒）',
+  },
+  'task.retry': {
+    action: 'task.retry',
+    risk: 'medium',
+    reversible: true,
+    minLevel: 'A2',
+    description: '把失败的任务再派一次',
+  },
+  'harness.dispatch': {
+    action: 'harness.dispatch',
+    risk: 'medium',
+    reversible: true,
+    minLevel: 'A2',
+    description: '派一个新任务给 harness',
+  },
+  'memory.consolidate': {
+    action: 'memory.consolidate',
+    risk: 'medium',
+    reversible: true,
+    minLevel: 'A2',
+    description: '触发记忆整理（有快照可回滚）',
+  },
+  'env.cleanup': {
+    action: 'env.cleanup',
+    risk: 'medium',
+    reversible: true,
+    minLevel: 'A2',
+    description: '清理缓存/日志/临时目录（进回收站）',
+  },
+  'outbound.send': {
+    action: 'outbound.send',
+    risk: 'high',
+    reversible: false,
+    minLevel: 'A3',
+    description: '对外发消息——不可逆，永远人工',
+  },
+  'delete.permanent': {
+    action: 'delete.permanent',
+    risk: 'high',
+    reversible: false,
+    minLevel: 'A3',
+    description: '永久删除数据——不可逆，永远人工',
+  },
+}
+
+/** 一次 tick 对选中候选的实际处理结果；没有回执不算执行过 */
+export interface AutonomyExecution {
+  status: 'executed' | 'suggested' | 'skipped' | 'failed'
+  action: string
+  detail: string
+  at: Date
+  /** 派生出新任务时带上 runId */
+  runId?: string
+}
+
 export interface AutonomyTrace {
   id: string
   at: Date
   trigger: 'tick' | 'manual'
-  mode: 'A0' | 'A1' | 'A2' | 'A3'
+  mode: AutonomyLevel
   snapshot: AutonomySnapshot
   candidates: AutonomyCandidate[]
   chosen: AutonomyCandidate | null
   /** 被过滤掉的候选与原因；「为什么没说」也要可查 */
   suppressed: { id: string; reason: string }[]
   budget: { day: string; limit: number; used: number }
+  /** 选中之后做了什么（或为什么没做） */
+  execution: AutonomyExecution | null
   /** 一句话结论：保持沉默时写清楚原因 */
   reason: string
 }
 
 export interface AutonomyState {
-  mode: 'A0' | 'A1' | 'A2' | 'A3'
+  mode: AutonomyLevel
   /** 预算按本地日期重置 */
   day: string
   used: number

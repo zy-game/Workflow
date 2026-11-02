@@ -82,8 +82,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 2. **M1 剩余**：`audience` + `validTo` + 群聊零注入 ✅、memory 必需化 ✅；
    还差画像最小版（docs/05 M1 交付物）、`summarize`、情节/决策/教训类型、断网抽取补偿队列。
 3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
-4. **A2**：排期器 + 行动白名单执行（A1 的 trace 目前只建议不执行），
-otify.self 真正发消息。
+4. **A2 后半**：排期器（优先级/时间窗/依赖/抢占/容量）+ 信任升降级（连续采纳升级、忽略降频）。
+   行动白名单与执行回执已完成，`notify.self` 会真的发消息（每日 ≤3 条）。
 5. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
 6. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
 
@@ -126,6 +126,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### A2 前半：行动白名单与执行回执
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core/src/index.ts` | `AutonomyLevel` / `AutonomyActionSpec` / `AUTONOMY_ACTIONS`（7 个动作带风险、可逆、最低级别）；`AutonomyTrace.execution` |
+| `packages/qm-autonomy` | 选中后过两级闸：白名单外拒绝、不可逆不执行、级别不够降级成建议；`notify.self` 真发消息（进 `qm_message`）、`task.retry`（A2 起）重建 run 并派发；回执写进 trace |
+| `apps/web/public/app.js` | 主动面板显示回执（已执行 / 已发建议 / 跳过 / 失败 + 详情） |
+| 测试 | 4 条执行语义（A1 降级、A2 重试、发送失败、A0 无回执）；全量 212 → 216 |
+
+验证：本地 A1 + 失败任务 → `suggested` 且私聊收到「💡 …」；A2 → `executed` 且 `runId` 指向新 run。
 
 ### 自主循环（A1 骨架）
 
