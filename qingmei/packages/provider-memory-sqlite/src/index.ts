@@ -31,12 +31,20 @@ export const name = 'provider-memory-sqlite'
 export const inject = ['store']
 
 const COLLECTION = 'qm_mem_fact'
+const SYNAPSE_COLLECTION = 'qm_mem_synapse'
+const DAY_MS = 24 * 60 * 60 * 1000
+const HALF_LIFE_MS = 30 * DAY_MS
+const SPREAD = 0.6
+const MAX_SPREAD_HOPS = 1
 
 interface FactRow extends Row {
   subject: string
   predicate: string
   object: string
   confidence: number
+  salience?: number
+  activation?: number
+  last_fired_at?: number | null
   sensitivity: string
   /** 老记录没有这一列，读取时按 owner 处理 */
   audience?: string
@@ -46,8 +54,18 @@ interface FactRow extends Row {
   valid_to: number | null
 }
 
+interface SynapseRow extends Row {
+  from_id: string
+  to_id: string
+  kind: string
+  weight: number
+  co_activated: number
+  last_fired_at: number | null
+}
+
 export class SqliteMemory extends MemoryService {
   private readonly collection
+  private readonly synapses
   private readonly limit: number
   private readonly minConfidence: number
 
@@ -56,6 +74,7 @@ export class SqliteMemory extends MemoryService {
     const store = ctx.reflect.get('store', false) as StoreService | undefined
     if (!store) throw new Error('[provider-memory-sqlite] 缺少 store 服务')
     this.collection = store.collection<FactRow>(COLLECTION)
+    this.synapses = store.collection<SynapseRow>(SYNAPSE_COLLECTION)
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
   }
@@ -92,6 +111,7 @@ export class SqliteMemory extends MemoryService {
         predicate: normalized.predicate,
         object: normalized.object,
         confidence: normalized.confidence,
+        salience: normalized.salience,
         sensitivity: normalized.sensitivity,
         audience: normalized.audience,
         origin_kind: normalized.origin.kind,
@@ -107,14 +127,54 @@ export class SqliteMemory extends MemoryService {
 
   async recall(query: RecallQuery): Promise<RecallResult> {
     const audience = query.audience?.trim() || 'owner'
-    const rows = await this.collection.find({ where: { valid_to: null } })
+    const visible = (await this.collection.find({ where: { valid_to: null } })).filter((row) =>
+      visibleTo(row, audience),
+    )
+    const byId = new Map(visible.map((row) => [row.id, row]))
     const tokens = tokenize(query.text)
-    const scored = rows
-      .filter((row) => visibleTo(row, audience))
-      .map((row) => ({ row, score: similarity(row, tokens) }))
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score || b.row.confidence - a.row.confidence || b.row.created_at - a.row.created_at)
+    const now = Date.now()
+
+    // ① 种子：关键词命中；分数 = 相似度 + 激活 + 置信度 + 时效 + 显著度
+    const candidates = new Map<string, number>()
+    for (const row of visible) {
+      const score = similarity(row, tokens)
+      if (score <= 0) continue
+      candidates.set(row.id, scoreOf(row, score, now))
+    }
+
+    // ② 扩散：从种子沿突触走一跳，γ 打折；只收可见节点
+    const seedIds = [...candidates.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([id]) => id)
+    if (seedIds.length > 0) {
+      const seedSet = new Set(seedIds)
+      const synapses = await this.synapses.find({})
+      for (const edge of synapses) {
+        if (edge.weight < 0.05) continue
+        for (const [from, to] of [
+          [edge.from_id, edge.to_id],
+          [edge.to_id, edge.from_id],
+        ] as const) {
+          if (!seedSet.has(from)) continue
+          const source = candidates.get(from) ?? 0
+          if (source <= 0 || !byId.has(to)) continue
+          const spread = SPREAD * source * edge.weight
+          if (spread > (candidates.get(to) ?? 0)) candidates.set(to, spread)
+        }
+      }
+    }
+
+    const scored = [...candidates.entries()]
+      .filter(([, score]) => score > 0.03)
+      .sort((a, b) => b[1] - a[1])
       .slice(0, query.limit ?? this.limit)
+      .map(([id, score]) => ({ row: byId.get(id)!, score }))
+
+    // ③ 召回无副作用：强化放到返回后异步做
+    if (scored.length > 1) {
+      void this.reinforce(scored.slice(0, 5).map((entry) => entry.row.id)).catch(() => undefined)
+    }
 
     const facts: RecalledFact[] = scored.map(({ row }) => ({
       id: row.id,
@@ -131,6 +191,40 @@ export class SqliteMemory extends MemoryService {
     }))
     const text = facts.map((fact) => `- ${fact.subject}${fact.predicate}${fact.object}`).join('\n')
     return { facts, text }
+  }
+
+  /** 赫布强化：一起被召回的事实连边、权重增长；同时重置激活时间 */
+  private async reinforce(ids: string[]): Promise<void> {
+    const now = Date.now()
+    for (const id of ids) {
+      await this.collection.update(id, { activation: 1, last_fired_at: now })
+    }
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const [from, to] = ids[i]! < ids[j]! ? [ids[i]!, ids[j]!] : [ids[j]!, ids[i]!]
+        const key = `${from}|${to}`
+        const existing = await this.synapses.get(key)
+        const weight = existing?.weight ?? 0.1
+        const next = Math.min(1, Math.max(0, weight + 0.02 - 0.001 * weight))
+        if (existing) {
+          await this.synapses.update(key, {
+            weight: next,
+            co_activated: existing.co_activated + 1,
+            last_fired_at: now,
+          })
+        } else {
+          await this.synapses.insert({
+            id: key,
+            from_id: from,
+            to_id: to,
+            kind: 'associative',
+            weight: next,
+            co_activated: 1,
+            last_fired_at: now,
+          })
+        }
+      }
+    }
   }
 
   /**
@@ -171,6 +265,30 @@ export class SqliteMemory extends MemoryService {
 }
 
 /** 去掉空白与常见语气词，太小/太大的对象拒绝落库 */
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0))
+}
+
+/** 指数衰减：半衰期按显著度放大（重要的事忘得慢） */
+function decay(at: number | null | undefined, halfLifeMs: number, now: number): number {
+  if (!at) return 0
+  const age = Math.max(0, now - at)
+  return Math.exp((-Math.LN2 * age) / Math.max(1, halfLifeMs))
+}
+
+/** score = 0.35·相似 + 0.25·激活 + 0.20·置信 + 0.10·时效 + 0.10·显著度（docs/09 §4） */
+function scoreOf(row: FactRow, similarity: number, now: number): number {
+  const salience = clamp01(row.salience ?? Math.min(1, row.confidence))
+  const activation = decay(row.last_fired_at ?? null, HALF_LIFE_MS * (1 + 2 * salience), now)
+  const recency = decay(row.created_at, 90 * DAY_MS, now)
+  return (
+    0.35 * similarity +
+    0.25 * activation +
+    0.2 * row.confidence +
+    0.1 * recency +
+    0.1 * salience
+  )
+}
 function normalize(record: MemoryRecord): MemoryRecord | null {
   const subject = record.subject?.trim()
   const predicate = record.predicate?.trim()
@@ -183,6 +301,7 @@ function normalize(record: MemoryRecord): MemoryRecord | null {
     predicate,
     object,
     confidence: Math.min(1, Math.max(0, Number(record.confidence) || 0)),
+    salience: clamp01(Number(record.salience ?? 0.5)),
     sensitivity: record.sensitivity ?? 'private',
     audience: record.audience?.trim() || 'owner',
     origin: record.origin ?? { kind: 'manual', id: 'unknown' },

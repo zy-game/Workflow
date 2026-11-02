@@ -572,6 +572,8 @@ export interface MemoryRecord {
   object: string
   /** 0..1 */
   confidence: number
+  /** 0..1 显著度；缺省 0.5。重要的事忘得慢、召回靠前 */
+  salience?: number
   sensitivity: 'public' | 'private' | 'secret'
   /** 可见范围：'owner' 只给主人；'group:<id>' 群内可见。缺省 owner */
   audience?: string

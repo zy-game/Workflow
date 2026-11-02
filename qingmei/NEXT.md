@@ -132,6 +132,16 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P4 起步：神经元召回（打分 + 突触扩散）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `MemoryRecord.salience` |
+| `packages/provider-memory-sqlite` | 事实存 salience/activation/last_fired；召回按 docs/09 权重打分；一跳突触扩散（γ=0.6）；返回后异步赫布强化写 `qm_mem_synapse` |
+| 测试 | 295 全绿（联想召回、显著度排序） |
+
+> 未做：embedding 种子、多跳、工作记忆层、剪枝/夜间巩固。
+
 ### P3 收尾：回滚与抢占
 
 | 文件 | 改了什么 |

@@ -175,3 +175,37 @@ test('profile：按 subject 聚合、只含有效 owner 事实，群聊视口为
     await dispose()
   }
 })
+
+test('联想召回：共同出现后建立突触，单关键词也能带回邻居', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      fact('主人', '养', '狗'),
+      fact('狗', '叫', '豆豆'),
+    ])
+    const first = await ctx.memory.recall({ text: '主人 狗 豆豆' })
+    assert.equal(first.facts.length, 2, '两个事实都应被召回')
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    const second = await ctx.memory.recall({ text: '我养什么' })
+    const objects = second.facts.map((item) => item.object)
+    assert.ok(objects.includes('狗'), '关键词命中养狗')
+    assert.ok(objects.includes('豆豆'), '通过突触扩散带回豆豆')
+  } finally {
+    await dispose()
+  }
+})
+
+test('召回打分：同相似度时显著度高的排前面', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      { ...fact('主人', '喜欢', '咖啡'), salience: 0.9 },
+      { ...fact('同事', '喜欢', '咖啡'), salience: 0.1 },
+    ])
+    const hit = await ctx.memory.recall({ text: '咖啡' })
+    assert.equal(hit.facts[0]?.subject, '主人', '显著度高的应先召回')
+  } finally {
+    await dispose()
+  }
+})
