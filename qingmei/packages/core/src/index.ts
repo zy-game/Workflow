@@ -97,6 +97,8 @@ export const EVENTS = {
   taskRunStarted: 'qm/task/run-started',
   taskProgress: 'qm/task/progress',
   taskFinished: 'qm/task/finished',
+  approvalRequested: 'qm/approval/requested',
+  approvalDecided: 'qm/approval/decided',
 } as const
 
 // ────────────────────────────────────────────── 日程
@@ -520,6 +522,46 @@ export abstract class AuditService extends Service {
   }
   abstract append(entry: AuditEntry): Promise<void>
   abstract query(q: { since?: Date; actorId?: string; action?: string; limit?: number }): Promise<AuditEntry[]>
+}
+
+// ────────────────────────────────────────────── 审批
+
+export type ApprovalStatus = 'pending' | 'allowed' | 'denied'
+
+/** 一次待人确认的动作（docs/07 §8 的审批桥） */
+export interface ApprovalRequest {
+  id: string
+  action: string
+  prompt: string
+  status: ApprovalStatus
+  /** 关联的任务 run（子 agent 触发的审批），没有则为 null */
+  runId: string | null
+  requester: string
+  channel: ChannelId
+  createdAt: Date
+  decidedAt: Date | null
+  reason: string | null
+}
+
+export interface CreateApprovalInput {
+  action: string
+  prompt: string
+  runId?: string
+  requester?: string
+  channel?: ChannelId
+}
+
+/** 审批队列：ask 的判定落到这里，人批准后调用方继续 */
+export abstract class ApprovalService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'approval')
+  }
+  abstract create(input: CreateApprovalInput): Promise<ApprovalRequest>
+  abstract get(id: string): Promise<ApprovalRequest | null>
+  abstract list(status?: ApprovalStatus): Promise<ApprovalRequest[]>
+  abstract decide(id: string, input: { allow: boolean; reason?: string }): Promise<ApprovalRequest | null>
+  /** 等判定；超时或不存在返回 null（调用方按拒绝处理） */
+  abstract wait(id: string, timeoutMs: number): Promise<ApprovalRequest | null>
 }
 
 // ────────────────────────────────────────────── MCP

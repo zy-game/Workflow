@@ -10,6 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const PUBLIC = path.resolve(here, '../public')
 const GATEWAY = path.resolve(here, '../../../packages/host-gateway/src/index.ts')
 const QM_TASK = path.resolve(here, '../../../packages/qm-task/src/index.ts')
+const QM_APPROVAL = path.resolve(here, '../../../packages/qm-approval/src/index.ts')
 
 async function readPublic(name: string): Promise<string> {
   return readFile(path.join(PUBLIC, name), 'utf8')
@@ -53,4 +54,18 @@ test('任务面板与 qm-task 的路由/事件对得上', async () => {
   assert.match(taskPlugin, /'task-started'/, 'qm-task 应把 run-started 推到 SSE')
   assert.match(taskPlugin, /'task-progress'/, 'qm-task 应把 progress 推到 SSE')
   assert.match(taskPlugin, /'task-finished'/, 'qm-task 应把 finished 推到 SSE')
+})
+
+test('待确认区与 qm-approval 的路由/事件对得上', async () => {
+  const script = await readPublic('app.js')
+  const approvalPlugin = await readFile(QM_APPROVAL, 'utf8')
+
+  assert.match(script, /approvals: '\.\/api\/v1\/approvals'/, 'app.js 应把审批接口写在 ENDPOINTS 里')
+  assert.match(script, /approval-requested/, '面板应订阅 approval-requested')
+  assert.match(script, /approvalDecide/, '批准/拒绝应打到 decide 接口')
+
+  assert.match(approvalPlugin, /path: '\/api\/v1\/approvals'/, 'qm-approval 应注册 GET /api/v1/approvals')
+  assert.match(approvalPlugin, /path: '\/api\/v1\/approvals\/decide'/, 'qm-approval 应注册 decide')
+  assert.match(approvalPlugin, /'approval-requested'/, 'qm-approval 应把请求推到 SSE')
+  assert.match(approvalPlugin, /'approval-decided'/, 'qm-approval 应把判定推到 SSE')
 })

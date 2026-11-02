@@ -1,0 +1,17 @@
+{
+  "name": "@qingmei/provider-approval-sqlite",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "cordis": "4.0.0-rc.12",
+    "@qingmei/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@qingmei/provider-store-sqlite": "workspace:*"
+  }
+}

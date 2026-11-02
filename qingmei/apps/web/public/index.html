@@ -63,6 +63,10 @@
         <p id="tasks-empty" class="tasks-empty">
           还没有任务。在对话里说「用 DSH 把测试跑一遍」，或者直接 POST /api/v1/tasks。
         </p>
+        <div id="approvals" class="approvals" hidden>
+          <h3 class="approvals-title">待确认</h3>
+          <ul id="approvals-list" class="approvals-list"></ul>
+        </div>
         <p id="tasks-error" class="tasks-error" role="alert" hidden></p>
         <ul id="tasks-list" class="tasks-list"></ul>
       </section>

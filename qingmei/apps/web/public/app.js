@@ -8,6 +8,8 @@ const ENDPOINTS = {
   messages: './api/v1/messages',
   schedules: './api/v1/schedules',
   tasks: './api/v1/tasks',
+  approvals: './api/v1/approvals',
+  approvalDecide: './api/v1/approvals/decide',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -37,6 +39,8 @@ const el = {
   tasksError: document.getElementById('tasks-error'),
   tasksRefresh: document.getElementById('tasks-refresh'),
   tasksClose: document.getElementById('tasks-close'),
+  approvals: document.getElementById('approvals'),
+  approvalsList: document.getElementById('approvals-list'),
 }
 
 const state = {
@@ -194,6 +198,13 @@ function connect() {
   for (const type of ['task-started', 'task-progress', 'task-finished']) {
     source.addEventListener(type, () => {
       if (state.tasksOpen) void loadTasks()
+    })
+  }
+
+  // 新的审批来了：任务面板开着就刷新，否则至少更新标题提示
+  for (const type of ['approval-requested', 'approval-decided']) {
+    source.addEventListener(type, () => {
+      if (state.tasksOpen) void loadApprovals()
     })
   }
 
@@ -739,6 +750,92 @@ function setTasksOpen(open) {
   if (open) {
     setSchedulesOpen(false)
     void loadTasks()
+    void loadApprovals()
+  }
+}
+
+// ── 待确认（审批） ───────────────────────────
+
+let pendingApprovals = 0
+
+function renderApprovals(items) {
+  pendingApprovals = items.length
+  el.approvals.hidden = items.length === 0
+  el.approvalsList.replaceChildren()
+  if (items.length === 0) {
+    el.tasksToggle.title = '任务'
+    return
+  }
+  el.tasksToggle.title = `任务（${items.length} 项待确认）`
+
+  for (const request of items) {
+    const row = document.createElement('li')
+    row.className = 'approval-item'
+
+    const prompt = document.createElement('p')
+    prompt.className = 'approval-prompt'
+    prompt.textContent = typeof request.prompt === 'string' ? request.prompt : request.action
+
+    const meta = document.createElement('p')
+    meta.className = 'approval-meta'
+    meta.textContent = `${request.requester ?? ''} · ${formatWhen(request.createdAt, null)}`
+
+    const actions = document.createElement('div')
+    actions.className = 'approval-actions'
+    const allow = document.createElement('button')
+    allow.type = 'button'
+    allow.className = 'approval-allow'
+    allow.textContent = '批准'
+    allow.addEventListener('click', () => void decideApproval(request.id, true, allow, deny))
+    const deny = document.createElement('button')
+    deny.type = 'button'
+    deny.className = 'schedule-cancel'
+    deny.textContent = '拒绝'
+    deny.addEventListener('click', () => void decideApproval(request.id, false, allow, deny))
+    actions.append(allow, deny)
+
+    row.append(prompt, meta, actions)
+    el.approvalsList.append(row)
+  }
+}
+
+async function loadApprovals() {
+  if (!state.token) return
+  try {
+    const res = await fetch(`${ENDPOINTS.approvals}?status=pending`, {
+      headers: withAuth({ Accept: 'application/json' }),
+      cache: 'no-store',
+    })
+    if (!res.ok) return
+    const body = await res.json()
+    renderApprovals(Array.isArray(body?.items) ? body.items : [])
+  } catch {
+    // 审批拉不到不影响任务列表
+  }
+}
+
+async function decideApproval(id, allow, allowButton, denyButton) {
+  for (const button of [allowButton, denyButton]) button.disabled = true
+  allowButton.textContent = allow ? '批准中…' : '批准'
+  denyButton.textContent = allow ? '拒绝' : '拒绝中…'
+  try {
+    const res = await fetch(ENDPOINTS.approvalDecide, {
+      method: 'POST',
+      headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify({ id, allow }),
+    })
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null)
+      throw new Error(detail?.error || `操作失败（HTTP ${res.status}）`)
+    }
+    showTasksError('')
+    void loadApprovals()
+    void loadTasks()
+  } catch (error) {
+    showTasksError(error instanceof TypeError ? '无法连接服务' : error.message || '操作失败')
+    for (const button of [allowButton, denyButton]) button.disabled = false
+    allowButton.textContent = '批准'
+    denyButton.textContent = '拒绝'
   }
 }
 

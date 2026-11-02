@@ -26,6 +26,9 @@ importers:
       '@qingmei/host-mcp':
         specifier: workspace:*
         version: link:../../packages/host-mcp
+      '@qingmei/provider-approval-sqlite':
+        specifier: workspace:*
+        version: link:../../packages/provider-approval-sqlite
       '@qingmei/provider-audit-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-audit-sqlite
@@ -56,6 +59,9 @@ importers:
       '@qingmei/qm-agent':
         specifier: workspace:*
         version: link:../../packages/qm-agent
+      '@qingmei/qm-approval':
+        specifier: workspace:*
+        version: link:../../packages/qm-approval
       '@qingmei/qm-history':
         specifier: workspace:*
         version: link:../../packages/qm-history
@@ -138,6 +144,19 @@ importers:
       '@qingmei/provider-permission-static':
         specifier: workspace:*
         version: link:../provider-permission-static
+
+  packages/provider-approval-sqlite:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
 
   packages/provider-audit-sqlite:
     dependencies:
@@ -269,6 +288,25 @@ importers:
       '@qingmei/qm-history':
         specifier: workspace:*
         version: link:../qm-history
+
+  packages/qm-approval:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-approval-sqlite':
+        specifier: workspace:*
+        version: link:../provider-approval-sqlite
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
 
   packages/qm-history:
     dependencies:

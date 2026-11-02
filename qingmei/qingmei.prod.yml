@@ -27,6 +27,9 @@
 
 - name: '@qingmei/provider-audit-sqlite'
 
+# 待人确认的审批队列：permission 判 ask、或子 agent 请求权限时落一条
+- name: '@qingmei/provider-approval-sqlite'
+
 # 任务账本：qm-task 派发、子 agent 经 MCP 上报进度
 - name: '@qingmei/provider-task-sqlite'
   config:
@@ -60,6 +63,9 @@
   config:
     workspaceRoot: './data/workspaces'
     timeoutMs: 600000
+
+# 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
+- name: '@qingmei/qm-approval'
 
 # 回合结束后异步抽取事实；走 llm 车道，不阻塞回复
 - name: '@qingmei/provider-schedule-sqlite'

@@ -11,6 +11,7 @@ import {
   McpService,
   uid,
   type Actor,
+  type ApprovalService,
   type AuditService,
   type ChannelId,
   type MemoryRecord,
@@ -35,10 +36,12 @@ export interface McpConfig {
   actorId?: string
   /** 工具调用发生的会话类型：群聊里策略会收紧 */
   conversation?: 'dm' | 'group'
+  /** ask 时等主人确认的时长，默认 60s */
+  approvalTimeoutMs?: number
 }
 
 export const name = 'host-mcp'
-export const inject = ['memory', 'schedule', 'task', 'taskRunner', 'permission', 'audit']
+export const inject = ['memory', 'schedule', 'task', 'taskRunner', 'permission', 'audit', 'approval']
 
 const PROTOCOL_VERSION = '2024-11-05'
 
@@ -46,16 +49,21 @@ const PROTOCOL_VERSION = '2024-11-05'
 export interface ToolGuard {
   permission: PermissionService
   audit: AuditService
+  /** ask 的确认队列；没有就按拒绝处理 */
+  approval?: ApprovalService
   actor: Actor
   channel: ChannelId
   conversation: 'dm' | 'group'
+  approvalTimeoutMs?: number
 }
 
+export const DEFAULT_APPROVAL_TIMEOUT_MS = 60_000
+
 /**
- * 工具调用的准入：先问 permission，再记一条审计，拒绝时抛出可读原因。
+ * 工具调用的准入：permission → 审计 →（ask 时）等人批准 → 执行。
  *
  * 审计先写、再抛错：被拒绝的调用本身也是要留痕的事实。
- * 「需要确认」等同于拒绝——渠道确认链路是 H 阶段的事（docs/07 §8）。
+ * `ask` 会落一条审批请求并阻塞等待；批准则继续，拒绝/超时按拒绝处理。
  */
 export async function guardToolCall(guard: ToolGuard, toolName: string): Promise<void> {
   const action = `tool.invoke:${toolName}`
@@ -67,23 +75,74 @@ export async function guardToolCall(guard: ToolGuard, toolName: string): Promise
     resource: toolName,
   })
 
+  if (decision.effect === 'deny') {
+    await guard.audit.append({
+      at: new Date(),
+      actorId: guard.actor.id,
+      channel: guard.channel,
+      action,
+      target: toolName,
+      decision: 'deny',
+      detail: { effect: 'deny', reason: decision.reason },
+      traceId: uid('trace'),
+    })
+    throw new Error(`工具「${toolName}」被拒绝：${decision.reason}`)
+  }
+
+  if (decision.effect === 'allow') {
+    await guard.audit.append({
+      at: new Date(),
+      actorId: guard.actor.id,
+      channel: guard.channel,
+      action,
+      target: toolName,
+      decision: 'allow',
+      traceId: uid('trace'),
+    })
+    return
+  }
+
+  // effect === 'ask'：落审批，等人拍板
+  const approval = guard.approval
+    ? await guard.approval.create({
+        action,
+        prompt: decision.prompt,
+        requester: 'tool:host-mcp',
+        channel: guard.channel,
+      })
+    : null
+
+  if (!approval) {
+    await guard.audit.append({
+      at: new Date(),
+      actorId: guard.actor.id,
+      channel: guard.channel,
+      action,
+      target: toolName,
+      decision: 'deny',
+      detail: { effect: 'ask', reason: '没有可用的审批队列' },
+      traceId: uid('trace'),
+    })
+    throw new Error(`工具「${toolName}」需要主人确认，但没有可用的审批队列`)
+  }
+
+  const decided = await guard.approval!.wait(approval.id, guard.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS)
+  const allowed = decided?.status === 'allowed'
   await guard.audit.append({
     at: new Date(),
     actorId: guard.actor.id,
     channel: guard.channel,
     action,
     target: toolName,
-    ...(decision.effect === 'ask' ? {} : { decision: decision.effect }),
-    ...(decision.effect === 'allow' ? {} : { detail: { effect: decision.effect, reason: decisionText(decision) } }),
+    decision: allowed ? 'allow' : 'deny',
+    detail: { effect: 'ask', approvalId: approval.id, status: decided?.status ?? 'timeout' },
     traceId: uid('trace'),
   })
 
-  if (decision.effect === 'deny') throw new Error(`工具「${toolName}」被拒绝：${decision.reason}`)
-  if (decision.effect === 'ask') throw new Error(`工具「${toolName}」需要主人确认：${decision.prompt}`)
-}
-
-function decisionText(decision: { effect: 'deny'; reason: string } | { effect: 'ask'; prompt: string }): string {
-  return decision.effect === 'deny' ? decision.reason : decision.prompt
+  if (!allowed) {
+    const why = decided?.status === 'denied' ? (decided.reason ?? '被拒绝') : '等待确认超时'
+    throw new Error(`工具「${toolName}」未获批准：${why}`)
+  }
 }
 
 export interface ToolResult {
@@ -417,15 +476,19 @@ export class McpHost extends McpService {
     if (!permission) throw new Error('[host-mcp] 缺少 permission 服务')
     const audit = ctx.reflect.get('audit', false) as AuditService | undefined
     if (!audit) throw new Error('[host-mcp] 缺少 audit 服务')
+    const approval = ctx.reflect.get('approval', false) as ApprovalService | undefined
+    if (!approval) throw new Error('[host-mcp] 缺少 approval 服务')
 
     this.tools = createTools({ memory, schedule, task, runner })
     this.toolsByName = new Map(this.tools.map((tool) => [tool.name, tool]))
     this.guard = {
       permission,
       audit,
+      approval,
       actor: { id: config.actorId?.trim() || 'owner', displayName: '主人', role: 'owner' },
       channel: 'web',
       conversation: config.conversation === 'group' ? 'group' : 'dm',
+      approvalTimeoutMs: config.approvalTimeoutMs,
     }
     this.options = {
       host: config.host ?? '127.0.0.1',

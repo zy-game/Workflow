@@ -2,13 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Context } from 'cordis'
 import {
+  ApprovalService,
   AuditService,
   MemoryService,
   PermissionService,
   ScheduleService,
   TaskRunnerService,
   TaskService,
+  type ApprovalRequest,
   type AuditEntry,
+  type CreateApprovalInput,
   type Decision,
   type MemoryRecord,
   type RecallQuery,
@@ -285,17 +288,73 @@ class FakeAudit extends AuditService {
   }
 }
 
-function guardWith(decision: Decision): { guard: ToolGuard; audit: FakeAudit } {
+class FakeApproval extends ApprovalService {
+  readonly created: ApprovalRequest[] = []
+  private readonly outcome: 'allowed' | 'denied' | 'timeout'
+
+  constructor(ctx: Context, outcome: 'allowed' | 'denied' | 'timeout') {
+    super(ctx)
+    this.outcome = outcome
+  }
+
+  async create(input: CreateApprovalInput): Promise<ApprovalRequest> {
+    const request: ApprovalRequest = {
+      id: `ap_${this.created.length + 1}`,
+      action: input.action,
+      prompt: input.prompt,
+      status: 'pending',
+      runId: input.runId ?? null,
+      requester: input.requester ?? 'unknown',
+      channel: 'web',
+      createdAt: new Date(),
+      decidedAt: null,
+      reason: null,
+    }
+    this.created.push(request)
+    return request
+  }
+
+  async get(): Promise<ApprovalRequest | null> {
+    return null
+  }
+
+  async list(): Promise<ApprovalRequest[]> {
+    return [...this.created]
+  }
+
+  async decide(): Promise<ApprovalRequest | null> {
+    return null
+  }
+
+  async wait(): Promise<ApprovalRequest | null> {
+    const base = this.created.at(-1)
+    if (!base || this.outcome === 'timeout') return null
+    return {
+      ...base,
+      status: this.outcome,
+      decidedAt: new Date(),
+      reason: this.outcome === 'denied' ? '太危险' : null,
+    }
+  }
+}
+
+function guardWith(
+  decision: Decision,
+  approvalOutcome?: 'allowed' | 'denied' | 'timeout',
+): { guard: ToolGuard; audit: FakeAudit; approval: FakeApproval | null } {
   const ctx = new Context()
   const audit = new FakeAudit(ctx)
+  const approval = approvalOutcome ? new FakeApproval(ctx, approvalOutcome) : null
   const guard: ToolGuard = {
     permission: new FakePermission(ctx, decision),
     audit,
+    ...(approval ? { approval } : {}),
     actor: { id: 'owner', displayName: '主人', role: 'owner' },
     channel: 'web',
     conversation: 'dm',
+    approvalTimeoutMs: 1000,
   }
-  return { guard, audit }
+  return { guard, audit, approval }
 }
 
 // ────────────────────────────────────────────── 用例
@@ -570,12 +629,39 @@ test('guardToolCall：拒绝时抛可读原因，并留一条 deny 审计', asyn
   assert.deepEqual(audit.entries[0]!.detail, { effect: 'deny', reason: '群聊里不能读或改你的日程' })
 })
 
-test('guardToolCall：需要确认时按拒绝处理，审计里记下 effect=ask', async () => {
+test('guardToolCall：ask 但没有审批队列时按拒绝处理', async () => {
   const { guard, audit } = guardWith({ effect: 'ask', prompt: '执行 shell 前需要主人确认' })
 
-  await assert.rejects(guardToolCall(guard, 'shell'), /需要主人确认：执行 shell 前需要主人确认/)
-  assert.equal(audit.entries[0]!.decision, undefined)
-  assert.deepEqual(audit.entries[0]!.detail, { effect: 'ask', reason: '执行 shell 前需要主人确认' })
+  await assert.rejects(guardToolCall(guard, 'shell'), /需要主人确认，但没有可用的审批队列/)
+  assert.equal(audit.entries[0]!.decision, 'deny')
+  assert.deepEqual(audit.entries[0]!.detail, { effect: 'ask', reason: '没有可用的审批队列' })
+})
+
+test('guardToolCall：ask 落审批，批准后继续并记 allow', async () => {
+  const { guard, audit, approval } = guardWith({ effect: 'ask', prompt: '执行 shell 前需要主人确认' }, 'allowed')
+
+  await guardToolCall(guard, 'shell')
+  assert.equal(approval?.created.length, 1)
+  assert.equal(approval?.created[0]!.action, 'tool.invoke:shell')
+  assert.equal(approval?.created[0]!.requester, 'tool:host-mcp')
+  assert.equal(audit.entries[0]!.decision, 'allow')
+  assert.equal((audit.entries[0]!.detail as { status: string }).status, 'allowed')
+})
+
+test('guardToolCall：ask 被拒绝时抛出可读原因并记 deny', async () => {
+  const { guard, audit } = guardWith({ effect: 'ask', prompt: '执行 shell 前需要主人确认' }, 'denied')
+
+  await assert.rejects(guardToolCall(guard, 'shell'), /未获批准：太危险/)
+  assert.equal(audit.entries[0]!.decision, 'deny')
+  assert.equal((audit.entries[0]!.detail as { status: string }).status, 'denied')
+})
+
+test('guardToolCall：ask 等待超时按拒绝处理', async () => {
+  const { guard, audit } = guardWith({ effect: 'ask', prompt: '执行 shell 前需要主人确认' }, 'timeout')
+
+  await assert.rejects(guardToolCall(guard, 'shell'), /等待确认超时/)
+  assert.equal(audit.entries[0]!.decision, 'deny')
+  assert.equal((audit.entries[0]!.detail as { status: string }).status, 'timeout')
 })
 
 test('当前全部工具在私聊里都能通过真实策略（新增工具忘了登记会在这里挂）', async () => {

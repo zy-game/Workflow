@@ -435,6 +435,81 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* ── 待确认（审批） ─────────────────────────── */
+
+.approvals {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgb(227 179 65 / 35%);
+  border-radius: 12px;
+  background: rgb(227 179 65 / 6%);
+}
+
+.approvals-title {
+  margin: 0 0 6px;
+  color: var(--warn);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.approvals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.approval-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.approval-prompt {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.approval-meta {
+  flex: 1;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.approval-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.approval-allow {
+  flex: none;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid rgb(126 214 166 / 45%);
+  border-radius: 999px;
+  background: rgb(126 214 166 / 12%);
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.approval-allow:hover:not(:disabled) {
+  background: rgb(126 214 166 / 20%);
+}
+
+.approval-allow:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ── 日程面板 ───────────────────────────────── */
 
 .schedules {

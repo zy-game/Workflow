@@ -11,6 +11,13 @@ export interface AcpUpdate {
   update: Record<string, unknown>
 }
 
+/** ACP `session/request_permission` 的参数（v1 schema） */
+export interface AcpPermissionRequest {
+  sessionId: string
+  toolCall?: { title?: string; name?: string; [key: string]: unknown }
+  options?: { optionId: string; name: string; kind: string }[]
+}
+
 export interface AcpClientOptions {
   command: string
   args: string[]
@@ -21,6 +28,11 @@ export interface AcpClientOptions {
   onUpdate?: (update: AcpUpdate) => void
   onStderr?: (text: string) => void
   onExit?: (code: number | null) => void
+  /**
+   * 子 agent 请求权限时调用：返回要选的 optionId，返回 null 表示取消。
+   * 业务语义（审批队列）在 DshHarness 里，客户端只负责协议往返。
+   */
+  onPermissionRequest?: (request: AcpPermissionRequest) => Promise<string | null>
 }
 
 interface Pending {
@@ -147,6 +159,29 @@ export class AcpClient {
       if (params?.sessionId && params.update) {
         this.options.onUpdate?.({ sessionId: params.sessionId, update: params.update })
       }
+      return
+    }
+    // agent 侧请求：权限确认。必须回，且用同一个 id，否则子 agent 会一直等
+    if (message.method === 'session/request_permission' && message.id !== undefined) {
+      void this.handlePermission(message.id, message.params as AcpPermissionRequest)
+    }
+  }
+
+  private async handlePermission(id: unknown, params: AcpPermissionRequest): Promise<void> {
+    let optionId: string | null = null
+    try {
+      optionId = (await this.options.onPermissionRequest?.(params)) ?? null
+    } catch (error) {
+      this.options.onStderr?.(`[acp] 权限请求处理失败：${String(error)}\n`)
+      optionId = null
+    }
+    const result = optionId
+      ? { outcome: { outcome: 'selected', optionId } }
+      : { outcome: { outcome: 'cancelled' } }
+    try {
+      this.write({ jsonrpc: '2.0', id, result })
+    } catch (error) {
+      this.options.onStderr?.(`[acp] 回权限结果失败：${String(error)}\n`)
     }
   }
 

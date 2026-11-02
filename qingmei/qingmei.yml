@@ -26,6 +26,9 @@
 
 - name: '@qingmei/provider-audit-sqlite'
 
+# 待人确认的审批队列：permission 判 ask、或子 agent 请求权限时落一条
+- name: '@qingmei/provider-approval-sqlite'
+
 # 任务账本：把任务派给 harness 并记录 run（host-mcp 的任务工具依赖它）
 - name: '@qingmei/provider-task-sqlite'
 
@@ -39,6 +42,9 @@
 
 # 把任务派给 harness；没有 harness 时 POST /api/v1/tasks 返回 503
 - name: '@qingmei/qm-task'
+
+# 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
+- name: '@qingmei/qm-approval'
 
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'

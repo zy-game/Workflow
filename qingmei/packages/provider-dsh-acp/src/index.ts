@@ -9,10 +9,13 @@ import type { Context } from 'cordis'
 import path from 'node:path'
 import {
   HarnessService,
+  type ApprovalRequest,
+  type ApprovalService,
   type HarnessEvent,
   type HarnessRequest,
+  type TaskService,
 } from '@qingmei/core'
-import { AcpClient, type AcpUpdate } from './acp-client.ts'
+import { AcpClient, type AcpPermissionRequest, type AcpUpdate } from './acp-client.ts'
 
 export interface DshHarnessConfig {
   /** dsh 可执行文件 */
@@ -25,6 +28,8 @@ export interface DshHarnessConfig {
   env?: Record<string, string | undefined>
   /** 单个请求超时 */
   timeoutMs?: number
+  /** 等主人批准权限请求的时长，默认 60s */
+  approvalTimeoutMs?: number
 }
 
 export const name = 'provider-dsh-acp'
@@ -33,6 +38,7 @@ const DEFAULTS = {
   command: '/usr/local/bin/dsh',
   args: ['--profile', 'acp'],
   timeoutMs: 120_000,
+  approvalTimeoutMs: 60_000,
 }
 
 export class DshHarness extends HarnessService {
@@ -40,6 +46,8 @@ export class DshHarness extends HarnessService {
   private client: AcpClient | null = null
   /** conversationId → ACP sessionId */
   private readonly sessions = new Map<string, string>()
+  /** sessionId → conversationId（权限请求回来时反查 run） */
+  private readonly conversations = new Map<string, string>()
   /** sessionId → 当前回合的事件队列 */
   private readonly turns = new Map<string, AsyncQueue<HarnessEvent>>()
 
@@ -104,6 +112,7 @@ export class DshHarness extends HarnessService {
     const sessionId = this.sessions.get(conversationId)
     if (!sessionId) return
     this.sessions.delete(conversationId)
+    this.conversations.delete(sessionId)
     try {
       await this.client?.closeSession(sessionId)
     } catch {
@@ -128,10 +137,46 @@ export class DshHarness extends HarnessService {
       env: this.config.env,
       timeoutMs: this.config.timeoutMs ?? DEFAULTS.timeoutMs,
       onUpdate: (update) => this.dispatch(update),
+      onPermissionRequest: (request) => this.requestPermission(request),
     })
     await client.start()
     this.client = client
     return client
+  }
+
+  /**
+   * 子 agent 要执行敏感操作：落一条审批请求，等人拍板。
+   *
+   * 没有 approval 服务（例如开发环境）时直接取消——宁可挡住，也不静默放行。
+   * 任务会话等待期间把 run 标成 needs_approval，界面上能看出「卡在等人」。
+   */
+  private async requestPermission(request: AcpPermissionRequest): Promise<string | null> {
+    const approval = this.ctx.reflect.get('approval', false) as ApprovalService | undefined
+    const title = request.toolCall?.title ?? request.toolCall?.name ?? '未知操作'
+    if (!approval) return null
+
+    const conversationId = this.conversations.get(request.sessionId) ?? ''
+    const runId = conversationId.startsWith('task_') ? conversationId.slice('task_'.length) : null
+    const task = this.ctx.reflect.get('task', false) as TaskService | undefined
+
+    const record: ApprovalRequest = await approval.create({
+      action: `acp:${title}`,
+      prompt: `子 agent 请求执行：${title}`,
+      requester: 'harness:dsh',
+      ...(runId ? { runId } : {}),
+    })
+    if (runId && task) await task.setStatus(runId, 'needs_approval')
+
+    const decided = await approval.wait(record.id, this.config.approvalTimeoutMs ?? DEFAULTS.approvalTimeoutMs)
+    if (runId && task) await task.setStatus(runId, 'running')
+
+    const options = request.options ?? []
+    if (decided?.status === 'allowed') {
+      const allow = options.find((option) => option.kind === 'allow_once') ?? options.find((option) => option.kind === 'allow_always')
+      return allow?.optionId ?? null
+    }
+    const reject = options.find((option) => option.kind === 'reject_once')
+    return reject?.optionId ?? null
   }
 
   private async ensureSession(
@@ -147,6 +192,7 @@ export class DshHarness extends HarnessService {
     const mcpServers = mcp?.servers() ?? []
     const sessionId = await client.newSession(base, mcpServers)
     this.sessions.set(conversationId, sessionId)
+    this.conversations.set(sessionId, conversationId)
     return sessionId
   }
 
