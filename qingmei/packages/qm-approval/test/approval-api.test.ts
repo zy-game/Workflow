@@ -87,7 +87,7 @@ function request(method: string, path: string, body?: unknown, query: Record<str
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(approvalApi.name, 'qm-approval')
-  assert.deepEqual(approvalApi.inject, ['approval', 'gateway'])
+  assert.deepEqual(approvalApi.inject, ['approval', 'gateway', 'store'])
 })
 
 test('GET /api/v1/approvals：默认全部，?status=pending 只给待确认', async () => {
@@ -188,6 +188,38 @@ test('渠道回复「拒绝」与无关文本', async () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(h.channel.sent.length, before, '无关文本不应触发审批')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('审批请求会推到最近的渠道会话，Web 不重复发', async () => {
+  const h = await setup()
+  try {
+    const inbound = (id: string, channel: 'feishu' | 'web', conversation: string) => ({
+      platformMessageId: id,
+      channel,
+      accountId: 'acc',
+      conversation: { kind: 'dm' as const, id: conversation },
+      sender: { platformUserId: 'u1', displayName: '我' },
+      blocks: [{ type: 'text' as const, text: '在吗' }],
+      receivedAt: new Date(),
+    })
+
+    h.ctx.events.emit(EVENTS.inbound, inbound('m1', 'web', 'owner'))
+    h.ctx.events.emit(EVENTS.inbound, inbound('m2', 'feishu', 'oc_dm'))
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    await h.approval.create({ action: 'tool.invoke:test', prompt: '需要你确认' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    assert.equal(h.channel.sent.length, 1, '只推飞书，不推 web')
+    const envelope = h.channel.sent[0]!
+    assert.equal(envelope.channel, 'feishu')
+    assert.equal(envelope.conversationId, 'oc_dm')
+    const text = (envelope.blocks[0] as { text: string }).text
+    assert.match(text, /待确认：需要你确认/)
+    assert.match(text, /回「批准」或「拒绝」/)
   } finally {
     await h.dispose()
   }

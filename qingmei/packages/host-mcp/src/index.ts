@@ -37,7 +37,7 @@ export interface McpConfig {
   actorId?: string
   /** 工具调用发生的会话类型：群聊里策略会收紧 */
   conversation?: 'dm' | 'group'
-  /** ask 时等主人确认的时长，默认 60s */
+  /** ask 时等主人确认的时长，默认 5 分钟 */
   approvalTimeoutMs?: number
 }
 
@@ -58,7 +58,7 @@ export interface ToolGuard {
   approvalTimeoutMs?: number
 }
 
-export const DEFAULT_APPROVAL_TIMEOUT_MS = 60_000
+export const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
 
 /**
  * 工具调用的准入：permission → 审计 →（ask 时）等人批准 → 执行。

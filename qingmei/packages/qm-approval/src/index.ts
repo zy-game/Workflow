@@ -15,23 +15,35 @@ import {
   type ApprovalService,
   type GatewayRequest,
   type GatewayResponse,
+  type ChannelId,
   type ChannelService,
   type GatewayService,
   type InboundMessage,
+  type Row,
+  type StoreService,
 } from '@qingmei/core'
 
+interface ChannelTarget extends Row {
+  conversationId: string
+  updatedAt: number
+}
+
 export const name = 'qm-approval'
-export const inject = ['approval', 'gateway']
+export const inject = ['approval', 'gateway', 'store']
 
 export function apply(ctx: Context): void {
   const approval = ctx.reflect.get('approval', false) as ApprovalService | undefined
   if (!approval) throw new Error('[qm-approval] 缺少 approval 服务')
   const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
   if (!gateway) throw new Error('[qm-approval] 缺少 gateway 服务')
+  const store = ctx.reflect.get('store', false) as StoreService | undefined
+  if (!store) throw new Error('[qm-approval] 缺少 store 服务')
+  const targets = store.collection<ChannelTarget>('qm_channel_target')
 
   // 渠道里回「批准/拒绝」直接处理最早的一条待确认；没有待确认时静默忽略
   const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
   ctx.events.on(EVENTS.inbound, (message: InboundMessage) => {
+    void rememberTarget(message).catch(() => undefined)
     const text = textOf(message.blocks).trim()
     const allow = /^(批准|同意|允许|approve|allow)[!！。.,，\s]*$/i.test(text)
     const deny = /^(拒绝|不同意|deny|reject)[!！。.,，\s]*$/i.test(text)
@@ -41,6 +53,37 @@ export function apply(ctx: Context): void {
     })
   })
 
+  /** 记住每个渠道最近一次会话，审批请求推到这里 */
+  async function rememberTarget(message: InboundMessage): Promise<void> {
+    if (message.channel === 'web') return
+    const existing = await targets.get(message.channel)
+    const updatedAt = Date.now()
+    if (existing) await targets.update(existing.id, { conversationId: message.conversation.id, updatedAt })
+    else await targets.insert({ id: message.channel, conversationId: message.conversation.id, updatedAt })
+  }
+
+  /** 审批一创建就推到最近的渠道会话；Web 侧靠任务面板，不重复发 */
+  async function notifyApproval(request: ApprovalRequest): Promise<void> {
+    const rows = await targets.find({})
+    if (!channel || rows.length === 0) return
+    const pending = await approval.list('pending')
+    const extra = pending.length > 1 ? `（还有 ${pending.length - 1} 条待确认）` : ''
+    for (const row of rows) {
+      await channel
+        .send({
+          channel: row.id as ChannelId,
+          conversationId: row.conversationId,
+          blocks: [{ type: 'text', text: `🔐 待确认：${request.prompt}\n回「批准」或「拒绝」即可${extra}` }],
+        })
+        .catch(() => undefined)
+    }
+  }
+
+  ctx.events.on(EVENTS.approvalRequested, (request: ApprovalRequest) => {
+    void notifyApproval(request).catch((error: unknown) => {
+      ctx.logger.warn(`[qm-approval] 审批推送失败：${messageOf(error)}`)
+    })
+  })
   async function decideFromChannel(allow: boolean, message: InboundMessage): Promise<void> {
     const pending = (await approval.list('pending')).slice().sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     const target = pending[0]

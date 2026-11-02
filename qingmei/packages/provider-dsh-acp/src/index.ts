@@ -28,7 +28,7 @@ export interface DshHarnessConfig {
   env?: Record<string, string | undefined>
   /** 单个请求超时 */
   timeoutMs?: number
-  /** 等主人批准权限请求的时长，默认 60s */
+  /** 等主人批准权限请求的时长，默认 5 分钟 */
   approvalTimeoutMs?: number
 }
 
@@ -38,7 +38,7 @@ const DEFAULTS = {
   command: '/usr/local/bin/dsh',
   args: ['--profile', 'acp'],
   timeoutMs: 120_000,
-  approvalTimeoutMs: 60_000,
+  approvalTimeoutMs: 5 * 60_000,
 }
 
 export class DshHarness extends HarnessService {
