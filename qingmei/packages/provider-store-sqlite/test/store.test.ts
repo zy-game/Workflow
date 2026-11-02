@@ -274,3 +274,39 @@ test('migrate：只执行未应用过的迁移', async () => {
     assert.deepEqual(await store.migrate([migration]), [])
   })
 })
+
+test('ensureIndex：唯一索引拒绝重复，重复建索引幂等', async () => {
+  await withTempStore(async (store) => {
+    const people = store.collection<Person>('people')
+    await store.ensureIndex('people', ['name'], { unique: true })
+    await store.ensureIndex('people', ['name'], { unique: true })
+
+    await people.insert({ name: 'Ada', age: 36, active: true })
+    await assert.rejects(people.insert({ name: 'Ada', age: 20, active: false }), /UNIQUE/)
+    await people.insert({ name: 'Bob', age: 20, active: false })
+
+    // 另一个集合的同名记录不受影响
+    const others = store.collection<Person>('others')
+    await others.insert({ name: 'Ada', age: 20, active: false })
+  })
+})
+
+test('where null 只匹配显式 null，不匹配缺失字段', async () => {
+  await withTempStore(async (store) => {
+    interface Maybe extends Row {
+      v: string | null
+    }
+    const collection = store.collection<Maybe>('nulls')
+    await collection.insert({ id: 'a', v: null })
+    await collection.insert({ id: 'b' } as unknown as Maybe)
+    await collection.insert({ id: 'c', v: 'x' })
+
+    const found = await collection.find({ where: { v: null } })
+    assert.deepEqual(
+      found.map((row) => row.id),
+      ['a'],
+      '缺失字段不应被当成 null',
+    )
+    assert.equal(await collection.count({ where: { v: null } }), 1)
+  })
+})

@@ -2,7 +2,8 @@
  * @qingmei/provider-store-sqlite —— 用 node:sqlite 实现 store 契约。
  *
  * P1 只用一张通用记录表：`(name, id)` 作主键，记录整体序列化为 JSON。
- * 没有列级索引，`where` 等值过滤与 `order` 排序都在 JS 侧完成。
+ * 查询下推：`where` 的标量等值与 `order`/`limit` 折成 SQL（`json_extract`），
+ * 字段名不安全或值不是标量时退回 JS 过滤。`ensureIndex` 建表达式二级索引/唯一约束。
  */
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -139,6 +140,27 @@ export class SqliteStore extends StoreService {
     })
   }
 
+  /** 给集合的 JSON 字段建表达式索引；qm-history 用它建消息时间线与重投幂等索引 */
+  async ensureIndex(collection: string, fields: string[], options: { unique?: boolean; where?: string } = {}): Promise<void> {
+    if (typeof collection !== 'string' || collection.length === 0) {
+      throw new TypeError('[provider-store-sqlite] ensureIndex 的 collection 必须是非空字符串')
+    }
+    if (!Array.isArray(fields) || fields.length === 0) {
+      throw new TypeError('[provider-store-sqlite] ensureIndex 至少需要一个字段')
+    }
+    for (const field of fields) {
+      if (!FIELD_RE.test(field)) throw new TypeError(`[provider-store-sqlite] 非法字段名：${field}`)
+    }
+    const safe = (value: string) => value.replace(/[^A-Za-z0-9_]/g, '_')
+    const name = `idx_${safe(collection)}_${fields.map(safe).join('_')}${options.unique ? '_uniq' : ''}`
+    const columns = fields.map((field) => `json_extract(json, '$.${field}')`).join(', ')
+    const whereParts = [`name = '${collection.replace(/'/g, "''")}'`]
+    if (options.where) whereParts.push(options.where)
+    const sql = `CREATE ${options.unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${name} ON records (name, ${columns}) WHERE ${whereParts.join(' AND ')}`
+    await this.runWrite(() => {
+      this.requireDb().exec(sql)
+    })
+  }
   async migrate(migrations: Migration[]): Promise<string[]> {
     const db = this.requireDb()
     db.exec('CREATE TABLE IF NOT EXISTS qm_migration (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)')
@@ -181,6 +203,35 @@ class SqliteCollection<T extends Row> implements Collection<T> {
 
   async find(query: Query<T> = {}): Promise<T[]> {
     assertWindow(query.limit, query.offset)
+    const db = this.store.requireDb()
+    const where = buildWhere(query.where as unknown as Record<string, unknown>)
+    const order = buildOrder(query.order as unknown as { field: string; dir: 'asc' | 'desc' }[])
+
+    // 字段名不安全或值不是标量时退回 JS 过滤，语义不变
+    if (!where.ok || !order.ok) return this.findInJs(query)
+
+    const params: unknown[] = [this.name, ...where.params]
+    // 没给排序时保持插入顺序（rowid），与老实现的确定性一致
+    let sql = `SELECT id, json FROM records WHERE name = ?${where.clause}${order.clause || ' ORDER BY rowid ASC'}`
+    if (query.limit !== undefined) {
+      sql += ' LIMIT ?'
+      params.push(query.limit)
+      if (query.offset) {
+        sql += ' OFFSET ?'
+        params.push(query.offset)
+      }
+    } else if (query.offset) {
+      // SQLite 的 OFFSET 必须跟在 LIMIT 后面；-1 表示不设上限
+      sql += ' LIMIT -1 OFFSET ?'
+      params.push(query.offset)
+    }
+
+    const rows = db.prepare(sql).all(...params) as unknown as StoredRow[]
+    return rows.map((row) => parseJson<T>(row.json, this.name, row.id))
+  }
+
+  /** 不可下推的查询：老路径，全量取回后在 JS 里过滤/排序 */
+  private findInJs(query: Query<T>): T[] | Promise<T[]> {
     const db = this.store.requireDb()
     const rows = db
       .prepare('SELECT id, json FROM records WHERE name = ? ORDER BY rowid ASC')
@@ -228,7 +279,7 @@ class SqliteCollection<T extends Row> implements Collection<T> {
         )
       } catch (error) {
         throw new Error(
-          `[provider-store-sqlite] failed to insert record "${id}" into collection "${this.name}"`,
+          `[provider-store-sqlite] failed to insert record "${id}" into collection "${this.name}": ${error instanceof Error ? error.message : String(error)}`,
           { cause: error },
         )
       }
@@ -274,13 +325,18 @@ class SqliteCollection<T extends Row> implements Collection<T> {
   async count(query: Query<T> = {}): Promise<number> {
     // count 只应用 where；order/limit/offset 是取数窗口，不影响总数。
     const db = this.store.requireDb()
-    const rows = db
-      .prepare('SELECT id, json FROM records WHERE name = ?')
-      .all(this.name) as unknown as StoredRow[]
-    const values = rows.map((row) => parseJson<T>(row.json, this.name, row.id))
-    if (!query.where) return values.length
-    const where = query.where as unknown as Record<string, unknown>
-    return values.filter((value) => matches(value, where)).length
+    const where = buildWhere(query.where as unknown as Record<string, unknown>)
+    if (!where.ok) {
+      const rows = db
+        .prepare('SELECT id, json FROM records WHERE name = ?')
+        .all(this.name) as unknown as StoredRow[]
+      const values = rows.map((row) => parseJson<T>(row.json, this.name, row.id))
+      return values.filter((value) => matches(value, where.raw)).length
+    }
+    const row = db
+      .prepare(`SELECT COUNT(*) AS n FROM records WHERE name = ?${where.clause}`)
+      .get(this.name, ...where.params) as unknown as { n: number }
+    return Number(row.n)
   }
 }
 
@@ -348,4 +404,44 @@ function assertWindow(limit: number | undefined, offset: number | undefined): vo
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const store = new SqliteStore(ctx, config)
   await store.ready()
+}
+
+const FIELD_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+type WherePlan =
+  | { ok: true; clause: string; params: unknown[] }
+  | { ok: false; raw: Record<string, unknown> }
+
+/** 把 where 折成 SQL：只推标量等值；null 只匹配 JSON null，不匹配缺失字段 */
+function buildWhere(where: Record<string, unknown> | undefined): WherePlan {
+  const raw = where ?? {}
+  const clauses: string[] = []
+  const params: unknown[] = []
+  for (const [key, value] of Object.entries(raw)) {
+    if (!FIELD_RE.test(key)) return { ok: false, raw }
+    if (value === null) {
+      clauses.push(`json_type(json, '$.${key}') = 'null'`)
+      continue
+    }
+    const type = typeof value
+    if (type !== 'string' && type !== 'number' && type !== 'boolean') return { ok: false, raw }
+    clauses.push(`json_extract(json, '$.${key}') = ?`)
+    // SQLite 不认 JS boolean：JSON true/false 存的是 1/0
+    params.push(type === 'boolean' ? (value ? 1 : 0) : value)
+  }
+  return { ok: true, clause: clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : '', params }
+}
+
+type OrderPlan = { ok: true; clause: string } | { ok: false }
+
+/** 把 order 折成 SQL；字段名必须是标识符 */
+function buildOrder(order: { field: string | number | symbol; dir: 'asc' | 'desc' }[] | undefined): OrderPlan {
+  if (!order || order.length === 0) return { ok: true, clause: '' }
+  const parts: string[] = []
+  for (const rule of order) {
+    const field = String(rule.field)
+    if (!FIELD_RE.test(field)) return { ok: false }
+    parts.push(`json_extract(json, '$.${field}') ${rule.dir === 'desc' ? 'DESC' : 'ASC'}`)
+  }
+  return { ok: true, clause: ` ORDER BY ${parts.join(', ')}` }
 }

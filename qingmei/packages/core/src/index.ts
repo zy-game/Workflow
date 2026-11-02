@@ -394,6 +394,10 @@ export abstract class StoreService extends Service {
   abstract transaction<T>(fn: () => Promise<T> | T): Promise<T>
   /** 按顺序应用未执行过的迁移，返回本次实际执行的 id */
   abstract migrate(migrations: Migration[]): Promise<string[]>
+  /** 给集合的 JSON 字段建二级索引/唯一约束（可选能力，默认不支持） */
+  async ensureIndex(_collection: string, _fields: string[], _options?: { unique?: boolean; where?: string }): Promise<void> {
+    throw new Error('[store] 这个实现不支持 ensureIndex')
+  }
 }
 
 // ────────────────────────────────────────────── 渠道

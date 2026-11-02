@@ -81,9 +81,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
    （DSH 目前不返回 usage，可能得等 harness 支持）。
 2. **M1 剩余**：`audience` + `validTo` + 群聊零注入 ✅、memory 必需化 ✅；
    还差画像最小版（docs/05 M1 交付物）、`summarize`、情节/决策/教训类型、断网抽取补偿队列。
-3. **历史表的真实索引与迁移**（接 M3 平台前）：现在幂等靠进程内串行化 + 先查再插，
-   多进程/平台重投压力下要落成真实唯一索引；`steps` / `tokens_*` / `error_code` 也还没采集。
-   结构（`direction`/`blocks_json`/`trace_id` + `qm_turn`）已完成。
+3. **历史表的列级迁移**（接 M3 平台前）：索引与查询下推已完成；`steps` / `tokens_*` / 
+   `error_code` 还没采集，也仍没有真正的列级表结构（字段语义靠代码保证）。
 4. **A3 收尾**：QQ/飞书渠道等 M3；盘点结论的追问闭环（「那个盘点结果呢」直接回最近的 inventory run）。
    自动盘点与结论回推已完成。
 5. **A5 剩余**：回滚/投诉信号。
@@ -131,6 +130,14 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### 历史表索引与查询下推
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` / `provider-store-sqlite` | `StoreService.ensureIndex`（表达式索引/部分唯一索引）；`find`/`count` 的 `where`（标量等值）与 `order`/`limit`/`offset` 下推成 SQL（`json_extract`），不安全字段退回 JS |
+| `packages/qm-history` | 启动时建 `qm_message(session_id, created_at)`、`qm_message(session_id, platform_message_id)` 唯一、`qm_turn(session_id)`；唯一冲突视作幂等成功（含 cause 链识别） |
+| 测试 | 2 条 store（唯一索引、null 只匹配显式 null）+ 全量通过；242 → 248 |
 
 ### 审计查询接口
 

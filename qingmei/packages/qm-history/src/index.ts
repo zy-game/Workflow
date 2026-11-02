@@ -63,6 +63,19 @@ export function apply(ctx: Context): void {
   const collection = store.collection<StoredMessage>(MESSAGE_COLLECTION)
   const turns = store.collection<StoredTurn>(TURN_COLLECTION)
 
+  // 二级索引：消息按会话取时间线、平台重投按 (session_id, platform_message_id) 唯一
+  void (async () => {
+    try {
+      await store.ensureIndex('qm_message', ['session_id', 'created_at'])
+      await store.ensureIndex('qm_message', ['session_id', 'platform_message_id'], {
+        unique: true,
+        where: "json_extract(json, '$.platform_message_id') IS NOT NULL",
+      })
+      await store.ensureIndex('qm_turn', ['session_id'])
+    } catch (error) {
+      ctx.logger.warn(`[qm-history] 建索引失败：${messageOf(error)}`)
+    }
+  })()
   // 写入串行化：幂等是「先查再插」，并发跑会两个都插进去
   let writeChain: Promise<void> = Promise.resolve()
   function enqueue(task: () => Promise<void>): Promise<void> {
@@ -101,17 +114,23 @@ export function apply(ctx: Context): void {
       })
       if (existing.length > 0) return
     }
-    await collection.insert({
-      id: uid('msg'),
-      session_id: input.sessionId,
-      role: input.role,
-      direction: input.direction,
-      blocks_json: JSON.stringify(input.blocks),
-      text,
-      trace_id: input.traceId ?? null,
-      ...(input.platformMessageId ? { platform_message_id: input.platformMessageId } : {}),
-      created_at: input.createdAt,
-    })
+    try {
+      await collection.insert({
+        id: uid('msg'),
+        session_id: input.sessionId,
+        role: input.role,
+        direction: input.direction,
+        blocks_json: JSON.stringify(input.blocks),
+        text,
+        trace_id: input.traceId ?? null,
+        ...(input.platformMessageId ? { platform_message_id: input.platformMessageId } : {}),
+        created_at: input.createdAt,
+      })
+    } catch (error) {
+      // 并发下唯一索引可能先一步拒绝：视作幂等成功
+      if (input.platformMessageId && isUniqueViolation(error)) return
+      throw error
+    }
   }
 
   // 用户消息：回合开始时写。没有谁等它写完，异步处理；失败只记日志，不能打断回合
@@ -163,6 +182,15 @@ export function apply(ctx: Context): void {
       ctx.logger.warn(`[qm-history] 回合落库失败：${messageOf(error)}`)
     })
   })
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  let current: unknown = error
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (current instanceof Error && /UNIQUE constraint failed/i.test(current.message)) return true
+    current = (current as { cause?: unknown }).cause
+  }
+  return false
 }
 
 function messageOf(error: unknown): string {
