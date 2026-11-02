@@ -168,13 +168,34 @@ export function stripMentions(text: string): string {
  * 真实传输层：Node 原生 WebSocket + fetch。
  * QQ 机器人是长连接协议：hello → identify → 心跳；断线按 op 7 重连。
  */
-export function createQqTransport(config: QqConfig & { appId: string; clientSecret: string }): QqTransport {
+export function createQqTransport(config: QqConfig & { appId: string; clientSecret: string }, log?: (line: string) => void): QqTransport {
   let socket: WebSocket | null = null
   let heartbeat: ReturnType<typeof setInterval> | null = null
   let sequence: number | null = null
   let handler: ((event: QqInboundEvent) => void) | null = null
   let stopped = false
   let token: { value: string; expiresAt: number } | null = null
+  /** identify 之后要等 READY 才算真的上线 */
+  let readyWaiter: { resolve: () => void; reject: (error: Error) => void } | null = null
+
+  function waitReady(timeoutMs: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        readyWaiter = null
+        reject(new Error(`QQ WebSocket 未在 ${timeoutMs}ms 内 READY`))
+      }, timeoutMs)
+      readyWaiter = {
+        resolve: () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+      }
+    })
+  }
 
   const apiBase = config.apiBase ?? (config.sandbox ? 'https://sandbox.api.sgroup.qq.com' : 'https://api.sgroup.qq.com')
   const tokenUrl = config.sandbox ? 'https://bots.qq.com/app/getAppAccessToken' : 'https://bots.qq.com/app/getAppAccessToken'
@@ -208,7 +229,10 @@ export function createQqTransport(config: QqConfig & { appId: string; clientSecr
     ws.addEventListener('message', (event) => {
       void handleFrame(String(event.data))
     })
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (event) => {
+      log?.(`[channel-qq] 连接关闭 code=`)
+      readyWaiter?.reject(new Error(`QQ WebSocket 连接关闭（）`))
+      readyWaiter = null
       if (heartbeat) clearInterval(heartbeat)
       heartbeat = null
       if (!stopped) setTimeout(() => void connect().catch(() => undefined), 3000)
@@ -252,6 +276,12 @@ export function createQqTransport(config: QqConfig & { appId: string; clientSecr
     }
 
     if (frame.op === 0) {
+      if (frame.t === 'READY') {
+        log?.('[channel-qq] 长连接就绪')
+        readyWaiter?.resolve()
+        readyWaiter = null
+        return
+      }
       const event = parseDispatchEvent(frame.t, frame.d)
       if (event) handler?.(event)
       return
@@ -268,7 +298,9 @@ export function createQqTransport(config: QqConfig & { appId: string; clientSecr
     async start(onInbound) {
       handler = onInbound
       stopped = false
+      const ready = waitReady(15_000)
       await connect()
+      await ready
     },
     async sendMessage({ kind, conversationId, text, replyTo }) {
       const current = await accessToken()
@@ -335,7 +367,7 @@ export function apply(ctx: Context, config: QqConfig = {}): void {
     return
   }
   const sandbox = config.sandbox ?? process.env.QM_QQ_SANDBOX === '1'
-  const transport = createQqTransport({ ...config, sandbox, appId, clientSecret })
+  const transport = createQqTransport({ ...config, sandbox, appId, clientSecret }, (line) => ctx.logger.info(line))
   const adapter = createQqAdapter(ctx, config, transport)
   const dispose = ctx.channel.register(adapter)
   ctx.effect(() => () => dispose())
