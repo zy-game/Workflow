@@ -271,7 +271,7 @@ export const AUTONOMY_ACTIONS: Record<string, AutonomyActionSpec> = {
 
 /** 一次 tick 对选中候选的实际处理结果；没有回执不算执行过 */
 export interface AutonomyExecution {
-  status: 'executed' | 'suggested' | 'skipped' | 'failed'
+  status: 'executed' | 'suggested' | 'skipped' | 'failed' | 'rolled_back'
   action: string
   detail: string
   at: Date
@@ -336,6 +336,21 @@ export interface AutonomyComplaintResult {
   locked: boolean
 }
 
+export interface AutonomyRollbackInput {
+  /** 要回滚哪条 trace；缺省最近一条可回滚的 */
+  traceId?: string
+  reason?: string
+}
+
+export interface AutonomyRollbackResult {
+  ok: boolean
+  traceId?: string
+  action?: string
+  before: AutonomyLevel
+  after: AutonomyLevel
+  error?: string
+}
+
 /** 自主循环：世界状态快照 → 候选 → 过滤 → 选择 → 记账（docs/13 §3） */
 export abstract class AutonomyService extends Service {
   constructor(ctx: Context) {
@@ -344,9 +359,14 @@ export abstract class AutonomyService extends Service {
   abstract tick(trigger: 'tick' | 'manual'): Promise<AutonomyTrace>
   abstract list(limit?: number): Promise<AutonomyTrace[]>
   abstract status(): Promise<AutonomyState>
-  /** 投诉/回滚：具体 runner 覆盖；默认实现不支持 */
+  /** 投诉：具体 runner 覆盖；默认实现不支持 */
   async complain(_input?: AutonomyComplaintInput): Promise<AutonomyComplaintResult> {
     throw new Error('当前 autonomy 实现不支持 complain')
+  }
+
+  /** 回滚已执行动作；默认实现不支持 */
+  async rollback(_input?: AutonomyRollbackInput): Promise<AutonomyRollbackResult> {
+    throw new Error('当前 autonomy 实现不支持 rollback')
   }
 }
 
@@ -729,6 +749,10 @@ export abstract class TaskRunnerService extends Service {
     super(ctx, 'taskRunner')
   }
   abstract dispatch(run: TaskRun): void
+  /** 取消排队/执行中的 run；默认不支持（任务账本仍会记 cancelled） */
+  async cancel(_id: string, _reason?: string): Promise<boolean> {
+    return false
+  }
 }
 
 // ────────────────────────────────────────────── 权限与审计

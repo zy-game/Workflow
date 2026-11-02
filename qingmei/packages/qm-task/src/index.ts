@@ -35,6 +35,8 @@ export interface TaskConfig {
   maxConcurrent?: number
   /** 静默时段（如 23:00-08:00）：非紧急任务不启动，跨午夜也支持 */
   quietHours?: { start: string; end: string }
+  /** 达到该优先级才允许抢占低优（默认 9；0 关闭） */
+  preemptPriority?: number
   /** 静默时段仍允许启动的优先级下限，默认 8 */
   urgentPriority?: number
 }
@@ -53,13 +55,15 @@ interface RunnerDeps {
   maxConcurrent: number
   quietHours: QuietRange | null
   urgentPriority: number
+  preemptPriority: number
 }
 
 export class TaskRunner extends TaskRunnerService {
   private readonly ctx: Context
   private readonly deps: RunnerDeps
   private readonly queue: TaskRun[] = []
-  private readonly active = new Set<string>()
+  private readonly activeRuns = new Map<string, TaskRun>()
+  private readonly controllers = new Map<string, AbortController>()
   private pumping = false
   private pumpQueued = false
   private quietTimer: ReturnType<typeof setTimeout> | null = null
@@ -83,7 +87,7 @@ export class TaskRunner extends TaskRunnerService {
   /** 当前占用与排队长度（诊断用） */
   stats(): { active: number; queued: number; quiet: boolean } {
     return {
-      active: this.active.size,
+      active: this.activeRuns.size,
       queued: this.queue.length,
       quiet: this.deps.quietHours !== null && inQuietHours(new Date(), this.deps.quietHours),
     }
@@ -100,14 +104,19 @@ export class TaskRunner extends TaskRunnerService {
     }
     this.pumping = true
     try {
-      while (this.active.size < this.deps.maxConcurrent) {
-        const run = await this.pick()
-        if (!run) break
-        this.active.add(run.id)
-        void this.execute(run).finally(() => {
-          this.active.delete(run.id)
-          void this.pump()
-        })
+      for (;;) {
+        if (this.activeRuns.size < this.deps.maxConcurrent) {
+          const run = await this.pick()
+          if (!run) break
+          this.activeRuns.set(run.id, run)
+          void this.execute(run).finally(() => {
+            this.activeRuns.delete(run.id)
+            void this.pump()
+          })
+          continue
+        }
+        if (this.deps.preemptPriority <= 0) break
+        if (!(await this.preempt())) break
       }
     } finally {
       this.pumping = false
@@ -118,6 +127,46 @@ export class TaskRunner extends TaskRunnerService {
     }
   }
 
+  /** 取消排队或执行中的 run：排队中直接出队；执行中 abort 并记 cancelled */
+  async cancel(id: string, reason = '被主人取消'): Promise<boolean> {
+    const queued = this.queue.findIndex((run) => run.id === id)
+    if (queued >= 0) {
+      this.queue.splice(queued, 1)
+      await this.deps.task.finish(id, { status: 'cancelled', error: reason })
+      return true
+    }
+    const controller = this.controllers.get(id)
+    if (!controller) return false
+    controller.abort()
+    await this.deps.task.finish(id, { status: 'cancelled', error: reason })
+    return true
+  }
+
+  /**
+   * 抢占：队列头是紧急任务、且没有空闲容量时，取消一个已落 checkpoint 的低优 run。
+   * checkpoint 的判据是「有进度或已有 harness 会话」——没有的话按 docs/13 不允许抢占。
+   */
+  private async preempt(): Promise<boolean> {
+    const head = this.queue[0]
+    if (!head || (head.priority ?? 5) < this.deps.preemptPriority) return false
+
+    const active = await Promise.all(
+      [...this.activeRuns.keys()].map(async (id) => (await this.deps.task.get(id)) ?? this.activeRuns.get(id)!),
+    )
+    const victims = active
+      .filter((run) => (run.priority ?? 5) < (head.priority ?? 5))
+      .filter((run) => run.progress !== null || run.sessionId !== null)
+      .sort((a, b) => (a.priority ?? 5) - (b.priority ?? 5))
+    const victim = victims[0]
+    if (!victim) return false
+
+    await this.cancel(victim.id, `被更高优先级任务 ${head.id} 抢占（checkpoint 已保留）`)
+    // 等执行槽真正释放，避免同一轮反复抢同一个 run
+    for (let i = 0; i < 50 && this.activeRuns.has(victim.id); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    return true
+  }
   /** 取出下一个该跑的；依赖未就绪/静默时段没有紧急任务就等或安排窗后重试 */
   private async pick(): Promise<TaskRun | null> {
     if (this.queue.length === 0) return null
@@ -220,6 +269,7 @@ export class TaskRunner extends TaskRunnerService {
     }
     const conversationId = `task_${run.id}`
     const controller = new AbortController()
+    this.controllers.set(run.id, controller)
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     let collected = ''
     let failure: string | null = null
@@ -248,6 +298,7 @@ export class TaskRunner extends TaskRunnerService {
     } catch (error) {
       failure = messageOf(error)
     } finally {
+      this.controllers.delete(run.id)
       clearTimeout(timer)
       const current = await task.get(run.id)
       // 子 agent 可能已经用 qm_finish_task 收尾；那样就不再覆盖
@@ -278,10 +329,13 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   const harnessId = config.harnessId ?? DEFAULT_HARNESS
   const maxConcurrent = Math.max(1, Number(config.maxConcurrent) || DEFAULT_MAX_CONCURRENT)
   const quietHours = parseQuietHours(config.quietHours)
+  const preemptPriority = Number.isFinite(Number(config.preemptPriority))
+    ? Math.min(9, Math.max(0, Math.round(Number(config.preemptPriority))))
+    : DEFAULT_PREEMPT_PRIORITY
   const urgentPriority = Number.isFinite(Number(config.urgentPriority))
     ? Math.min(9, Math.max(0, Math.round(Number(config.urgentPriority))))
     : DEFAULT_URGENT_PRIORITY
-  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority })
+  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority, preemptPriority })
   ctx.effect(() => () => runner.stop())
 
   // 任务状态变化推给 SSE，Web 任务面板直接订阅
@@ -389,6 +443,7 @@ function taskPrompt(run: TaskRun, cwd: string): string {
 }
 
 const DEFAULT_URGENT_PRIORITY = 8
+const DEFAULT_PREEMPT_PRIORITY = 9
 
 /** 解析 "HH:MM" 为分钟；两端都合法才生效 */
 export function parseQuietHours(input?: { start?: string; end?: string }): QuietRange | null {

@@ -132,6 +132,18 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P3 收尾：回滚与抢占
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `TaskRunnerService.cancel`（默认不支持）；`AutonomyExecution.status` 加 `rolled_back`；`rollback()` 契约 |
+| `packages/qm-task` | 取消排队/执行中的 run（abort + 记 cancelled）；`preemptPriority`（默认 9）达线且低优有 checkpoint 时抢占；`pumpQueued` 防竞态 |
+| `packages/qm-autonomy` | `POST /api/v1/autonomy/rollback`：回滚已执行的可逆动作（`task.retry` 取消派生 run），trace 标 `rolled_back` 并降一级 |
+| `apps/web` | 主动面板加「回滚动作」按钮 |
+| 测试 | 293 全绿 |
+
+> 被抢占的 run 记 `cancelled`，checkpoint 留在账本，但 harness resume 未实现，不会自动续跑。
+
 ### A2 排期器：DAG 依赖
 
 | 文件 | 改了什么 |

@@ -46,7 +46,14 @@ class FakeHarness extends HarnessService {
     this.requests.push(req)
     req.onSession?.('sess_fake')
     if (this.options.failWith) throw new Error(this.options.failWith)
-    if (this.options.hold) await this.options.hold
+    if (this.options.hold) {
+      await Promise.race([
+        this.options.hold,
+        new Promise((_, reject) => {
+          req.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        }),
+      ])
+    }
     for (const text of this.options.chunks ?? []) {
       await new Promise((resolve) => setTimeout(resolve, 1))
       yield { type: 'text', text }
@@ -471,6 +478,57 @@ test('DAG 依赖：前置失败/不存在时，后置直接失败', async () => 
       return current?.status === 'failed' ? current : null
     }, '缺失依赖失败')
     assert.match((await h.task.get(missing.id))?.error ?? '', /不存在/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('取消：排队/执行中的 run 取消并记账', async () => {
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const h = await setup({ chunks: ['ok'], hold }, { maxConcurrent: 1 })
+  try {
+    const first = await h.task.create({ prompt: '先跑' })
+    const second = await h.task.create({ prompt: '排队' })
+    h.ctx.taskRunner.dispatch(first)
+    await waitFor(() => h.harness!.requests.length === 1, '第一个启动')
+    h.ctx.taskRunner.dispatch(second)
+
+    assert.equal(await h.ctx.taskRunner.cancel(second.id, '不跑了'), true)
+    assert.equal((await h.task.get(second.id))?.status, 'cancelled')
+
+    assert.equal(await h.ctx.taskRunner.cancel(first.id, '中断'), true)
+    assert.equal((await h.task.get(first.id))?.status, 'cancelled')
+    release()
+    await waitFor(() => h.ctx.taskRunner.stats().active === 0, '收尾')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('抢占：紧急任务取消一个已落 checkpoint 的低优 run', async () => {
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const h = await setup({ chunks: ['ok'], hold }, { maxConcurrent: 1 })
+  try {
+    const low = await h.task.create({ prompt: '低优', priority: 1 })
+    h.ctx.taskRunner.dispatch(low)
+    await waitFor(() => h.harness!.requests.length === 1, '低优启动')
+    await h.task.reportProgress(low.id, { phase: 'working' })
+
+    const high = await h.task.create({ prompt: '紧急', priority: 9 })
+    h.ctx.taskRunner.dispatch(high)
+    await waitFor(() => h.harness!.requests.length === 2, '紧急任务抢占后启动')
+
+    const lowRun = await h.task.get(low.id)
+    assert.equal(lowRun?.status, 'cancelled')
+    assert.match(lowRun?.error ?? '', /抢占/)
+    release()
+    await waitFor(() => h.ctx.taskRunner.stats().active === 0, '收尾')
   } finally {
     await h.dispose()
   }

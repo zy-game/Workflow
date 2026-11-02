@@ -17,6 +17,8 @@ import {
   type AutonomyLevel,
   type AutonomyCandidate,
   type AutonomyComplaintInput,
+  type AutonomyRollbackInput,
+  type AutonomyRollbackResult,
   type AutonomyComplaintResult,
   type AutonomySnapshot,
   type AutonomyState,
@@ -581,6 +583,67 @@ class AutonomyRunner extends AutonomyService {
       return { before, after, complaints: state.complaints, locked: state.locked }
     })
   }
+  /**
+   * A5 回滚：只回滚已执行的可逆动作（notify.self 无副作用；task.retry/harness.dispatch 取消派生的 run）。
+   * 与投诉共用降级语义：回滚一次也降一级，并把 trace 的执行状态改成 rolled_back。
+   */
+  async rollback(input: AutonomyRollbackInput = {}): Promise<AutonomyRollbackResult> {
+    return this.serialize(async () => {
+      const state = await this.getState()
+      const before = state.mode
+      const rows = await this.traces.find({})
+      const traces = rows.map(toTrace).sort((a, b) => b.at.getTime() - a.at.getTime())
+      const target = input.traceId
+        ? traces.find((trace) => trace.id === input.traceId)
+        : traces.find((trace) => trace.execution?.status === 'executed')
+      if (!target?.execution || target.execution.status !== 'executed') {
+        return { ok: false, before, after: before, error: '没有可回滚的已执行动作' }
+      }
+
+      const action = target.execution.action
+      if (!AUTONOMY_ACTIONS[action]?.reversible) {
+        return { ok: false, before, after: before, error: `动作 ${action} 不可回滚` }
+      }
+
+      if (action === 'task.retry' || action === 'harness.dispatch') {
+        const runId = target.execution.runId
+        const run = runId ? await this.task.get(runId) : null
+        if (run && (run.status === 'done' || run.status === 'failed')) {
+          return { ok: false, before, after: before, error: '派生任务已结束，无法撤回' }
+        }
+        if (run && run.status !== 'cancelled') {
+          const cancelled = await this.taskRunner.cancel(runId!, '被主人回滚')
+          if (!cancelled) return { ok: false, before, after: before, error: '派生任务无法取消' }
+        }
+      }
+
+      const row = rows.find((item) => item.id === target.id)
+      if (row) {
+        await this.traces.update(row.id, {
+          execution_json: JSON.stringify({
+            ...target.execution,
+            status: 'rolled_back',
+            detail: `${target.execution.detail}（已回滚）`,
+          }),
+        })
+      }
+
+      const order: AutonomyLevel[] = ['A0', 'A1', 'A2', 'A3']
+      const index = order.indexOf(before)
+      const after = !state.locked && index > 0 ? order[index - 1]! : before
+      state.mode = after
+      state.complaints = (state.complaints ?? 0) + 1
+      state.lastComplaintAt = new Date()
+      state.streak = 0
+      state.pending = null
+      await this.saveState(state)
+
+      void this.notify(
+        `↩️ 已回滚 ${action}${input.reason ? `（${input.reason}）` : ''}${after !== before ? `，主动级别 ${before} → ${after}` : ''}`,
+      )
+      return { ok: true, traceId: target.id, action, before, after }
+    })
+  }
   private async noteEngagementInner(): Promise<void> {
     const state = await this.getState()
     if (!state.pending) return
@@ -777,6 +840,20 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
     }),
   )
 
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/autonomy/rollback',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const result = await runner.rollback({
+          ...(typeof body.traceId === 'string' && body.traceId.trim() ? { traceId: body.traceId.trim() } : {}),
+          ...(typeof body.reason === 'string' && body.reason.trim() ? { reason: body.reason.trim() } : {}),
+        })
+        res.status(result.ok ? 200 : 400).send(result)
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'POST',

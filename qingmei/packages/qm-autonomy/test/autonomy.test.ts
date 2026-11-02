@@ -101,9 +101,15 @@ class FakeChannel extends ChannelService {
 
 class FakeTaskRunner extends TaskRunnerService {
   readonly dispatched: TaskRun[] = []
+  readonly cancelled: string[] = []
 
   dispatch(run: TaskRun): void {
     this.dispatched.push(run)
+  }
+
+  async cancel(id: string): Promise<boolean> {
+    this.cancelled.push(id)
+    return true
   }
 }
 
@@ -797,6 +803,41 @@ test('A5 投诉：降一级、清空待回应、记录次数；锁定只记录�
     const locked = await h.call({ method: 'POST', path: '/api/v1/autonomy/complaint', query: {}, headers: {}, body: {} })
     assert.equal((locked.body as { after: string }).after, 'A2', '锁定时不自动降级')
     assert.equal((locked.body as { locked: boolean }).locked, true)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('A5 回滚：取消派生任务、trace 标 rolled_back、降一级', async () => {
+  const h = await setup({ mode: 'A2' })
+  try {
+    h.task.runs = [taskRun({ id: 'run_failed', status: 'failed', error: '测试挂了', finishedAt: new Date() })]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.execution?.status, 'executed')
+    assert.equal(trace.execution?.action, 'task.retry')
+
+    const result = await h.autonomy.rollback({ traceId: trace.id, reason: '回滚测试' })
+    assert.equal(result.ok, true)
+    assert.equal(result.action, 'task.retry')
+    assert.equal(result.before, 'A2')
+    assert.equal(result.after, 'A1')
+    assert.equal(h.taskRunner.cancelled.length, 1, '应取消派生的 run')
+
+    const updated = (await h.autonomy.list()).find((item) => item.id === trace.id)
+    assert.equal(updated?.execution?.status, 'rolled_back')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('A5 回滚：没有可回滚动作时返回错误，不改级别', async () => {
+  const h = await setup({ mode: 'A2' })
+  try {
+    const result = await h.autonomy.rollback()
+    assert.equal(result.ok, false)
+    assert.match(result.error ?? '', /没有可回滚/)
+    assert.equal(result.before, 'A2')
+    assert.equal(result.after, 'A2')
   } finally {
     await h.dispose()
   }

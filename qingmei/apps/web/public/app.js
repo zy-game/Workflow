@@ -15,6 +15,7 @@ const ENDPOINTS = {
   autonomyTrust: './api/v1/autonomy/trust',
   autonomyDigest: './api/v1/autonomy/digest',
   autonomyComplaint: './api/v1/autonomy/complaint',
+  autonomyRollback: './api/v1/autonomy/rollback',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -56,6 +57,7 @@ const el = {
   autonomyTick: document.getElementById('autonomy-tick'),
   autonomyDigest: document.getElementById('autonomy-digest'),
   autonomyComplain: document.getElementById('autonomy-complain'),
+  autonomyRollback: document.getElementById('autonomy-rollback'),
   autonomyClose: document.getElementById('autonomy-close'),
   autonomyLevels: Array.from(document.querySelectorAll('.autonomy-level')),
   autonomyLock: document.getElementById('autonomy-lock'),
@@ -957,6 +959,26 @@ async function complainAutonomy() {
   }
 }
 
+async function rollbackAutonomy() {
+  if (!state.token) return
+  try {
+    const res = await fetch(ENDPOINTS.autonomyRollback, {
+      method: 'POST',
+      headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify({ reason: 'Web 面板回滚最近动作' }),
+    })
+    const detail = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(detail?.error || `回滚失败（HTTP ${res.status}）`)
+    showAutonomyError('')
+    await loadAutonomy()
+    const action = detail?.action ? ` ${detail.action}` : ''
+    const shift = detail?.before !== detail?.after ? `：${detail.before} → ${detail.after}` : ''
+    setStatus('online', `已回滚${action}${shift}`)
+  } catch (error) {
+    showAutonomyError(error instanceof TypeError ? '无法连接服务' : error.message || '回滚失败')
+  }
+}
+
 async function flushAutonomyDigest() {
   if (!state.token || el.autonomyDigest?.disabled) return
   try {
@@ -1226,6 +1248,7 @@ function bindEvents() {
   }
   el.autonomyLock?.addEventListener('click', () => void setAutonomyTrust({ locked: !state.autonomyLocked }))
   el.autonomyComplain?.addEventListener('click', () => void complainAutonomy())
+  el.autonomyRollback?.addEventListener('click', () => void rollbackAutonomy())
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.schedulesOpen) setSchedulesOpen(false)
