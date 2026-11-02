@@ -223,13 +223,26 @@ export function apply(ctx: Context, config: ConversationProfileConfig = {}): voi
     message.handledBy = 'conversation-profile'
     void profiles
       .discover(message.channel, message.conversation.id)
-      .then(() =>
-        channel.send({
+      .then(async (profile) => {
+        await channel.send({
           channel: message.channel,
           conversationId: message.conversation.id,
           blocks: [{ type: 'text', text: pendingReply }],
-        }),
-      )
+        })
+        // 首次发现才通知 owner（pending 已在缓存里就不重复）
+        if (!cached) {
+          await channel.send({
+            channel: 'web',
+            conversationId: 'owner',
+            blocks: [
+              {
+                type: 'text',
+                text: `🆕 发现新群：${profile.channel} ${profile.title}（${profile.platformConversationId}），请用 POST /api/v1/conversations/configure 打标签`,
+              },
+            ],
+          })
+        }
+      })
       .catch(() => undefined)
   })
 

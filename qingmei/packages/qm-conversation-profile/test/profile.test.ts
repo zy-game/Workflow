@@ -117,8 +117,11 @@ test('未配置群：确定性回「权限未配置」，不进入模型', async
     const message = groupMessage()
     h.ctx.events.emit(EVENTS.inbound, message)
     assert.equal(message.handledBy, 'conversation-profile')
-    await waitFor(() => h.channel.sent.length === 1, '固定话术')
+    await waitFor(() => h.channel.sent.length === 2, '固定话术 + owner 通知')
     assert.deepEqual(h.channel.sent[0]?.blocks, [{ type: 'text', text: '权限未配置' }])
+    assert.equal(h.channel.sent[1]?.channel, 'web')
+    assert.match(String((h.channel.sent[1]?.blocks[0] as { text: string }).text), /发现新群/)
+    assert.match(String((h.channel.sent[1]?.blocks[0] as { text: string }).text), /oc_group/)
 
     const listed = await h.call({ method: 'GET', path: '/api/v1/conversations', query: {}, headers: {} })
     const items = (listed.body as { items: { status: string; channel: string }[] }).items
@@ -133,7 +136,7 @@ test('打标签后按策略回复：未配置门关闭，策略取更严格', as
   const h = await setup()
   try {
     h.ctx.events.emit(EVENTS.inbound, groupMessage('m1'))
-    await waitFor(() => h.channel.sent.length === 1, '先走一次未配置')
+    await waitFor(() => h.channel.sent.length === 2, '先走一次未配置')
 
     const configured = await h.call({
       method: 'POST',
@@ -152,7 +155,7 @@ test('打标签后按策略回复：未配置门关闭，策略取更严格', as
     h.ctx.events.emit(EVENTS.inbound, next)
     assert.equal(next.handledBy, undefined, '配置后应进入模型')
     await new Promise((resolve) => setTimeout(resolve, 20))
-    assert.equal(h.channel.sent.length, 1, '不再回固定话术')
+    assert.equal(h.channel.sent.length, 2, '不再回固定话术')
   } finally {
     await h.dispose()
   }
