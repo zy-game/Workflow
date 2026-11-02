@@ -65,6 +65,8 @@ export class SqliteTask extends TaskService {
   private readonly workspaceRoot: string
   private readonly harnessId: string
   private readonly listLimit: number
+  /** 同一毫秒内建的 run 也要有稳定先后（列表排序与测试都依赖它） */
+  private lastCreatedAt = 0
 
   constructor(ctx: Context, config: TaskConfig = {}) {
     super(ctx)
@@ -81,7 +83,8 @@ export class SqliteTask extends TaskService {
     const prompt = input.prompt?.trim()
     if (!prompt) throw new Error('任务内容不能为空')
     const id = uid('run')
-    const now = Date.now()
+    const now = Math.max(Date.now(), this.lastCreatedAt + 1)
+    this.lastCreatedAt = now
     const row: Omit<TaskRow, 'id'> = {
       task_id: id,
       title: input.title?.trim() || prompt.slice(0, 40),

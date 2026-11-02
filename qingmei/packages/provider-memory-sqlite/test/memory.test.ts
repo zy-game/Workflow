@@ -116,7 +116,7 @@ test('ingest：同一 subject+predicate 的新值让旧值有效期末尾（软�
     assert.equal(typeof catRow.valid_to, 'number')
     assert.ok(catRow.valid_to > 0)
 
-    const hit = await ctx.memory.recall({ text: '我养狗吗' })
+    const hit = await ctx.memory.recall({ text: '我养什么' })
     assert.equal(hit.facts.length, 1)
     assert.equal(hit.facts[0]?.object, '狗')
   } finally {

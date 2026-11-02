@@ -289,7 +289,7 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
     断言会莫名其妙地失败。要么每轮重建临时库，要么开头先 `DELETE` 清干净。
 18. **`qm doctor` 会占用清单里的端口**：生产上跑 doctor 要先停服（host-mcp 的 7420 是写死的），
     跑完再起；否则插件会因 EADDRINUSE 报 FAILED。
-19. **ACP 的文件/命令工具需要两端都打开**：客户端要在 `initialize` 里声明
+20. **关键词召回必须切到单字**：只切二元词时，「我养什么」切出「我养/养什/什么」，\n    一个都命中不了事实「主人养狗」，M1 验收里的自然问法会直接失败。\n21. **同一毫秒创建的行排序不稳定**：qm_task_run / qm_approval 的列表按时间倒序，\n    连续创建要单调递增（max(now, last+1)），否则测试与 UI 顺序会随机。\n19. **ACP 的文件/命令工具需要两端都打开**：客户端要在 `initialize` 里声明
     `fs`/`terminal` 能力并实现 `fs/*`、`terminal/*`；DSH profile（`~/.dsh/profiles/acp/cordis.patch.yml`）
     里不能 `disabled` 掉 `tool-fs` / `tool-bash`。任一处没配好，模型会一口咬定「我没有文件权限」，
     而且这个说法听起来像权限问题，实际是能力没声明。仓库里有现成的 patch：`deploy/`。

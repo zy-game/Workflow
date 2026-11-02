@@ -39,7 +39,15 @@ interface ApprovalRow extends Row {
 
 export class SqliteApproval extends ApprovalService {
   private readonly ctx: Context
+  /** 同一毫秒内的审批也要有稳定先后 */
+  private lastCreatedAt = 0
   private readonly collection
+
+  private nextCreatedAt(): number {
+    const now = Math.max(Date.now(), this.lastCreatedAt + 1)
+    this.lastCreatedAt = now
+    return now
+  }
 
   constructor(ctx: Context) {
     super(ctx)
@@ -62,7 +70,7 @@ export class SqliteApproval extends ApprovalService {
       run_id: input.runId ?? null,
       requester: input.requester ?? 'unknown',
       channel: input.channel ?? 'web',
-      created_at: Date.now(),
+      created_at: this.nextCreatedAt(),
       decided_at: null,
       reason: null,
     }

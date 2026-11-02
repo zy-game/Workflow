@@ -179,7 +179,12 @@ function visibleTo(row: FactRow, audience: string): boolean {
 
 const STOPWORDS = new Set(['我', '你', '他', '她', '的', '了', '吗', '呢', '是', '在', '有', '和', '就', '都'])
 
-/** 中文按二元词切，英文按空白切；去掉停用词 */
+/**
+ * 中文按「整词 + 二元词 + 单字」切，英文按空白切；去掉停用词。
+ *
+ * 单字是必要的：用户问「我养什么」时，事实是「主人 + 养 + 狗」，
+ * 只切二元词得到「我养/养什/什么」，一个都命中不了「主人养狗」。
+ */
 function tokenize(text: string): string[] {
   const lowered = text.toLowerCase()
   const words = lowered.split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 0)
@@ -187,9 +192,11 @@ function tokenize(text: string): string[] {
   for (const word of words) {
     if (!STOPWORDS.has(word)) tokens.add(word)
     if (/[\u4e00-\u9fff]/.test(word)) {
-      for (let i = 0; i + 1 < word.length; i++) {
+      for (let i = 0; i < word.length; i++) {
+        const char = word[i]!
+        if (!STOPWORDS.has(char)) tokens.add(char)
         const bigram = word.slice(i, i + 2)
-        if (!STOPWORDS.has(bigram)) tokens.add(bigram)
+        if (bigram.length === 2 && !STOPWORDS.has(bigram)) tokens.add(bigram)
       }
     }
   }
