@@ -325,6 +325,8 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
     连续创建要单调递增（`max(now, last+1)`），否则测试与 UI 顺序会随机。
 22. **`store.find` 不支持 `orderBy`**：账本类列表（autonomy trace）要取回来自己排序再截断，
     否则 `limit` 先于排序生效，顺序就是插入顺序。
+23. **主动消息也要走 `channel.send`**：这样 qm-history 才能落库、Web 与渠道才一致；
+    绕过它直接写 `qm_message` 会让建议在会话历史里凭空出现或消失。
 
 ## 7. 2026-10-30 文档对齐（已做，别重复做）
 
