@@ -222,3 +222,27 @@ test('turn/end 失败时记 failed；重复事件只写一行', async () => {
     await h.dispose()
   }
 })
+
+test('编辑已发消息（editTarget）更新原行而不是新增', async () => {
+  const h = await setup()
+  try {
+    await h.ctx.events.parallel(EVENTS.outbound, {
+      channel: 'web',
+      conversationId: 'conv-1',
+      blocks: [{ type: 'text', text: '待确认：要执行吗' }],
+      platformMessageId: 'out_edit',
+    })
+    await h.ctx.events.parallel(EVENTS.outbound, {
+      channel: 'web',
+      conversationId: 'conv-1',
+      blocks: [{ type: 'text', text: '✅ 已批准：要执行吗' }],
+      editTarget: 'out_edit',
+    })
+    const rows = await h.rows()
+    assert.equal(rows.length, 1, '编辑不应新增消息')
+    assert.equal(rows[0]!.text, '✅ 已批准：要执行吗')
+    assert.match(rows[0]!.blocks_json, /已批准/)
+  } finally {
+    await h.dispose()
+  }
+})

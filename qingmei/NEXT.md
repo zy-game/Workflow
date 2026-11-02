@@ -139,6 +139,7 @@ sudo journalctl -u qingmei -n 50 --no-pager
 | `packages/channel-feishu` | 点击后按 `editTarget` 更新原卡片（`im/v1/messages` PATCH），按钮消失 |
 | `packages/channel-qq` | 出站带 `actions` 时发 `msg_type=2` + `keyboard`；`INTERACTION_CREATE`(type=11) → `qm/action`，`PUT /interactions/{id}` 应答；intents 加 `1<<26`；按钮未开通自动退回文本 |
 | `packages/qm-approval` | 推送记录每个目标的 `messageId`；决定后按目标逐条 `editTarget` 更新（文本回复也会把卡片置为已处理） |
+| `packages/qm-history` | `editTarget` 更新原消息行（blocks/text），不新增、不被幂等索引吞掉 |
 | 测试 | 277 全绿 |
 
 ### 审批卡片按钮与推送渠道标记

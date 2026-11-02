@@ -465,6 +465,7 @@ export function toQqKeyboardButton(button: QqButton): Record<string, unknown> {
       type: 1,
       permission: { type: 2 },
       data: button.id,
+      click_limit: 1,
       unsupport_tips: '当前客户端不支持按钮，请回复「批准」或「拒绝」',
     },
   }

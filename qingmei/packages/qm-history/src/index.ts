@@ -153,6 +153,21 @@ export function apply(ctx: Context): void {
 
   // 出站消息用 async 监听器：service-channel 用 parallel 等它写完再返回
   ctx.events.on(EVENTS.outbound, async (outbound: OutboundRecord) => {
+    // 编辑已发消息（如审批卡片点完变「已处理」）：更新原行，不新增
+    if (outbound.editTarget) {
+      await enqueue(async () => {
+        const sessionId = `s_${outbound.conversationId}`
+        const rows = await collection.find({ session_id: sessionId, platform_message_id: outbound.editTarget })
+        const row = rows[0]
+        if (!row) return
+        await collection.update(row.id, {
+          blocks_json: JSON.stringify(outbound.blocks),
+          text: textOf(outbound.blocks),
+        })
+      })
+      return
+    }
+
     await enqueue(() => append({
       sessionId: `s_${outbound.conversationId}`,
       role: 'assistant',
