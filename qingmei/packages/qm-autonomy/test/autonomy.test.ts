@@ -471,3 +471,32 @@ test('执行：A0 只有记录，没有回执', async () => {
     await h.dispose()
   }
 })
+
+test('账本保留期：超过 retentionDays 的 trace 被清掉，新的保留', async () => {
+  const h = await setup({ retentionDays: 1 })
+  try {
+    const old = {
+      id: 'aut_old',
+      at: Date.now() - 3 * 86_400_000,
+      trigger: 'tick',
+      mode: 'A1',
+      snapshot_json: JSON.stringify({ at: new Date().toISOString(), pendingApprovals: 0, runningTasks: 0, failedTasks: 0, upcomingSchedules: 0 }),
+      candidates_json: '[]',
+      chosen_json: null,
+      execution_json: null,
+      suppressed_json: '[]',
+      budget_json: JSON.stringify({ day: 'x', limit: 3, used: 0 }),
+      reason: '旧的',
+    }
+    await h.ctx.store.collection('qm_autonomy_trace').insert(old)
+
+    h.approval.pending = [approvalRequest()]
+    await h.autonomy.tick('tick')
+
+    const ids = (await h.autonomy.list(50)).map((trace) => trace.id)
+    assert.ok(!ids.includes('aut_old'), '过期 trace 应被清理')
+    assert.ok(ids.length >= 1)
+  } finally {
+    await h.dispose()
+  }
+})

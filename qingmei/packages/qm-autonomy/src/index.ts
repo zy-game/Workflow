@@ -45,6 +45,8 @@ export interface AutonomyConfig {
   cooldownMinutes?: number
   /** 日程「即将开始」的前瞻窗口 */
   upcomingWindowMinutes?: number
+  /** 决策账本保留天数；0 表示不清理 */
+  retentionDays?: number
 }
 
 export const name = 'qm-autonomy'
@@ -62,6 +64,7 @@ const DEFAULTS = {
   quietEnd: 8,
   cooldownMinutes: 240,
   upcomingWindowMinutes: 60,
+  retentionDays: 7,
 }
 
 interface TraceRow extends Row {
@@ -182,6 +185,7 @@ class AutonomyRunner extends AutonomyService {
       reason,
     }
     await this.appendTrace(trace)
+    await this.prune(now)
     this.ctx.events.emit(EVENTS.autonomyTick, trace)
     this.gateway.publish({ type: 'autonomy-tick', data: trace })
     return trace
@@ -359,6 +363,17 @@ class AutonomyRunner extends AutonomyService {
     }
     if (rows[0]) await this.states.update(rows[0].id, changes)
     else await this.states.insert({ id: 'state', ...changes })
+  }
+
+  /** 决策账本按保留期清理；每 5 分钟一条，不清会无限长 */
+  private async prune(now: Date): Promise<void> {
+    const days = this.config.retentionDays
+    if (!days || days <= 0) return
+    const cutoff = now.getTime() - days * 86_400_000
+    const rows = await this.traces.find({})
+    for (const row of rows) {
+      if (row.at < cutoff) await this.traces.delete(row.id)
+    }
   }
 
   private async appendTrace(trace: AutonomyTrace): Promise<void> {
