@@ -345,8 +345,9 @@ export function createTools(deps: ToolDeps): HostTool[] {
     {
       name: 'qm_project_status',
       description:
-        '看某个项目（或最近任务）的状态：从任务账本汇总最近的 run、进度、产物、阻塞与失败，并标注数据截止时间。' +
-        '主人问「项目 X 什么情况」「那个任务跑完没」时先调它；数据太旧就在回复里说明。',
+        '看某个项目的状态：只列该项目归属的 run，汇总进度、产物、阻塞与失败，并标注数据截止时间。' +
+        '主人问「项目 X 什么情况」时必须传 project，只报该项目内的任务，不要拿别的项目凑数；' +
+        '账本里没有就直说没有，可以问要不要派人盘点。数据太旧也要说明。',
       inputSchema: {
         type: 'object',
         properties: {
