@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from 'cordis'
 import { AcpClient, type AcpPermissionRequest } from '../src/acp-client.ts'
@@ -95,7 +98,7 @@ test('AcpClient：把 session/request_permission 交给回调，并按 optionId 
     command: process.execPath,
     args: [FAKE],
     cwd: process.cwd(),
-    env: { FAKE_PERMISSION: '1' },
+    env: { FAKE_MODE: 'permission' },
     onPermissionRequest: async (request) => {
       seen.push(request)
       return 'allow-1'
@@ -130,7 +133,7 @@ test('AcpClient：回调返回 null 时回 cancelled，子 agent 不会卡住', 
     command: process.execPath,
     args: [FAKE],
     cwd: process.cwd(),
-    env: { FAKE_PERMISSION: '1' },
+    env: { FAKE_MODE: 'permission' },
     onPermissionRequest: async () => null,
     onUpdate: (update) => {
       const content = update.update.content as { text?: string } | undefined
@@ -155,7 +158,7 @@ test('DshHarness：权限请求走审批队列，批准后继续', async () => {
     command: process.execPath,
     args: [FAKE],
     cwd: process.cwd(),
-    env: { FAKE_PERMISSION: '1' },
+    env: { FAKE_MODE: 'permission' },
     approvalTimeoutMs: 2000,
   })
   await fiber
@@ -180,7 +183,7 @@ test('DshHarness：审批被拒绝时选 reject 选项', async () => {
     command: process.execPath,
     args: [FAKE],
     cwd: process.cwd(),
-    env: { FAKE_PERMISSION: '1' },
+    env: { FAKE_MODE: 'permission' },
     approvalTimeoutMs: 2000,
   })
   await fiber
@@ -201,7 +204,7 @@ test('DshHarness：没有审批服务时一律取消（不静默放行）', asyn
     command: process.execPath,
     args: [FAKE],
     cwd: process.cwd(),
-    env: { FAKE_PERMISSION: '1' },
+    env: { FAKE_MODE: 'permission' },
     approvalTimeoutMs: 2000,
   })
   await fiber
@@ -264,3 +267,76 @@ class FakeApproval extends ApprovalService {
     return { ...base, status: this.outcome, decidedAt: new Date() }
   }
 }
+
+test('AcpClient：实现 fs/*，子 agent 能在会话目录里写读文件', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-fs-'))
+  const texts: string[] = []
+  const client = new AcpClient({
+    command: process.execPath,
+    args: [FAKE],
+    cwd: process.cwd(),
+    env: { FAKE_MODE: 'fs' },
+    onUpdate: (update) => {
+      const content = update.update.content as { text?: string } | undefined
+      if (typeof content?.text === 'string') texts.push(content.text)
+    },
+  })
+  try {
+    await client.start()
+    const sessionId = await client.newSession(dir)
+    await client.prompt(sessionId, '写个文件')
+    assert.equal(texts.join(''), 'fs:你好，青梅')
+    assert.equal(readFileSync(join(dir, 'notes/hello.txt'), 'utf8'), '你好，青梅')
+  } finally {
+    client.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('AcpClient：fs/* 拒绝会话目录外的路径', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-escape-'))
+  const texts: string[] = []
+  const client = new AcpClient({
+    command: process.execPath,
+    args: [FAKE],
+    cwd: process.cwd(),
+    env: { FAKE_MODE: 'escape' },
+    onUpdate: (update) => {
+      const content = update.update.content as { text?: string } | undefined
+      if (typeof content?.text === 'string') texts.push(content.text)
+    },
+  })
+  try {
+    await client.start()
+    const sessionId = await client.newSession(dir)
+    await client.prompt(sessionId, '读点目录外的文件')
+    assert.match(texts.join(''), /^fs-error:.*路径越界/)
+  } finally {
+    client.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('AcpClient：实现 terminal/*，能跑命令并读到输出与退出码', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-term-'))
+  const texts: string[] = []
+  const client = new AcpClient({
+    command: process.execPath,
+    args: [FAKE],
+    cwd: process.cwd(),
+    env: { FAKE_MODE: 'terminal' },
+    onUpdate: (update) => {
+      const content = update.update.content as { text?: string } | undefined
+      if (typeof content?.text === 'string') texts.push(content.text)
+    },
+  })
+  try {
+    await client.start()
+    const sessionId = await client.newSession(dir)
+    await client.prompt(sessionId, '跑个命令')
+    assert.equal(texts.join(''), 'term:0:term-ok')
+  } finally {
+    client.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

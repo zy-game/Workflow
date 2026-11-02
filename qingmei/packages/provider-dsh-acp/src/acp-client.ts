@@ -3,8 +3,15 @@
  *
  * 只做协议：拉起子进程、发请求、收通知。业务语义在 DshHarness 里。
  * 方法与事件以 ACP v1 为准；DSH 的 `--profile acp` 已实测可用。
+ *
+ * 除了发请求，客户端还要**实现** agent 会反向调用的方法：
+ * `fs/read_text_file` / `fs/write_text_file` 与 `terminal/*`——没有它们，
+ * 子 agent 的文件与命令工具会失败（模型会以为「自己没有文件权限」）。
+ * 文件访问一律限制在会话 cwd 内（docs/07 §8 的目录约束）。
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 
 export interface AcpUpdate {
   sessionId: string
@@ -48,12 +55,33 @@ interface Pending {
   timer: NodeJS.Timeout
 }
 
+interface TerminalHandle {
+  child: ChildProcessWithoutNullStreams
+  output: string
+  truncated: boolean
+  limit: number
+  exitCode: number | null
+  signal: string | null
+  exit: Promise<{ exitCode: number | null; signal: string | null }>
+}
+
+interface TerminalCreateParams {
+  sessionId?: string
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+  cwd?: string
+  outputByteLimit?: number
+}
+
 export class AcpClient {
   private readonly options: AcpClientOptions
   private child: ChildProcessWithoutNullStreams | null = null
   private buffer = ''
   private seq = 0
   private readonly pending = new Map<number, Pending>()
+  private readonly sessions = new Map<string, string>()
+  private readonly terminals = new Map<string, TerminalHandle>()
   private ready = false
 
   constructor(options: AcpClientOptions) {
@@ -77,6 +105,7 @@ export class AcpClient {
       sessionId?: string
     }
     if (!result?.sessionId) throw new Error('[acp] session/new 未返回 sessionId')
+    this.sessions.set(result.sessionId, path.resolve(cwd))
     return result.sessionId
   }
 
@@ -98,6 +127,11 @@ export class AcpClient {
   }
 
   stop(): void {
+    for (const [, terminal] of this.terminals) {
+      if (terminal.child.exitCode === null && terminal.child.signalCode === null) terminal.child.kill()
+    }
+    this.terminals.clear()
+    this.sessions.clear()
     const child = this.child
     this.child = null
     this.ready = false
@@ -152,6 +186,22 @@ export class AcpClient {
       this.options.onStderr?.(`[acp] 非 JSON 输出：${line.slice(0, 200)}\n`)
       return
     }
+
+    // agent → client 的方法调用/通知：必须先按 method 分流，
+    // 否则 agent 的请求 id 可能撞上我们 pending 里的 id
+    if (typeof message.method === 'string') {
+      const method = message.method
+      if (method === 'session/update') {
+        const params = message.params as { sessionId?: string; update?: Record<string, unknown> }
+        if (params?.sessionId && params.update) {
+          this.options.onUpdate?.({ sessionId: params.sessionId, update: params.update })
+        }
+        return
+      }
+      if (message.id !== undefined) void this.handleAgentRequest(message.id, method, message.params)
+      return
+    }
+
     const id = message.id
     if (typeof id === 'number' && this.pending.has(id)) {
       const pending = this.pending.get(id)!
@@ -159,22 +209,56 @@ export class AcpClient {
       clearTimeout(pending.timer)
       if (message.error) pending.reject(new Error(JSON.stringify(message.error)))
       else pending.resolve(message.result ?? null)
-      return
-    }
-    if (message.method === 'session/update') {
-      const params = message.params as { sessionId?: string; update?: Record<string, unknown> }
-      if (params?.sessionId && params.update) {
-        this.options.onUpdate?.({ sessionId: params.sessionId, update: params.update })
-      }
-      return
-    }
-    // agent 侧请求：权限确认。必须回，且用同一个 id，否则子 agent 会一直等
-    if (message.method === 'session/request_permission' && message.id !== undefined) {
-      void this.handlePermission(message.id, message.params as AcpPermissionRequest)
     }
   }
 
-  private async handlePermission(id: unknown, params: AcpPermissionRequest): Promise<void> {
+  /** agent 反向调用的方法：权限、文件、终端；其余一律回 method not found */
+  private async handleAgentRequest(id: unknown, method: string, params: unknown): Promise<void> {
+    try {
+      const result = await this.dispatchAgentMethod(method, params)
+      this.write({ jsonrpc: '2.0', id, result })
+    } catch (error) {
+      this.write({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32000, message: error instanceof Error ? error.message : String(error) },
+      })
+    }
+  }
+
+  private async dispatchAgentMethod(method: string, params: unknown): Promise<unknown> {
+    switch (method) {
+      case 'session/request_permission':
+        return { outcome: await this.permissionOutcome(params as AcpPermissionRequest) }
+      case 'fs/read_text_file':
+        return { content: await this.readTextFile(params as { sessionId: string; path: string; line?: number; limit?: number }) }
+      case 'fs/write_text_file':
+        await this.writeTextFile(params as { sessionId: string; path: string; content: string })
+        return null
+      case 'terminal/create':
+        return this.createTerminal(params as TerminalCreateParams)
+      case 'terminal/output':
+        return this.terminalOutput((params as { terminalId: string }).terminalId)
+      case 'terminal/wait_for_exit':
+        return await this.terminals.get((params as { terminalId: string }).terminalId)?.exit ?? { exitCode: null, signal: null }
+      case 'terminal/kill':
+        this.terminals.get((params as { terminalId: string }).terminalId)?.child.kill()
+        return null
+      case 'terminal/release': {
+        const terminalId = (params as { terminalId: string }).terminalId
+        const terminal = this.terminals.get(terminalId)
+        if (terminal) {
+          if (terminal.child.exitCode === null && terminal.child.signalCode === null) terminal.child.kill()
+          this.terminals.delete(terminalId)
+        }
+        return null
+      }
+      default:
+        throw new Error(`[acp] 未实现的方法：${method}`)
+    }
+  }
+
+  private async permissionOutcome(params: AcpPermissionRequest): Promise<unknown> {
     let optionId: string | null = null
     try {
       optionId = (await this.options.onPermissionRequest?.(params)) ?? null
@@ -182,14 +266,96 @@ export class AcpClient {
       this.options.onStderr?.(`[acp] 权限请求处理失败：${String(error)}\n`)
       optionId = null
     }
-    const result = optionId
-      ? { outcome: { outcome: 'selected', optionId } }
-      : { outcome: { outcome: 'cancelled' } }
-    try {
-      this.write({ jsonrpc: '2.0', id, result })
-    } catch (error) {
-      this.options.onStderr?.(`[acp] 回权限结果失败：${String(error)}\n`)
+    return optionId
+      ? { outcome: 'selected', optionId }
+      : { outcome: 'cancelled' }
+  }
+
+  /** 会话内路径：必须落在 newSession 的 cwd 里，越界直接拒绝 */
+  private resolveSessionPath(sessionId: string, target: string): string {
+    const root = this.sessions.get(sessionId)
+    if (!root) throw new Error(`[acp] 未知会话：${sessionId}`)
+    if (typeof target !== 'string' || target.length === 0) throw new Error('[acp] 路径不能为空')
+    const resolved = path.resolve(root, target)
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+      throw new Error(`[acp] 路径越界（只允许会话目录内）：${target}`)
     }
+    return resolved
+  }
+
+  private async readTextFile(params: { sessionId: string; path: string; line?: number; limit?: number }): Promise<string> {
+    const file = this.resolveSessionPath(params.sessionId, params.path)
+    const text = await readFile(file, 'utf8')
+    if (params.line === undefined && params.limit === undefined) return text
+    const lines = text.split('\n')
+    const start = Math.max(0, (params.line ?? 1) - 1)
+    const end = params.limit === undefined ? lines.length : start + params.limit
+    return lines.slice(start, end).join('\n')
+  }
+
+  private async writeTextFile(params: { sessionId: string; path: string; content: string }): Promise<void> {
+    const file = this.resolveSessionPath(params.sessionId, params.path)
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, String(params.content ?? ''), 'utf8')
+  }
+
+  private createTerminal(params: TerminalCreateParams): { terminalId: string } {
+    const cwd = params.sessionId ? this.resolveSessionPath(params.sessionId, params.cwd ?? '.') : process.cwd()
+    const limit = params.outputByteLimit ?? 1_000_000
+    const child = spawn(params.command, params.args ?? [], {
+      cwd,
+      env: { ...process.env, ...(params.env ?? {}) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    const terminal: TerminalHandle = {
+      child,
+      output: '',
+      truncated: false,
+      limit,
+      exitCode: null,
+      signal: null,
+      exit: Promise.resolve().then(
+        () =>
+          new Promise<{ exitCode: number | null; signal: string | null }>((resolve) => {
+            child.once('exit', (code, signal) => {
+              terminal.exitCode = code
+              terminal.signal = signal
+              resolve({ exitCode: code, signal })
+            })
+          }),
+      ),
+    }
+
+    const append = (chunk: Buffer): void => {
+      if (terminal.truncated) return
+      const text = chunk.toString('utf8')
+      if (terminal.output.length + text.length > limit) {
+        terminal.output += text.slice(0, Math.max(0, limit - terminal.output.length))
+        terminal.truncated = true
+        return
+      }
+      terminal.output += text
+    }
+    child.stdout.on('data', append)
+    child.stderr.on('data', append)
+
+    const terminalId = `term_${++this.seq}`
+    this.terminals.set(terminalId, terminal)
+    return { terminalId }
+  }
+
+  private terminalOutput(terminalId: string): { output: string; truncated: boolean; exitStatus?: { exitCode: number | null; signal: string | null } } {
+    const terminal = this.terminals.get(terminalId)
+    if (!terminal) throw new Error(`[acp] 未知终端：${terminalId}`)
+    const payload: { output: string; truncated: boolean; exitStatus?: { exitCode: number | null; signal: string | null } } = {
+      output: terminal.output,
+      truncated: terminal.truncated,
+    }
+    if (terminal.exitCode !== null || terminal.signal !== null) {
+      payload.exitStatus = { exitCode: terminal.exitCode, signal: terminal.signal }
+    }
+    return payload
   }
 
   private request(method: string, params: unknown): Promise<unknown> {

@@ -180,6 +180,8 @@ export class DshHarness extends HarnessService {
     if (runId && task) await task.setStatus(runId, 'needs_approval')
 
     const decided = await approval.wait(record.id, this.config.approvalTimeoutMs ?? DEFAULTS.approvalTimeoutMs)
+    // 超时也要落定，否则队列里会永远挂着一条 pending
+    if (!decided) await approval.decide(record.id, { allow: false, reason: '等待确认超时' })
     if (runId && task) await task.setStatus(runId, 'running')
 
     const options = request.options ?? []

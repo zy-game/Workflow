@@ -127,6 +127,8 @@ export async function guardToolCall(guard: ToolGuard, toolName: string): Promise
   }
 
   const decided = await guard.approval!.wait(approval.id, guard.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS)
+  // 超时也要落定，否则队列里会永远挂着一条 pending
+  if (!decided) await guard.approval!.decide(approval.id, { allow: false, reason: '等待确认超时' })
   const allowed = decided?.status === 'allowed'
   await guard.audit.append({
     at: new Date(),
