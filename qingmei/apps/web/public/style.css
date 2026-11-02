@@ -984,3 +984,17 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+.conversation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0 10px;
+  font-size: 13px;
+}
+
+.conversation-tags label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

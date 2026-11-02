@@ -19,6 +19,8 @@ import {
   type GatewayService,
   type HarnessService,
   type InboundMessage,
+  type AuditService,
+  type ConversationPolicy,
   type ConversationProfileService,
   type MemoryService,
   type ProfileEntry,
@@ -87,6 +89,30 @@ export function sanitizeReply(text: string): string {
 }
 
 /** 画像 → 提示词里的稳定段：每个 subject 一行，事实按 predicate 拼起来 */
+/** 禁止话题 → 关键词模式；后置校验用（docs/11 §8） */
+export const FORBIDDEN_PATTERNS: Record<string, RegExp> = {
+  task: /任务|进度|项目|排期/,
+  schedule: /日程|提醒|会议/,
+  memory: /记忆|画像|记得你/,
+  internal: /内部|内网|合同|报价/,
+}
+
+/** 手机号、身份证、内网地址 */
+export const SENSITIVE_PATTERNS: RegExp[] = [
+  /1[3-9]\d{9}/,
+  /\d{17}[\dXx]/,
+  /https?:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/,
+]
+
+/** 命中则返回原因，否则 null */
+export function groupPolicyViolation(reply: string, policy: ConversationPolicy): string | null {
+  for (const topic of policy.forbiddenTopics) {
+    const pattern = FORBIDDEN_PATTERNS[topic]
+    if (pattern && pattern.test(reply)) return topic
+  }
+  if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(reply))) return 'sensitive'
+  return null
+}
 export function formatProfile(entries: ProfileEntry[]): string {
   return entries
     .map((entry) => {
@@ -205,12 +231,14 @@ export function apply(ctx: Context, config: AgentConfig): void {
     const profiles = ctx.reflect.get('conversationProfile', false) as ConversationProfileService | undefined
     let groupNote = ''
     let maxChars = 0
+    let policy: ConversationPolicy | null = null
     if (audience !== 'owner' && profiles) {
       try {
         const profile = await profiles.get(message.channel, message.conversation.id)
         if (profile) {
           groupNote = profiles.note(profile)
-          maxChars = profiles.policy(profile).maxChars
+          policy = profiles.policy(profile)
+          maxChars = policy.maxChars
         }
       } catch (error) {
         problems.push(`群策略读取失败：${messageOf(error)}`)
@@ -268,6 +296,27 @@ export function apply(ctx: Context, config: AgentConfig): void {
     reply = sanitizeReply(reply)
     if (maxChars > 0 && reply.length > maxChars) {
       reply = `${reply.slice(0, Math.max(0, maxChars - 1))}…`
+    }
+
+    // 第二道闸：群策略后置校验（docs/11 §8）
+    if (policy) {
+      const violation = groupPolicyViolation(reply, policy)
+      if (violation) {
+        reply = '这个在群里不方便说，私聊我。'
+        const audit = ctx.reflect.get('audit', false) as AuditService | undefined
+        void audit
+          ?.append({
+            at: new Date(),
+            actorId: 'bot',
+            channel: message.channel,
+            action: 'group.reply.blocked',
+            target: message.conversation.id,
+            decision: 'deny',
+            detail: { reason: violation },
+            traceId,
+          })
+          .catch(() => undefined)
+      }
     }
 
     try {

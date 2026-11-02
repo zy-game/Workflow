@@ -48,6 +48,16 @@
           >
             主动
           </button>
+          <button
+            id="conversations-toggle"
+            class="ghost"
+            type="button"
+            aria-expanded="false"
+            aria-controls="conversations"
+            title="管理群标签"
+          >
+            群组
+          </button>
           <span
             id="status"
             class="status"
@@ -105,6 +115,21 @@
         </p>
         <p id="autonomy-error" class="autonomy-error" role="alert" hidden></p>
         <ul id="autonomy-list" class="autonomy-list"></ul>
+      </section>
+
+      <section id="conversations" class="autonomy" hidden aria-labelledby="conversations-title">
+        <div class="autonomy-head">
+          <h2 id="conversations-title" class="autonomy-title">群组</h2>
+          <div class="autonomy-tools">
+            <button id="conversations-refresh" class="ghost" type="button">刷新</button>
+            <button id="conversations-close" class="ghost" type="button">关闭</button>
+          </div>
+        </div>
+        <p id="conversations-empty" class="autonomy-empty">
+          还没有发现群。把机器人拉进群后，这里会出现待配置的群。
+        </p>
+        <p id="conversations-error" class="autonomy-error" role="alert" hidden></p>
+        <ul id="conversations-list" class="autonomy-list"></ul>
       </section>
 
       <section id="schedules" class="schedules" hidden aria-labelledby="schedules-title">

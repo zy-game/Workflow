@@ -151,7 +151,7 @@ interface FakeState {
   memoryText: string
   profile: ProfileEntry[]
   profileCalls: { audience?: string }[]
-  groupProfile: { note: string; maxChars: number } | null
+  groupProfile: { note: string; maxChars: number; forbiddenTopics?: string[] } | null
   recalls: RecallQuery[]
   sent: OutboundEnvelope[]
   published: GatewayEvent[]
@@ -326,7 +326,7 @@ function createFakes(options: FakeOptions) {
         maxChars: state.groupProfile!.maxChars,
         tone: 'casual',
         proactive: false,
-        forbiddenTopics: [],
+        forbiddenTopics: state.groupProfile!.forbiddenTopics ?? [],
       }
     }
     note(): string {
@@ -682,4 +682,25 @@ test('群策略：规则进 prompt，回复按 maxChars 截断', async () => {
   const sent = h.state.sent.at(-1)!.blocks[0] as { text: string }
   assert.ok(sent.text.length <= 10, `回复应被截断到 10 字，实际 ${sent.text.length}`)
   assert.match(sent.text, /…$/)
+})
+
+test('后置校验：命中禁止话题时改成拒绝话术', async () => {
+  const h = await boot({ chunks: ['任务进度 70%，卡在发布脚本'] })
+  h.state.groupProfile = { note: '本群标签：工作群', maxChars: 300, forbiddenTopics: ['task'] }
+
+  const group = inbound('进度到哪了')
+  group.conversation = { kind: 'group', id: 'g1' }
+  h.ctx.events.emit(EVENTS.inbound, group)
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+
+  const sent = h.state.sent.at(-1)!.blocks[0] as { text: string }
+  assert.equal(sent.text, '这个在群里不方便说，私聊我。')
+})
+
+test('groupPolicyViolation：禁止话题与敏感信息', () => {
+  const policy = { audiences: [], maxChars: 100, tone: 'casual' as const, proactive: false, forbiddenTopics: ['task', 'memory'] }
+  assert.equal(agent.groupPolicyViolation('任务进度 70%', policy), 'task')
+  assert.equal(agent.groupPolicyViolation('我记得你养狗', policy), 'memory')
+  assert.equal(agent.groupPolicyViolation('电话 13800138000', policy), 'sensitive')
+  assert.equal(agent.groupPolicyViolation('今天天气不错', policy), null)
 })

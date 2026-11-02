@@ -132,6 +132,16 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P4：群画像后置校验与群管理页
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/qm-agent` | 群回复后置校验：禁止话题/手机号/身份证/内网地址 → 拒绝话术 + `qm_audit`（`group.reply.blocked`） |
+| `apps/web` | 顶栏「群组」面板：列表、勾选标签、保存（走 `/api/v1/conversations/configure`） |
+| 测试 | 309 全绿 |
+
+> 未做：标签建议、工具清单裁剪、群管理页里的审计视图。
+
 ### P4：群画像最小版（G）
 
 | 文件 | 改了什么 |

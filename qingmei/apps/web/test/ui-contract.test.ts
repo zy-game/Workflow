@@ -12,6 +12,7 @@ const GATEWAY = path.resolve(here, '../../../packages/host-gateway/src/index.ts'
 const QM_TASK = path.resolve(here, '../../../packages/qm-task/src/index.ts')
 const QM_APPROVAL = path.resolve(here, '../../../packages/qm-approval/src/index.ts')
 const QM_AUTONOMY = path.resolve(here, '../../../packages/qm-autonomy/src/index.ts')
+const QM_PROFILE = path.resolve(here, '../../../packages/qm-conversation-profile/src/index.ts')
 
 async function readPublic(name: string): Promise<string> {
   return readFile(path.join(PUBLIC, name), 'utf8')
@@ -93,4 +94,17 @@ test('主动面板与 qm-autonomy 的路由/事件对得上', async () => {
   assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy\/tick'/, 'qm-autonomy 应注册 tick')
   assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy\/trust'/, 'qm-autonomy 应注册 trust')
   assert.match(autonomyPlugin, /'autonomy-tick'/, 'qm-autonomy 应把每次 tick 推到 SSE')
+})
+
+test('群组面板与 qm-conversation-profile 的路由对得上', async () => {
+  const script = await readPublic('app.js')
+  const html = await readPublic('index.html')
+  const profilePlugin = await readFile(QM_PROFILE, 'utf8')
+
+  assert.match(script, /conversations: '\.\/api\/v1\/conversations'/, 'app.js 应有群组列表接口')
+  assert.match(script, /conversationsConfigure: '\.\/api\/v1\/conversations\/configure'/, 'app.js 应有群标签保存接口')
+  assert.match(html, /id="conversations"/, 'index.html 应有群组面板')
+  assert.match(html, /id="conversations-list"/, 'index.html 应有群组列表容器')
+  assert.match(profilePlugin, /path: '\/api\/v1\/conversations'/, '应注册群组列表路由')
+  assert.match(profilePlugin, /path: '\/api\/v1\/conversations\/configure'/, '应注册群标签配置路由')
 })

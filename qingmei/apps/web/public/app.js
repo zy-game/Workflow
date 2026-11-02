@@ -16,6 +16,8 @@ const ENDPOINTS = {
   autonomyDigest: './api/v1/autonomy/digest',
   autonomyComplaint: './api/v1/autonomy/complaint',
   autonomyRollback: './api/v1/autonomy/rollback',
+  conversations: './api/v1/conversations',
+  conversationsConfigure: './api/v1/conversations/configure',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -58,6 +60,13 @@ const el = {
   autonomyDigest: document.getElementById('autonomy-digest'),
   autonomyComplain: document.getElementById('autonomy-complain'),
   autonomyRollback: document.getElementById('autonomy-rollback'),
+  conversationsToggle: document.getElementById('conversations-toggle'),
+  conversations: document.getElementById('conversations'),
+  conversationsList: document.getElementById('conversations-list'),
+  conversationsEmpty: document.getElementById('conversations-empty'),
+  conversationsError: document.getElementById('conversations-error'),
+  conversationsRefresh: document.getElementById('conversations-refresh'),
+  conversationsClose: document.getElementById('conversations-close'),
   autonomyClose: document.getElementById('autonomy-close'),
   autonomyLevels: Array.from(document.querySelectorAll('.autonomy-level')),
   autonomyLock: document.getElementById('autonomy-lock'),
@@ -80,6 +89,8 @@ const state = {
   tasksLoading: false,
   autonomyOpen: false,
   autonomyLoading: false,
+  conversationsOpen: false,
+  conversationsLoading: false,
   autonomyMode: 'A1',
   autonomyLocked: false,
 }
@@ -682,6 +693,115 @@ async function cancelSchedule(id, button) {  button.disabled = true
   }
 }
 
+function setConversationsOpen(open) {
+  state.conversationsOpen = open
+  if (!el.conversations) return
+  el.conversations.hidden = !open
+  el.conversationsToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    setTasksOpen(false)
+    setSchedulesOpen(false)
+    setAutonomyOpen(false)
+    void loadConversations()
+  }
+}
+
+const CONVERSATION_STATUS_TEXT = {
+  pending: '待配置',
+  configured: '已配置',
+  muted: '静音',
+  blocked: '已拉黑',
+}
+
+const CONVERSATION_TAGS = [
+  ['work', '工作'],
+  ['casual', '吹水'],
+  ['family', '家人'],
+  ['client', '客户'],
+  ['temp', '临时'],
+]
+
+async function loadConversations() {
+  if (!state.token || state.conversationsLoading) return
+  state.conversationsLoading = true
+  try {
+    const res = await fetch(ENDPOINTS.conversations, { headers: withAuth({ Accept: 'application/json' }) })
+    if (!res.ok) throw new Error(`加载群组失败（HTTP ${res.status}）`)
+    renderConversations(await res.json())
+    showConversationsError('')
+  } catch (error) {
+    showConversationsError(error instanceof TypeError ? '无法连接服务' : error.message || '加载群组失败')
+  } finally {
+    state.conversationsLoading = false
+  }
+}
+
+function renderConversations(body) {
+  const items = Array.isArray(body?.items) ? body.items : []
+  if (!el.conversationsList) return
+  el.conversationsList.replaceChildren()
+  if (el.conversationsEmpty) el.conversationsEmpty.hidden = items.length > 0
+  for (const item of items) {
+    const row = document.createElement('li')
+    row.className = 'autonomy-item'
+
+    const title = document.createElement('p')
+    title.className = 'autonomy-title'
+    title.textContent = item.title || item.platformConversationId
+    const meta = document.createElement('p')
+    meta.className = 'autonomy-budget'
+    meta.textContent = `${item.channel} · ${CONVERSATION_STATUS_TEXT[item.status] ?? item.status} · ${item.platformConversationId}`
+    const tags = document.createElement('div')
+    tags.className = 'conversation-tags'
+    for (const [value, label] of CONVERSATION_TAGS) {
+      const wrapper = document.createElement('label')
+      const input = document.createElement('input')
+      input.type = 'checkbox'
+      input.value = value
+      input.checked = Array.isArray(item.tags) && item.tags.includes(value)
+      wrapper.append(input, document.createTextNode(label))
+      tags.append(wrapper)
+    }
+    const save = document.createElement('button')
+    save.className = 'ghost'
+    save.type = 'button'
+    save.textContent = '保存标签'
+    save.addEventListener('click', () => {
+      const selected = Array.from(tags.querySelectorAll('input:checked')).map((input) => input.value)
+      void saveConversationTags(item, selected)
+    })
+    row.append(title, meta, tags, save)
+    el.conversationsList.append(row)
+  }
+}
+
+async function saveConversationTags(item, tags) {
+  if (!state.token) return
+  if (tags.length === 0) {
+    showConversationsError('至少选一个标签')
+    return
+  }
+  try {
+    const res = await fetch(ENDPOINTS.conversationsConfigure, {
+      method: 'POST',
+      headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify({ channel: item.channel, conversationId: item.platformConversationId, tags, title: item.title }),
+    })
+    const detail = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(detail?.error || `保存失败（HTTP ${res.status}）`)
+    showConversationsError('')
+    await loadConversations()
+    setStatus('online', `已保存群标签：${tags.join('/')}`)
+  } catch (error) {
+    showConversationsError(error instanceof TypeError ? '无法连接服务' : error.message || '保存失败')
+  }
+}
+
+function showConversationsError(message) {
+  if (!el.conversationsError) return
+  el.conversationsError.textContent = message
+  el.conversationsError.hidden = !message
+}
 function setSchedulesOpen(open) {
   state.schedulesOpen = open
   el.schedules.hidden = !open
@@ -1249,11 +1369,15 @@ function bindEvents() {
   el.autonomyLock?.addEventListener('click', () => void setAutonomyTrust({ locked: !state.autonomyLocked }))
   el.autonomyComplain?.addEventListener('click', () => void complainAutonomy())
   el.autonomyRollback?.addEventListener('click', () => void rollbackAutonomy())
+  el.conversationsToggle?.addEventListener('click', () => setConversationsOpen(!state.conversationsOpen))
+  el.conversationsRefresh?.addEventListener('click', () => void loadConversations())
+  el.conversationsClose?.addEventListener('click', () => setConversationsOpen(false))
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.schedulesOpen) setSchedulesOpen(false)
     if (state.tasksOpen) setTasksOpen(false)
     if (state.autonomyOpen) setAutonomyOpen(false)
+    if (state.conversationsOpen) setConversationsOpen(false)
   })
 }
 
