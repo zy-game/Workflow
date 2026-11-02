@@ -463,6 +463,9 @@ handler 只通过 `deps` 访问服务，所以测试可以 `createTools({ memory
     绕过它直接写 `qm_message` 会让建议在会话历史里凭空出现或消失。
 24. **用 PowerShell 改含模板字符串的代码会吃掉变量插值**：反引号在 double-quoted 字符串里是转义符，
     替换后变量变成空串（盘点 prompt 的项目名、回执文案都踩过）。这类改动优先用编辑工具，别用 `-replace`。
+25. **类里的可选方法签名会遮住子类实现**：Node 类型剥离把 `profile?: (...)` 变成自己的
+    `profile = undefined` 字段，子类原型上的方法被遮住（`typeof memory.profile` 不是 function）。
+    可选能力要么放接口里，要么给基类一个默认实现，不要用可选方法声明。
 
 ## 7. 2026-10-30 文档对齐（已做，别重复做）
 
