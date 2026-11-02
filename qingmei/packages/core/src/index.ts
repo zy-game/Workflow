@@ -298,6 +298,16 @@ export interface AutonomyState {
   lastTickAt: Date | null
   /** 规则 id → 冷却截止时间戳 */
   cooldowns: Record<string, number>
+  /** 建议被回应（采纳）的累计次数 */
+  accepted: number
+  /** 建议在窗口内没人理（忽略）的累计次数 */
+  ignored: number
+  /** 连续被回应、没有被打断的次数；信任升级看它 */
+  streak: number
+  /** 最近一条还等着被回应的建议 */
+  pending: { traceId: string; candidateId: string; at: number; expiresAt: number } | null
+  /** 规则 id → 被忽略的次数；达到阈值后冷却翻倍 */
+  ignoredByRule: Record<string, number>
 }
 
 /** 自主循环：世界状态快照 → 候选 → 过滤 → 选择 → 记账（docs/13 §3） */

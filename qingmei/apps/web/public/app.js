@@ -828,7 +828,8 @@ function showAutonomyError(message) {
 function renderAutonomy(body) {
   const items = Array.isArray(body?.items) ? body.items : []
   const budget = body?.budget ?? { used: 0, limit: 0 }
-  el.autonomyBudget.textContent = `模式 ${body?.mode ?? 'A1'} · 今日建议 ${budget.used}/${budget.limit}`
+  const trust = body?.trust ?? { accepted: 0, ignored: 0, streak: 0 }
+  el.autonomyBudget.textContent = `模式 ${body?.mode ?? 'A1'} · 今日建议 ${budget.used}/${budget.limit} · 采纳 ${trust.accepted} · 忽略 ${trust.ignored} · 连续 ${trust.streak}`
   el.autonomyEmpty.hidden = items.length > 0
   el.autonomyList.replaceChildren()
 

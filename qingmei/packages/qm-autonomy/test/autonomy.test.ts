@@ -518,3 +518,109 @@ test('盘点任务收尾后把结论回推给主人，普通任务不回推', as
     await h.dispose()
   }
 })
+
+test('采纳：建议发出后有人说话，pending 清空并累计 streak', async () => {
+  const h = await setup()
+  try {
+    h.approval.pending = [approvalRequest()]
+    await h.autonomy.tick('tick')
+    const pendingBefore = (await h.autonomy.status()).pending
+    assert.ok(pendingBefore, '发出去的建议应进入等回应状态')
+    assert.equal(pendingBefore?.candidateId, 'approval.pending')
+
+    h.ctx.events.emit(EVENTS.inbound, {})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const after = await h.autonomy.status()
+    assert.equal(after.accepted, 1)
+    assert.equal(after.streak, 1)
+    assert.equal(after.pending, null)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('忽略：过了回应窗口还没人理，记一次忽略并中断 streak', async () => {
+  const h = await setup({ acceptWindowMinutes: 0 })
+  try {
+    h.approval.pending = [approvalRequest()]
+    await h.autonomy.tick('tick')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    await h.autonomy.tick('tick')
+    const state = await h.autonomy.status()
+    assert.equal(state.ignored, 1)
+    assert.equal(state.streak, 0)
+    assert.equal(state.ignoredByRule['approval.pending'], 1)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('降频：同一规则被忽略 3 次后，冷却翻倍', async () => {
+  const h = await setup({ cooldownMinutes: 60 })
+  try {
+    await h.ctx.store.collection('qm_autonomy_state').insert({
+      id: 'state',
+      mode: 'A1',
+      day: '',
+      used: 0,
+      last_tick_at: null,
+      cooldowns_json: '{}',
+      accepted: 0,
+      ignored: 0,
+      streak: 0,
+      pending_json: null,
+      ignored_by_rule_json: JSON.stringify({ 'approval.pending': 3 }),
+    })
+
+    h.approval.pending = [approvalRequest()]
+    const before = Date.now()
+    await h.autonomy.tick('tick')
+    const until = (await h.autonomy.status()).cooldowns['approval.pending'] ?? 0
+    const minutes = (until - before) / 60_000
+    assert.ok(minutes >= 115 && minutes <= 125, `冷却应约为 120 分钟，实际 ${minutes}`)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('信任升级：autoUpgrade 打开且连续采纳达标才升到 A2，并通知', async () => {
+  const h = await setup({ autoUpgrade: true, upgradeAfter: 2, acceptWindowMinutes: 60, cooldownMinutes: 0 })
+  try {
+    h.approval.pending = [approvalRequest()]
+    await h.autonomy.tick('tick')
+    h.ctx.events.emit(EVENTS.inbound, {})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await h.autonomy.tick('tick')
+    h.ctx.events.emit(EVENTS.inbound, {})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal((await h.autonomy.status()).streak, 2)
+
+    h.approval.pending = []
+    await h.autonomy.tick('tick')
+    assert.equal((await h.autonomy.status()).mode, 'A2')
+    assert.ok(h.channel.sent.some((envelope) => JSON.stringify(envelope.blocks).includes('已升到 A2')))
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('信任升级：autoUpgrade 默认关闭时只记账，不改变级别', async () => {
+  const h = await setup({ upgradeAfter: 2, acceptWindowMinutes: 60, cooldownMinutes: 0 })
+  try {
+    h.approval.pending = [approvalRequest()]
+    await h.autonomy.tick('tick')
+    h.ctx.events.emit(EVENTS.inbound, {})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await h.autonomy.tick('tick')
+    h.ctx.events.emit(EVENTS.inbound, {})
+
+    h.approval.pending = []
+    await h.autonomy.tick('tick')
+    const state = await h.autonomy.status()
+    assert.equal(state.mode, 'A1')
+    assert.equal(state.streak, 2)
+  } finally {
+    await h.dispose()
+  }
+})

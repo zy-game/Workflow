@@ -84,10 +84,11 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 3. **历史表结构化**（M3 的前置）：`blocks_json` / `direction` / `trace_id` + 幂等索引 + `qm_turn`。
 4. **A3 收尾**：QQ/飞书渠道等 M3；盘点结论的追问闭环（「那个盘点结果呢」直接回最近的 inventory run）。
    自动盘点与结论回推已完成。
-5. **A2 后半**：排期器（优先级/时间窗/依赖/抢占/容量）+ 信任升降级（连续采纳升级、忽略降频）。
-   行动白名单与执行回执已完成，`notify.self` 会真的发消息（每日 ≤3 条）。
-6. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
-7. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
+5. **A5 剩余**：显式升级/降级入口（设置页或「升级」指令）、回滚/投诉信号、低价值只进摘要。
+   采纳/忽略记账、忽略降频、可选自动升级已完成。
+6. **A2 后半**：排期器（优先级/时间窗/依赖/抢占/容量）。行动白名单与执行回执已完成。
+7. **渠道侧确认**：审批目前只有 Web 入口；手机/watch 要等 M4/M7 的宿主与渠道。
+8. 工程侧：路由挪回插件、`cron.ts` 拆包、`GET /api/v1/audit`。
 
 ## 3. 已知技术债（按优先级）
 
@@ -128,6 +129,16 @@ sudo journalctl -u qingmei -n 50 --no-pager
 服务器时区是 `Asia/Shanghai`，Node 在 `/opt/node24/bin`（默认 PATH 里的 node 是 20，跑不了 `node:sqlite`）。
 
 ## 5. 本次改动的落点
+
+### A5 前半：采纳/忽略记账与忽略降频
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `AutonomyState` 加 `accepted` / `ignored` / `streak` / `pending` / `ignoredByRule` |
+| `packages/qm-autonomy` | 建议发出后进入「等回应」（`acceptWindowMinutes`，默认 30）；窗口内有入站消息算采纳；过期记忽略并中断 streak；同一规则被忽略 `ignoreBeforeSlowdown`（3）次后冷却翻倍；`autoUpgrade`（默认关）连续采纳到 `upgradeAfter`（10）才升 A2 并通知；状态读改写串行化，避免 tick 与入站互相覆盖 |
+| `apps/web/public/app.js` | 主动面板显示「采纳 / 忽略 / 连续」 |
+| `GET /api/v1/autonomy` | 返回 `trust: { accepted, ignored, streak }` |
+| 测试 | 5 条（采纳、忽略、降频、自动升级、默认不升级）；全量 225 → 230 |
 
 ### A3 收尾：过期自动盘点与结论回推
 

@@ -47,6 +47,16 @@ export interface AutonomyConfig {
   upcomingWindowMinutes?: number
   /** 决策账本保留天数；0 表示不清理 */
   retentionDays?: number
+  /** 建议发出后多久内收到消息算「被采纳」 */
+  acceptWindowMinutes?: number
+  /** 连续采纳多少次可以升一级 */
+  upgradeAfter?: number
+  /** 同一规则被忽略多少次后冷却翻倍 */
+  ignoreBeforeSlowdown?: number
+  /** 连续采纳后自动升级（默认关闭：升级要人点头） */
+  autoUpgrade?: boolean
+  /** 锁死当前级别：忽略升级 */
+  trustLocked?: boolean
 }
 
 export const name = 'qm-autonomy'
@@ -65,6 +75,11 @@ const DEFAULTS = {
   cooldownMinutes: 240,
   upcomingWindowMinutes: 60,
   retentionDays: 7,
+  acceptWindowMinutes: 30,
+  upgradeAfter: 10,
+  ignoreBeforeSlowdown: 3,
+  autoUpgrade: false,
+  trustLocked: false,
 }
 
 interface TraceRow extends Row {
@@ -86,6 +101,11 @@ interface StateRow extends Row {
   used: number
   last_tick_at: number | null
   cooldowns_json: string
+  accepted?: number
+  ignored?: number
+  streak?: number
+  pending_json?: string | null
+  ignored_by_rule_json?: string
 }
 
 class AutonomyRunner extends AutonomyService {
@@ -115,13 +135,37 @@ class AutonomyRunner extends AutonomyService {
     this.states = store.collection<StateRow>(STATE)
   }
 
+  /** 状态读改写串行化：tick 与「收到消息」可能同时改同一份状态 */
+  private stateQueue: Promise<unknown> = Promise.resolve()
+
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.stateQueue.then(fn, fn)
+    this.stateQueue = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
   async tick(trigger: 'tick' | 'manual'): Promise<AutonomyTrace> {
+    return this.serialize(() => this.tickInner(trigger))
+  }
+
+  private async tickInner(trigger: 'tick' | 'manual'): Promise<AutonomyTrace> {
     const now = new Date()
     const state = await this.getState()
     const day = dayKey(now)
     if (state.day !== day) {
       state.day = day
       state.used = 0
+    }
+
+    // 上一条建议过了回应窗口还没人理：记一次忽略，连续采纳中断
+    if (state.pending && now.getTime() > state.pending.expiresAt) {
+      state.ignored += 1
+      state.streak = 0
+      state.ignoredByRule[state.pending.candidateId] = (state.ignoredByRule[state.pending.candidateId] ?? 0) + 1
+      state.pending = null
     }
 
     const snapshot = await this.snapshot(now)
@@ -155,7 +199,10 @@ class AutonomyRunner extends AutonomyService {
       } else {
         chosen = allowed.sort((a, b) => b.value - a.value || a.id.localeCompare(b.id))[0]!
         state.used += 1
-        state.cooldowns[chosen.id] = now.getTime() + this.config.cooldownMinutes * 60_000
+        const ignoredTimes = state.ignoredByRule[chosen.id] ?? 0
+        // 忽略得越多，冷却越长；这是 docs/13 §10 的「降频」在 P1 的近似
+        const slowFactor = ignoredTimes >= this.config.ignoreBeforeSlowdown ? 2 : 1
+        state.cooldowns[chosen.id] = now.getTime() + this.config.cooldownMinutes * slowFactor * 60_000
         reason = chosen.reason
       }
     }
@@ -164,15 +211,48 @@ class AutonomyRunner extends AutonomyService {
     for (const [id, until] of Object.entries(state.cooldowns)) {
       if (until <= now.getTime()) delete state.cooldowns[id]
     }
+    const traceId = uid('aut')
     state.mode = this.config.mode
     state.lastTickAt = now
-    await this.saveState(state)
 
     // 选中后要真的处理：能执行就执行，级别不够就降级成建议——但都要留回执
     const execution = chosen ? await this.execute(chosen, now) : null
 
+    // 发出去的建议进入「等回应」：窗口内有人说话就算采纳，过了窗口下一次 tick 记忽略
+    if (
+      chosen &&
+      execution &&
+      execution.action === 'notify.self' &&
+      (execution.status === 'executed' || execution.status === 'suggested')
+    ) {
+      state.pending = {
+        traceId,
+        candidateId: chosen.id,
+        at: now.getTime(),
+        expiresAt: now.getTime() + this.config.acceptWindowMinutes * 60_000,
+      }
+    }
+
+    // 连续采纳到阈值：默认只记账（升级要人点头），autoUpgrade 打开才真的升
+    let upgraded = false
+    if (
+      this.config.autoUpgrade &&
+      !this.config.trustLocked &&
+      this.config.mode === 'A1' &&
+      state.streak >= this.config.upgradeAfter
+    ) {
+      this.config.mode = 'A2'
+      state.mode = 'A2'
+      upgraded = true
+    }
+
+    await this.saveState(state)
+    if (upgraded) {
+      await this.notify(`🎉 连续 ${state.streak} 次采纳，已升到 A2：以后失败任务可以自己重试`)
+    }
+
     const trace: AutonomyTrace = {
-      id: uid('aut'),
+      id: traceId,
       at: now,
       trigger,
       mode: this.config.mode,
@@ -341,7 +421,18 @@ class AutonomyRunner extends AutonomyService {
     const rows = await this.states.find({ limit: 1 })
     const row = rows[0]
     if (!row) {
-      return { mode: this.config.mode, day: '', used: 0, lastTickAt: null, cooldowns: {} }
+      return {
+        mode: this.config.mode,
+        day: '',
+        used: 0,
+        lastTickAt: null,
+        cooldowns: {},
+        accepted: 0,
+        ignored: 0,
+        streak: 0,
+        pending: null,
+        ignoredByRule: {},
+      }
     }
     return {
       mode: (row.mode as AutonomyState['mode']) || this.config.mode,
@@ -349,6 +440,11 @@ class AutonomyRunner extends AutonomyService {
       used: Number(row.used) || 0,
       lastTickAt: row.last_tick_at === null ? null : new Date(row.last_tick_at),
       cooldowns: parseJson<Record<string, number>>(row.cooldowns_json, {}),
+      accepted: Number(row.accepted) || 0,
+      ignored: Number(row.ignored) || 0,
+      streak: Number(row.streak) || 0,
+      pending: parseJson<AutonomyState['pending']>(row.pending_json ?? null, null),
+      ignoredByRule: parseJson<Record<string, number>>(row.ignored_by_rule_json ?? null, {}),
     }
   }
 
@@ -360,9 +456,29 @@ class AutonomyRunner extends AutonomyService {
       used: state.used,
       last_tick_at: state.lastTickAt ? state.lastTickAt.getTime() : null,
       cooldowns_json: JSON.stringify(state.cooldowns),
+      accepted: state.accepted,
+      ignored: state.ignored,
+      streak: state.streak,
+      pending_json: state.pending ? JSON.stringify(state.pending) : null,
+      ignored_by_rule_json: JSON.stringify(state.ignoredByRule),
     }
     if (rows[0]) await this.states.update(rows[0].id, changes)
     else await this.states.insert({ id: 'state', ...changes })
+  }
+
+  /** 收到一条入站消息：如果最近有等待回应的建议，就算被采纳 */
+  async noteEngagement(): Promise<void> {
+    return this.serialize(() => this.noteEngagementInner())
+  }
+
+  private async noteEngagementInner(): Promise<void> {
+    const state = await this.getState()
+    if (!state.pending) return
+    if (Date.now() > state.pending.expiresAt) return
+    state.accepted += 1
+    state.streak += 1
+    state.pending = null
+    await this.saveState(state)
   }
 
   /** 决策账本按保留期清理；每 5 分钟一条，不清会无限长 */
@@ -475,6 +591,11 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
     })
   }
 
+  // 收到入站消息：如果最近有一条等回应的建议，就算被采纳（P1 的近似信号）
+  ctx.events.on(EVENTS.inbound, () => {
+    void runner.noteEngagement()
+  })
+
   const gateway = ctx.reflect.get('gateway', false) as GatewayService
   ctx.effect(() =>
     gateway.route({
@@ -486,6 +607,7 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
           ok: true,
           mode: status.mode,
           budget: { limit: config.dailyBudget ?? DEFAULTS.dailyBudget, used: status.used },
+          trust: { accepted: status.accepted, ignored: status.ignored, streak: status.streak },
           lastTickAt: status.lastTickAt,
           items: await runner.list(),
         })
