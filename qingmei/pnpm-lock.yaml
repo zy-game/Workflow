@@ -77,6 +77,9 @@ importers:
       '@qingmei/qm-consolidate':
         specifier: workspace:*
         version: link:../../packages/qm-consolidate
+      '@qingmei/qm-conversation-profile':
+        specifier: workspace:*
+        version: link:../../packages/qm-conversation-profile
       '@qingmei/qm-history':
         specifier: workspace:*
         version: link:../../packages/qm-history
@@ -399,6 +402,25 @@ importers:
       '@qingmei/provider-memory-sqlite':
         specifier: workspace:*
         version: link:../provider-memory-sqlite
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-conversation-profile:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite

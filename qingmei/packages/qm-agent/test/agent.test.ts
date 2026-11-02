@@ -25,7 +25,16 @@ import {
   type TurnEnd,
 } from '@qingmei/core'
 import { LlmService, type ChatRequest, type ChatStreamChunk } from '@qingmei/service-llm'
-import { MemoryService, type MemoryRecord, type ProfileEntry, type RecallQuery, type RecallResult } from '@qingmei/core'
+import {
+  ConversationProfileService,
+  MemoryService,
+  type ConversationPolicy,
+  type ConversationProfile,
+  type MemoryRecord,
+  type ProfileEntry,
+  type RecallQuery,
+  type RecallResult,
+} from '@qingmei/core'
 
 import * as channelPlugin from '@qingmei/service-channel'
 import * as historyPlugin from '@qingmei/qm-history'
@@ -142,6 +151,7 @@ interface FakeState {
   memoryText: string
   profile: ProfileEntry[]
   profileCalls: { audience?: string }[]
+  groupProfile: { note: string; maxChars: number } | null
   recalls: RecallQuery[]
   sent: OutboundEnvelope[]
   published: GatewayEvent[]
@@ -157,6 +167,7 @@ function createFakes(options: FakeOptions) {
     memoryText: '',
     profile: [],
     profileCalls: [],
+    groupProfile: null,
     recalls: [],
     sent: [],
     published: [],
@@ -285,7 +296,44 @@ function createFakes(options: FakeOptions) {
     }
   }
 
-  return { state, adapter, FakeStore, FakeGateway, FakeLlm, FakeMemory }
+  class FakeProfile extends ConversationProfileService {
+    constructor(ctx: Context) {
+      super(ctx)
+    }
+    async get(channel: string, conversationId: string): Promise<ConversationProfile | null> {
+      if (!state.groupProfile) return null
+      return {
+        id: `${channel}:${conversationId}`,
+        channel: channel as ConversationProfile['channel'],
+        platformConversationId: conversationId,
+        title: '测试群',
+        kind: 'group',
+        tags: ['casual'],
+        status: 'configured',
+        discoveredAt: new Date(),
+        lastActiveAt: null,
+      }
+    }
+    async list(): Promise<ConversationProfile[]> {
+      return []
+    }
+    async configure(): Promise<ConversationProfile> {
+      throw new Error('not used')
+    }
+    policy(): ConversationPolicy {
+      return {
+        audiences: [],
+        maxChars: state.groupProfile!.maxChars,
+        tone: 'casual',
+        proactive: false,
+        forbiddenTopics: [],
+      }
+    }
+    note(): string {
+      return state.groupProfile!.note
+    }
+  }
+  return { state, adapter, FakeStore, FakeGateway, FakeLlm, FakeMemory, FakeProfile }
 }
 
 // ────────────────────────────────────────────── 测试脚手架
@@ -306,6 +354,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(fakes.FakeGateway)
   await ctx.plugin(fakes.FakeLlm)
   await ctx.plugin(fakes.FakeMemory)
+  await ctx.plugin(fakes.FakeProfile)
   await ctx.plugin(historyPlugin)
   await ctx.plugin(agent, { persona: PERSONA })
   ctx.channel.register(fakes.adapter)
@@ -615,4 +664,22 @@ test('画像只注入私聊：owner 看到「关于主人」，群聊不调用 p
   const groupSystem = h.state.requests.at(-1)!.messages[0]!
   assert.doesNotMatch(groupSystem.content, /【关于主人】/)
   assert.equal(h.state.profileCalls.length, 1, '群聊不应调用 profile')
+})
+
+test('群策略：规则进 prompt，回复按 maxChars 截断', async () => {
+  const h = await boot({ chunks: ['这是一段很长很长的回复内容'] })
+  h.state.groupProfile = { note: '本群标签：吹水群；回复不超过 10 字', maxChars: 10 }
+
+  const group = inbound('群里说一句')
+  group.conversation = { kind: 'group', id: 'g1' }
+  h.ctx.events.emit(EVENTS.inbound, group)
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+
+  const system = h.state.requests[0]!.messages[0]!
+  assert.match(system.content, /【本群规则】/)
+  assert.match(system.content, /吹水群/)
+
+  const sent = h.state.sent.at(-1)!.blocks[0] as { text: string }
+  assert.ok(sent.text.length <= 10, `回复应被截断到 10 字，实际 ${sent.text.length}`)
+  assert.match(sent.text, /…$/)
 })

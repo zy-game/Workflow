@@ -67,6 +67,9 @@
   config:
     hour: 4
 
+# 群画像：未配置的群回「权限未配置」，打标签后按策略回复
+- name: '@qingmei/qm-conversation-profile'
+
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 

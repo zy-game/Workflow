@@ -132,6 +132,18 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P4：群画像最小版（G）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `ConversationProfile` / `ConversationPolicy` / `GROUP_TAG_POLICIES` / `ConversationProfileService` |
+| `packages/qm-conversation-profile`（新） | 未配置群固定回「权限未配置」（deterministic，handledBy 跳过模型）；`GET /api/v1/conversations`、`POST /api/v1/conversations/configure`；标签策略取更严格 |
+| `packages/qm-agent` | 群聊注入「本群规则」，发送前按 `maxChars` 截断 |
+| 配置 | dev/prod 各加一项（24 项插件） |
+| 测试 | 306 全绿 |
+
+> 未做：群管理页、标签建议、后置校验/审计、工具裁剪。
+
 ### P4：夜间巩固最小版
 
 | 文件 | 改了什么 |

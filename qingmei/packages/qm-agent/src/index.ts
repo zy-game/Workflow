@@ -19,6 +19,7 @@ import {
   type GatewayService,
   type HarnessService,
   type InboundMessage,
+  type ConversationProfileService,
   type MemoryService,
   type ProfileEntry,
   type Row,
@@ -200,9 +201,25 @@ export function apply(ctx: Context, config: AgentConfig): void {
         }
       }
     }
+    // 群策略：标签合并后的规则注入 prompt（长度/口吻/禁止话题），并在发送前截断
+    const profiles = ctx.reflect.get('conversationProfile', false) as ConversationProfileService | undefined
+    let groupNote = ''
+    let maxChars = 0
+    if (audience !== 'owner' && profiles) {
+      try {
+        const profile = await profiles.get(message.channel, message.conversation.id)
+        if (profile) {
+          groupNote = profiles.note(profile)
+          maxChars = profiles.policy(profile).maxChars
+        }
+      } catch (error) {
+        problems.push(`群策略读取失败：${messageOf(error)}`)
+      }
+    }
     const memoryBlock = [
       profileText ? `【关于主人】\n${profileText}` : '',
       memoryText ? `【已知记忆】\n${memoryText}` : '',
+      groupNote ? `【本群规则】\n${groupNote}` : '',
     ].filter(Boolean).join('\n\n')
 
     try {
@@ -249,6 +266,9 @@ export function apply(ctx: Context, config: AgentConfig): void {
 
     // 先过滤再发送：用户看到的与历史里存的都必须是干净的
     reply = sanitizeReply(reply)
+    if (maxChars > 0 && reply.length > maxChars) {
+      reply = `${reply.slice(0, Math.max(0, maxChars - 1))}…`
+    }
 
     try {
       const result = await channel.send({

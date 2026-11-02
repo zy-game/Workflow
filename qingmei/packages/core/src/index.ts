@@ -604,6 +604,55 @@ export interface RecallResult {
 }
 
 /** 画像里的一条事实（与召回不同：按 subject 聚合，稳定注入） */
+export type GroupTag = 'work' | 'casual' | 'family' | 'client' | 'temp'
+
+export interface ConversationPolicy {
+  /** 允许注入的记忆视口；空数组 = 只能看到 public 的群事实 */
+  audiences: string[]
+  maxChars: number
+  tone: 'formal' | 'neutral' | 'casual'
+  proactive: boolean
+  forbiddenTopics: string[]
+}
+
+export interface ConversationProfile {
+  id: string
+  channel: ChannelId
+  platformConversationId: string
+  title: string
+  kind: 'group' | 'dm'
+  tags: GroupTag[]
+  status: 'pending' | 'configured' | 'muted' | 'blocked'
+  discoveredAt: Date
+  lastActiveAt: Date | null
+}
+
+/** docs/11 §4：标签的默认策略；合并时取更严格的那个 */
+export const GROUP_TAG_POLICIES: Record<GroupTag, ConversationPolicy> = {
+  work: { audiences: [], maxChars: 300, tone: 'neutral', proactive: true, forbiddenTopics: [] },
+  casual: { audiences: [], maxChars: 100, tone: 'casual', proactive: false, forbiddenTopics: ['task', 'schedule', 'memory'] },
+  family: { audiences: [], maxChars: 200, tone: 'casual', proactive: false, forbiddenTopics: [] },
+  client: { audiences: [], maxChars: 300, tone: 'formal', proactive: false, forbiddenTopics: ['internal', 'task', 'schedule', 'memory'] },
+  temp: { audiences: [], maxChars: 80, tone: 'casual', proactive: false, forbiddenTopics: ['task', 'schedule', 'memory'] },
+}
+
+export abstract class ConversationProfileService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'conversationProfile')
+  }
+  abstract get(channel: ChannelId, conversationId: string): Promise<ConversationProfile | null>
+  abstract list(): Promise<ConversationProfile[]>
+  abstract configure(input: {
+    channel: ChannelId
+    conversationId: string
+    tags: GroupTag[]
+    title?: string
+  }): Promise<ConversationProfile>
+  /** 标签合并后的策略（取更严格） */
+  abstract policy(profile: ConversationProfile): ConversationPolicy
+  /** 注入 prompt 的群规则说明 */
+  abstract note(profile: ConversationProfile): string
+}
 export interface ProfileFact {
   subject: string
   predicate: string

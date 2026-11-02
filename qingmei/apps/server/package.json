@@ -29,6 +29,7 @@
     "@qingmei/qm-approval": "workspace:*",
     "@qingmei/qm-autonomy": "workspace:*",
     "@qingmei/qm-consolidate": "workspace:*",
+    "@qingmei/qm-conversation-profile": "workspace:*",
     "@qingmei/qm-audit": "workspace:*",
     "@qingmei/service-memory": "workspace:*",
     "@qingmei/service-channel": "workspace:*",

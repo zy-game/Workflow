@@ -110,6 +110,9 @@
 
 - name: '@qingmei/channel-web'
 
+# 群画像：未配置的群回「权限未配置」，打标签后按策略回复
+- name: '@qingmei/qm-conversation-profile'
+
 # 飞书渠道：配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET）才启用
 - name: '@qingmei/channel-feishu'
 
