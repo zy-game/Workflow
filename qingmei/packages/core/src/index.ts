@@ -851,6 +851,8 @@ export interface TaskContract {
   expected?: { at: Date; percent: number }[]
   /** 授权强度；缺省 firm */
   enforcement: EnforcementLevel
+  /** token 硬预算；超过即中止并记失败（缺省不限） */
+  tokenBudget?: number
   /** strict 及以上才允许的强制手段 */
   allowedActions?: string[]
   /** 逃生条款：每日可无理由暂停次数/小时 */

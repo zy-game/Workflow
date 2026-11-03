@@ -337,6 +337,9 @@ function parseContract(raw: string | null | undefined): TaskContract | null {
           }
         : {}),
       enforcement: (parsed.enforcement as TaskContract['enforcement']) ?? 'firm',
+      ...(typeof parsed.tokenBudget === 'number' && parsed.tokenBudget > 0
+        ? { tokenBudget: Math.round(parsed.tokenBudget) }
+        : {}),
       ...(Array.isArray(parsed.allowedActions) ? { allowedActions: parsed.allowedActions.map(String) } : {}),
       ...(parsed.escape && typeof parsed.escape === 'object'
         ? {

@@ -559,3 +559,25 @@ test('POST /api/v1/tasks 透传任务合同', async () => {
     await h.dispose()
   }
 })
+
+test('token 预算：超过合同上限立即中止并记 failed', async () => {
+  const h = await setup({ chunks: ['继续跑'] })
+  try {
+    const created = await h.call(
+      request('POST', '/api/v1/tasks', {
+        prompt: '预算测试',
+        contract: { enforcement: 'firm', tokenBudget: 10 },
+      }),
+    )
+    const id = (created.body as { run: { id: string } }).run.id
+    const finished = await waitFor(async () => {
+      const current = await h.task.get(id)
+      return current && current.finishedAt ? current : null
+    }, '预算中止')
+    assert.equal(finished.status, 'failed')
+    assert.match(finished.error ?? '', /token 预算超限/)
+    assert.equal(finished.usage?.totalTokens, 42)
+  } finally {
+    await h.dispose()
+  }
+})

@@ -274,6 +274,18 @@ export class TaskRunner extends TaskRunnerService {
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     let collected = ''
     let failure: string | null = null
+    const tokenBudget = run.contract?.tokenBudget
+    let spentTokens = run.usage?.totalTokens ?? 0
+    let budgetExceeded = false
+    if (tokenBudget && spentTokens >= tokenBudget) {
+      await task.finish(run.id, {
+        status: 'failed',
+        error: `token 预算已用尽：${spentTokens}/${tokenBudget}`,
+      })
+      this.controllers.delete(run.id)
+      clearTimeout(timer)
+      return
+    }
 
     try {
       const cwd = path.resolve(run.cwd)
@@ -295,6 +307,13 @@ export class TaskRunner extends TaskRunnerService {
         else if (event.type === 'error') failure = event.message
         else if (event.type === 'usage') {
           await task.reportUsage(run.id, event.usage).catch(() => undefined)
+          spentTokens += Number(event.usage.totalTokens) || 0
+          if (tokenBudget && spentTokens > tokenBudget) {
+            budgetExceeded = true
+            failure = `token 预算超限：${spentTokens}/${tokenBudget}`
+            controller.abort()
+            break
+          }
         }
       }
     } catch (error) {
@@ -305,7 +324,9 @@ export class TaskRunner extends TaskRunnerService {
       const current = await task.get(run.id)
       // 子 agent 可能已经用 qm_finish_task 收尾；那样就不再覆盖
       if (current && current.finishedAt === null) {
-        if (controller.signal.aborted) {
+        if (budgetExceeded) {
+          await task.finish(run.id, { status: 'failed', error: failure ?? 'token 预算超限' })
+        } else if (controller.signal.aborted) {
           await task.finish(run.id, { status: 'cancelled', error: `超过 ${timeoutMs}ms 未完成` })
         } else if (failure) {
           await task.finish(run.id, { status: 'failed', error: failure })
@@ -328,6 +349,8 @@ function normalizeContract(raw: unknown): TaskContract | undefined {
     ? (body.enforcement as TaskContract['enforcement'])
     : 'firm'
   const deadline = typeof body.deadline === 'string' ? new Date(body.deadline) : undefined
+  const tokenBudget = Number(body.tokenBudget)
+  const normalizedBudget = Number.isFinite(tokenBudget) && tokenBudget > 0 ? Math.round(tokenBudget) : undefined
   const expected = Array.isArray(body.expected)
     ? body.expected
         .map((item) => {
@@ -354,6 +377,7 @@ function normalizeContract(raw: unknown): TaskContract | undefined {
           },
         }
       : {}),
+    ...(normalizedBudget ? { tokenBudget: normalizedBudget } : {}),
   }
 }
 export function apply(ctx: Context, config: TaskConfig = {}): void {
