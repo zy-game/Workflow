@@ -14,6 +14,9 @@
     "smoke": "node scripts/smoke.mjs",
     "test": "node --test --test-reporter=spec"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron", "electron-winstaller"]
+  },
   "dependencies": {
     "cordis": "4.0.0-rc.12"
   }

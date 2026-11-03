@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src http: https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <title>青梅</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app" data-state="idle">
+      <div id="drag-handle" title="按住拖动"></div>
+
+      <div id="bubble" class="bubble" hidden role="status" aria-live="polite">
+        <div class="bubble-head">
+          <span id="bubble-kind" class="bubble-kind">青梅</span>
+          <span id="bubble-count" class="bubble-count" hidden></span>
+          <button id="bubble-close" class="bubble-close" type="button" aria-label="关闭气泡">×</button>
+        </div>
+        <p id="bubble-text" class="bubble-text"></p>
+        <div class="bubble-tail"></div>
+      </div>
+
+      <section id="chat" class="chat" hidden aria-label="和青梅聊天">
+        <div id="chat-log" class="chat-log"></div>
+        <div id="chat-typing" class="chat-typing" hidden>青梅在想…</div>
+        <form id="chat-form" class="chat-form">
+          <input
+            id="chat-input"
+            class="chat-input"
+            type="text"
+            maxlength="2000"
+            autocomplete="off"
+            placeholder="跟青梅说点什么…"
+            aria-label="消息"
+          />
+          <button id="chat-send" class="chat-send" type="submit">发送</button>
+        </form>
+      </section>
+
+      <div id="pet-stage" class="pet-stage">
+        <div id="pet-shadow" class="pet-shadow"></div>
+        <svg id="pet" class="pet" viewBox="0 0 240 220" role="button" tabindex="0" aria-label="青梅桌宠，点击聊天">
+          <g class="tail-group">
+            <path
+              class="tail"
+              d="M170 158 C212 150 220 112 196 96 C184 88 172 96 180 108 C190 122 180 136 160 138 Z"
+            />
+          </g>
+          <ellipse class="body" cx="120" cy="157" rx="58" ry="44" />
+          <ellipse class="belly" cx="120" cy="166" rx="36" ry="28" />
+          <g class="ear ear-left">
+            <path class="ear-outer" d="M78 78 L62 28 L104 56 Z" />
+            <path class="ear-inner" d="M80 72 L71 43 L96 60 Z" />
+          </g>
+          <g class="ear ear-right">
+            <path class="ear-outer" d="M162 78 L178 28 L136 56 Z" />
+            <path class="ear-inner" d="M160 72 L169 43 L144 60 Z" />
+          </g>
+          <circle class="head" cx="120" cy="100" r="52" />
+          <g class="face">
+            <g class="eye eye-left">
+              <ellipse class="eye-white" cx="99" cy="98" rx="11" ry="13" />
+              <circle class="pupil" cx="101" cy="100" r="6" />
+              <circle class="shine" cx="103" cy="97" r="2" />
+            </g>
+            <g class="eye eye-right">
+              <ellipse class="eye-white" cx="141" cy="98" rx="11" ry="13" />
+              <circle class="pupil" cx="139" cy="100" r="6" />
+              <circle class="shine" cx="141" cy="97" r="2" />
+            </g>
+            <ellipse class="blush blush-left" cx="86" cy="114" rx="8" ry="5" />
+            <ellipse class="blush blush-right" cx="154" cy="114" rx="8" ry="5" />
+            <path class="mouth" d="M114 114 Q120 120 126 114" />
+            <path class="whisker whisker-left" d="M70 104 L56 100 M70 110 L56 110" />
+            <path class="whisker whisker-right" d="M170 104 L184 100 M170 110 L184 110" />
+          </g>
+          <path class="sprout" d="M120 48 C118 34 128 28 138 30 C136 42 128 48 120 48 Z" />
+          <path class="sprout-stem" d="M120 50 L120 40" />
+          <g class="paws">
+            <ellipse cx="90" cy="188" rx="15" ry="10" />
+            <ellipse cx="150" cy="188" rx="15" ry="10" />
+          </g>
+        </svg>
+        <button id="settings-button" class="settings-button" type="button" aria-label="设置">⚙</button>
+        <span id="status-dot" class="status-dot offline" title="未连接"></span>
+      </div>
+
+      <p id="hint" class="hint">点我聊天 · 右键菜单 · 拖动顶部移动</p>
+    </div>
+
+    <div id="settings-modal" class="settings-modal" hidden>
+      <form id="settings-form" class="settings-card">
+        <h1>青梅桌面</h1>
+        <label>
+          服务器地址
+          <input id="settings-server" type="url" placeholder="http://127.0.0.1:7410" required />
+        </label>
+        <label>
+          访问令牌
+          <input id="settings-token" type="password" placeholder="QM_TOKEN" autocomplete="off" />
+        </label>
+        <p id="settings-error" class="settings-error" hidden></p>
+        <div class="settings-actions">
+          <button id="settings-test" type="button" class="ghost">测试连接</button>
+          <button id="settings-cancel" type="button" class="ghost">取消</button>
+          <button id="settings-save" type="submit" class="primary">保存并连接</button>
+        </div>
+        <p class="settings-note">令牌只保存在本机；桌面端和 Web 用同一个 QM_TOKEN。</p>
+      </form>
+    </div>
+
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>
