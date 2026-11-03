@@ -1007,5 +1007,7 @@ function bind() {
   })
 }
 
+window.__qmSendImage = sendImage
+
 bind()
 void init()

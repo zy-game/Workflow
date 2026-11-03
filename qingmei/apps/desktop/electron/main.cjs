@@ -259,6 +259,13 @@ function createWindow() {
         )
       }, 600)
     }
+    if (action === 'image') {
+      setTimeout(() => {
+        void win.webContents.executeJavaScript(
+          "(async () => { const bin = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='); const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0)); const f = new File([bytes], 'test.png', { type: 'image/png' }); await window.__qmSendImage(f); })()",
+        )
+      }, 600)
+    }
     if (action === 'chat') {
       setTimeout(() => {
         void win.webContents.executeJavaScript("document.getElementById('bubble-text').click()")
