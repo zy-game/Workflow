@@ -55,12 +55,23 @@ export function textOfBlocks(blocks) {
  * 把一条 SSE 事件转成桌宠气泡。返回 null 表示这条事件不该打扰用户。
  * 目前订阅：assistant（所有主动/回复消息）、approval-requested、task-finished（失败）。
  */
+export function plainText(text) {
+  return String(text ?? '')
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z0-9_-]*\n?/g, '').trim())
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^[-*]\s+/gm, '• ')
+    .trim()
+}
+
 export function bubbleForEvent(event) {
   const type = event?.event
   const data = parseData(event?.data)
   if (type === 'assistant') {
     const envelope = data
-    const text = textOfBlocks(envelope?.blocks)
+    const text = plainText(textOfBlocks(envelope?.blocks))
     if (!text) return null
     return { text, kind: 'message', channel: envelope?.channel ?? 'web' }
   }

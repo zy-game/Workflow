@@ -2,8 +2,8 @@
 
 ![桌宠预览](docs/pet-preview.png)
 
-Electron 透明置顶小窗：一只青梅坐在桌面角落，服务器发来的任何通知都会变成它头顶的气泡；
-点它聊天、右键菜单、顶部拖动条移动窗口，窗口透明区域点击穿透。
+Electron 透明置顶小窗：一只青梅坐在桌面角落，服务器通知变成头顶气泡；点它互动、右键菜单、
+聊天输入、拖到哪停哪，透明区域点击穿透。
 
 ## 运行
 
@@ -24,20 +24,34 @@ pnpm --filter @qingmei/desktop start
 QM_SERVER_URL=https://139.155.78.241:8710 QM_TOKEN=... pnpm --filter @qingmei/desktop start
 ```
 
-令牌优先用 Electron 的 `safeStorage`（Windows DPAPI）加密存到用户数据目录；系统不支持时退化为明文，
-README 与设置页都明确写了这一点。
+令牌优先用 Electron `safeStorage`（Windows DPAPI）加密存到用户数据目录；系统不支持时退化为明文，
+设置页有说明。
+
+## 设置
+
+右键桌宠 →「设置…」或托盘 →「设置…」：
+
+- 服务器地址 / 访问令牌 / 测试连接
+- 桌宠大小 70%–150%
+- 互动音效开关
+- 开机自启
+- 隐藏时系统通知
+- 全屏应用时自动隐藏
+- 窗口位置会记住，并在显示器变化后回到可见区域
 
 ## 交互
 
 | 操作 | 效果 |
 | --- | --- |
 | 单击桌宠 | 随机播一个点击回应动画，冒一句台词，偶尔掉爱心 |
-| 双击桌宠 | 喂饭：吃白饭 GIF + 爱心 + 台词 |
-| 右键桌宠 | 摸摸头 / 喂饭 / 逗一下 / 聊聊天 / 设置 / 重新连接 / 躲起来 / 退出（聊天和设置都在这里） |
-| 顶部小横条拖动 | 移动窗口，位置会记住；拖整只也可以 |
-| 头顶气泡 | 显示服务器通知；点击气泡直接打开聊天；× 关闭，+N 表示排队条数 |
-| 聊天输入 | 回车发送，消息走 `POST /api/v1/messages`，回复走 SSE 实时显示 |
-| 闲置 20 秒 | 35% 概率自己找个乐子（照镜子 / 蓝鲸 / 玩水枪），否则换待机动作 |
+| 双击桌宠 | 喂饭：吃白饭动画 + 爱心 + 台词 |
+| 右键桌宠 | 摸摸头 / 喂饭 / 逗一下 / 聊聊天 / 设置 / 重新连接 / 躲起来 / 退出 |
+| 托盘 | 显示 / 隐藏 / 设置 / 退出 |
+| 顶部小横条 | 移动窗口，位置会记住；拖整只也可以 |
+| 头顶气泡 | 显示服务器通知；点击气泡打开聊天；× 关闭，+N 表示排队条数 |
+| 聊天输入 | 回车发送；回复按 SSE `chunk` 流式显示，最终消息渲染 Markdown |
+| 离线 | 发送失败自动排队，联网后自动补发 |
+| 闲置 20 秒 | 35% 概率自己找个乐子（照镜子 / 蓝鲸 / 玩水枪），否则继续待机 |
 | 闲置 90 秒 | 打盹，动一下或点它醒来 |
 | 透明区域 | 点击穿透到桌面；只有桌宠/气泡/聊天/设置区域接收鼠标 |
 
@@ -45,19 +59,21 @@ README 与设置页都明确写了这一点。
 
 订阅 `GET /api/v1/events?token=...`，映射规则在 `renderer/core.mjs`：
 
-- `assistant`：所有回复与主动消息（提醒、督促、复盘、周报等）→ 普通气泡
+- `assistant`：所有回复与主动消息（提醒、督促、复盘、周报等）→ 气泡
 - `approval-requested`：审批待确认 → 审批气泡
 - `task-finished` 且失败 → 故障气泡
+- `chunk`：只进聊天面板流式显示，不弹气泡，避免刷屏
 
-`delta` 等流式事件不进气泡，避免刷屏。
+窗口隐藏时，普通通知会走 Windows 系统通知；点击通知恢复桌宠。
 
 ## 打包
 
 ```bash
-pnpm --filter @qingmei/desktop dist
+pnpm --filter @qingmei/desktop dist        # 免安装 portable exe
+pnpm --filter @qingmei/desktop dist:nsis   # NSIS 安装包（部分机器会被杀软拦截卸载器生成）
 ```
 
-产物在 `apps/desktop/dist/`（NSIS 安装包）。打包依赖 `electron-builder`，首次会下载 Windows 构建工具。
+产物在 `apps/desktop/dist/`。应用图标在 `apps/desktop/build/icon.ico`（由桌宠预览图生成）。
 
 ## 测试
 
@@ -66,23 +82,29 @@ node --test apps/desktop/test
 ```
 
 覆盖 SSE 分块解析、事件转气泡、气泡队列过期、地址/令牌编码、历史映射，以及窗口参数、
-preload 最小面、界面元素、点击穿透与协议契约。
+preload 最小面、界面元素、缩放/自启/全屏检测/通知契约。
 
 ## 常见问题
 
-- **启动后没有窗口**：确认不是从设置了 ELECTRON_RUN_AS_NODE=1 的终端启动（这会让 Electron 以 Node 模式运行）。
-- **electron/dist 不存在**：pnpm install 跳过了 Electron 的下载脚本时，执行 
-ode apps/desktop/node_modules/electron/install.js（国内可先设 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/）。
+- **启动后没有窗口**：确认不是从设置了 `ELECTRON_RUN_AS_NODE=1` 的终端启动。
+- **electron/dist 不存在**：`pnpm install` 跳过了 Electron 下载脚本时，执行
+  `node apps/desktop/node_modules/electron/install.js`（国内先设
+  `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
+- **全屏自动隐藏不生效**：该功能调用 `electron/fullscreen.ps1` 检测前台窗口，只在 Windows 生效；
+  首次检测约 0.5 秒，间隔 6 秒。
 
 ## 素材与许可
 
-桌宠动画取自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT），经 [shenliuyu18/dafeiyu-pet](https://github.com/shenliuyu18/dafeiyu-pet) 使用；
-以透明 WebM（VP9 alpha，640×360）播放；为避免抖动不叠加 CSS 缩放/倾斜动画，待机固定一段循环。许可全文见 enderer/assets/THIRD-PARTY-dsh-pet-LICENSE.txt。
+桌宠动画取自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT），经
+[shenliuyu18/dafeiyu-pet](https://github.com/shenliuyu18/dafeiyu-pet) 使用；透明 WebM（VP9 alpha，
+640×360），固定尺寸播放，不叠加缩放/倾斜动画。许可全文见
+`renderer/assets/THIRD-PARTY-dsh-pet-LICENSE.txt`。
 
 ## 已知限制
 
-- 没有托盘图标：退出走桌宠右键菜单（需要托盘可以后续加）。
-- 没有开机自启与安装向导；打包后需手动勾选。
-- 透明窗口在部分 Windows 远程桌面/无交互会话下无法显示（Electron 需要交互式桌面）。
-- 气泡只显示文本，不渲染 Markdown；长消息可在聊天面板看全文。
+- 没有代码签名，Windows SmartScreen 可能提示未知发布者。
+- 系统通知只在窗口隐藏时发送，标题固定为「青梅」。
+- 全屏检测是 6 秒轮询，进入/退出全屏会有几秒延迟；macOS/Linux 不启用。
+- 透明窗口在部分远程桌面/无交互会话下可能无法显示。
 - 点击穿透依赖 `setIgnoreMouseEvents(..., { forward: true })`，Windows 支持最好。
+- 图片发送、多形象切换、番茄钟/喂饭账本还没做。

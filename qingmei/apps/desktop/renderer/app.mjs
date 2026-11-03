@@ -14,6 +14,7 @@ const desktop = window.qmDesktop ?? {
   onOpenSettings: () => undefined,
   onReconnect: () => undefined,
   onPetAction: () => undefined,
+  notify: () => undefined,
   setIgnoreMouseEvents: () => undefined,
   moveBy: () => undefined,
   hide: () => undefined,
@@ -37,6 +38,12 @@ const el = {
   statusDot: document.getElementById('status-dot'),
   hint: document.getElementById('hint'),
   settingsModal: document.getElementById('settings-modal'),
+  settingsScale: document.getElementById('settings-scale'),
+  settingsScaleValue: document.getElementById('settings-scale-value'),
+  settingsSound: document.getElementById('settings-sound'),
+  settingsAutostart: document.getElementById('settings-autostart'),
+  settingsNotifyHidden: document.getElementById('settings-notify-hidden'),
+  settingsHideFullscreen: document.getElementById('settings-hide-fullscreen'),
   settingsForm: document.getElementById('settings-form'),
   settingsServer: document.getElementById('settings-server'),
   settingsToken: document.getElementById('settings-token'),
@@ -45,7 +52,15 @@ const el = {
   settingsCancel: document.getElementById('settings-cancel'),
 }
 
-const settings = { serverUrl: '', token: '' }
+const settings = {
+  serverUrl: '',
+  token: '',
+  scale: 1,
+  sound: true,
+  autoStart: false,
+  notifyHidden: true,
+  hideOnFullscreen: false,
+}
 const bubbles = new BubbleQueue({ ttlMs: 12_000 })
 let source = null
 let bubbleTimer = 0
@@ -144,6 +159,27 @@ function playFun() {
   pushBubble('自己找点乐子～', 'pet')
   if (Math.random() < 0.4) spawnHearts(3)
 }
+let audioContext = null
+
+function beep(frequency = 660, duration = 0.09, type = 'sine') {
+  if (!settings.sound) return
+  try {
+    audioContext ??= new AudioContext()
+    const oscillator = audioContext.createOscillator()
+    const gain = audioContext.createGain()
+    oscillator.type = type
+    oscillator.frequency.value = frequency
+    gain.gain.setValueAtTime(0.0001, audioContext.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.06, audioContext.currentTime + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + duration)
+    oscillator.connect(gain).connect(audioContext.destination)
+    oscillator.start()
+    oscillator.stop(audioContext.currentTime + duration + 0.02)
+  } catch {
+    // 音频不可用不影响互动
+  }
+}
+
 function isOnline() {
   return Boolean(source) && source.readyState === EventSource.OPEN
 }
@@ -165,6 +201,11 @@ async function init() {
   const saved = await desktop.getSettings()
   settings.serverUrl = saved.serverUrl || 'http://127.0.0.1:7410'
   settings.token = saved.token || ''
+  settings.scale = Number(saved.scale) || 1
+  settings.sound = saved.sound !== false
+  settings.autoStart = saved.autoStart === true
+  settings.notifyHidden = saved.notifyHidden !== false
+  settings.hideOnFullscreen = saved.hideOnFullscreen === true
   if (!settings.token) {
     openSettings()
   } else {
@@ -191,6 +232,10 @@ function connect() {
     setOnline(true)
     setPetState('idle')
     void loadHistory()
+    void flushOutbox()
+  })
+  source.addEventListener('chunk', (event) => {
+    if (!el.chat.hidden) appendChunk(event.data)
   })
   source.addEventListener('error', () => {
     setOnline(false)
@@ -204,7 +249,7 @@ function connect() {
       if (type === 'assistant') {
         const parsed = safeParse(event.data)
         const text = parsed?.blocks ? textOfBlocks(parsed.blocks) : ''
-        if (text && !el.chat.hidden) appendLine('assistant', text)
+        if (text) finishAssistant(text)
         finishThinking()
       }
     })
@@ -239,7 +284,13 @@ function safeParse(raw) {
 function pushBubble(text, kind) {
   const item = bubbles.add(text, kind)
   if (!item) return
-  if (kind !== 'pet') setPetState(kind === 'error' ? 'alert' : 'happy')
+  if (kind !== 'pet') {
+    beep(kind === 'error' ? 360 : 880, 0.07)
+    if (settings.notifyHidden && document.visibilityState === 'hidden') {
+      void desktop.notify({ title: '青梅', body: item.text })
+    }
+    setPetState(kind === 'error' ? 'alert' : 'happy')
+  }
   renderBubble()
 }
 
@@ -248,6 +299,10 @@ function renderBubble() {
   if (!current) {
     el.bubble.hidden = true
     clearTimeout(bubbleTimer)
+    return
+  }
+  if (!el.chat.hidden && current.kind === 'message') {
+    el.bubble.hidden = true
     return
   }
   el.bubble.hidden = false
@@ -282,6 +337,7 @@ function openChat() {
 
 function closeChat() {
   el.chat.hidden = true
+  renderBubble()
 }
 
 function toggleChat() {
@@ -310,10 +366,142 @@ async function loadHistory() {
   }
 }
 
+let liveLine = null
+
+function renderInline(parent, text) {
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g
+  let last = 0
+  let match
+  while ((match = pattern.exec(text))) {
+    if (match.index > last) parent.append(document.createTextNode(text.slice(last, match.index)))
+    const token = match[0]
+    if (token.startsWith('**')) {
+      const strong = document.createElement('strong')
+      strong.textContent = token.slice(2, -2)
+      parent.append(strong)
+    } else if (token.startsWith('`')) {
+      const code = document.createElement('code')
+      code.textContent = token.slice(1, -1)
+      parent.append(code)
+    } else {
+      const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(token)
+      const anchor = document.createElement('a')
+      anchor.textContent = link?.[1] ?? token
+      anchor.href = link?.[2] ?? '#'
+      anchor.target = '_blank'
+      anchor.rel = 'noreferrer'
+      parent.append(anchor)
+    }
+    last = match.index + token.length
+  }
+  if (last < text.length) parent.append(document.createTextNode(text.slice(last)))
+}
+
+function renderMarkdown(container, text) {
+  const lines = String(text ?? '').split('\n')
+  let index = 0
+  while (index < lines.length) {
+    const line = lines[index]
+    if (line.startsWith('```')) {
+      const language = line.slice(3).trim()
+      const code = []
+      index += 1
+      while (index < lines.length && !lines[index].startsWith('```')) {
+        code.push(lines[index])
+        index += 1
+      }
+      index += 1
+      const pre = document.createElement('pre')
+      const block = document.createElement('code')
+      if (language) block.dataset.language = language
+      block.textContent = code.join('\n')
+      pre.append(block)
+      container.append(pre)
+      continue
+    }
+    if (!line.trim()) {
+      index += 1
+      continue
+    }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line)
+    if (heading) {
+      const element = document.createElement('h' + heading[1].length)
+      renderInline(element, heading[2])
+      container.append(element)
+      index += 1
+      continue
+    }
+    if (/^[-*]\s+/.test(line)) {
+      const list = document.createElement('ul')
+      while (index < lines.length && /^[-*]\s+/.test(lines[index])) {
+        const item = document.createElement('li')
+        renderInline(item, lines[index].replace(/^[-*]\s+/, ''))
+        list.append(item)
+        index += 1
+      }
+      container.append(list)
+      continue
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      const list = document.createElement('ol')
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
+        const item = document.createElement('li')
+        renderInline(item, lines[index].replace(/^\d+\.\s+/, ''))
+        list.append(item)
+        index += 1
+      }
+      container.append(list)
+      continue
+    }
+    if (line.startsWith('> ')) {
+      const quote = document.createElement('blockquote')
+      renderInline(quote, line.slice(2))
+      container.append(quote)
+      index += 1
+      continue
+    }
+    const paragraph = [line]
+    index += 1
+    while (index < lines.length && lines[index].trim() && !/^(#{1,3}\s|[-*]\s|\d+\.\s|> |```)/.test(lines[index])) {
+      paragraph.push(lines[index])
+      index += 1
+    }
+    const element = document.createElement('p')
+    renderInline(element, paragraph.join(' '))
+    container.append(element)
+  }
+}
+
+function appendChunk(raw) {
+  const data = safeParse(raw)
+  const text = typeof data?.text === 'string' ? data.text : ''
+  if (!text) return
+  if (!liveLine) {
+    liveLine = document.createElement('div')
+    liveLine.className = 'chat-line assistant streaming'
+    el.chatLog.append(liveLine)
+  }
+  liveLine.textContent += text
+  scrollChat()
+}
+
+function finishAssistant(text) {
+  if (liveLine) {
+    liveLine.classList.remove('streaming')
+    liveLine.replaceChildren()
+    renderMarkdown(liveLine, text)
+    liveLine = null
+    scrollChat()
+    return
+  }
+  if (text) appendLine('assistant', text)
+}
+
 function appendLine(role, text, scroll = true) {
   const line = document.createElement('div')
   line.className = `chat-line ${role === 'assistant' ? 'assistant' : 'user'}`
-  line.textContent = text
+  if (role === 'assistant') renderMarkdown(line, text)
+  else line.textContent = text
   el.chatLog.append(line)
   if (scroll) scrollChat()
 }
@@ -335,6 +523,66 @@ function finishThinking() {
   setPetState(isOnline() ? 'idle' : 'offline')
 }
 
+const OUTBOX_KEY = 'qm.desktop.outbox'
+
+function loadOutbox() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]')
+    return Array.isArray(raw) ? raw.filter((item) => typeof item?.text === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function saveOutbox(items) {
+  try {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(items.slice(-20)))
+  } catch {
+    // 存储不可用时只能放弃排队
+  }
+}
+
+function queueOutbox(text) {
+  const items = loadOutbox()
+  items.push({ text, at: Date.now() })
+  saveOutbox(items)
+}
+
+async function postText(text) {
+  const base = normalizeServerUrl(settings.serverUrl)
+  if (!base) throw new Error('服务器地址不合法')
+  const res = await fetch(`${base}/api/v1/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${settings.token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ text, conversationId: 'owner' }),
+  })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null)
+    throw new Error(detail?.error || `发送失败（HTTP ${res.status}）`)
+  }
+}
+
+async function flushOutbox() {
+  const items = loadOutbox()
+  if (items.length === 0) return
+  const remaining = []
+  for (const item of items) {
+    try {
+      await postText(item.text)
+    } catch {
+      remaining.push(item)
+      break
+    }
+  }
+  saveOutbox(remaining)
+  if (items.length !== remaining.length) {
+    appendLine('assistant', `📮 已补发 ${items.length - remaining.length} 条离线消息`)
+  }
+}
 async function sendMessage(event) {
   event.preventDefault()
   const text = el.chatInput.value.trim()
@@ -351,6 +599,10 @@ async function sendMessage(event) {
   sending = true
   el.chatSend.disabled = true
   el.chatInput.value = ''
+  if (liveLine) {
+    liveLine.classList.remove('streaming')
+    liveLine = null
+  }
   appendLine('user', text)
   startThinking()
   try {
@@ -381,6 +633,12 @@ async function sendMessage(event) {
 function openSettings() {
   el.settingsServer.value = settings.serverUrl
   el.settingsToken.value = settings.token
+  el.settingsScale.value = String(settings.scale)
+  el.settingsScaleValue.textContent = `${Math.round(settings.scale * 100)}%`
+  el.settingsSound.checked = settings.sound
+  el.settingsAutostart.checked = settings.autoStart
+  el.settingsNotifyHidden.checked = settings.notifyHidden
+  el.settingsHideFullscreen.checked = settings.hideOnFullscreen
   showError('')
   el.settingsModal.hidden = false
   el.settingsServer.focus()
@@ -418,9 +676,19 @@ async function saveSettings(event) {
     return
   }
   try {
-    await desktop.saveSettings({ serverUrl: base, token })
+    const scale = Number(el.settingsScale.value) || 1
+    const sound = el.settingsSound.checked
+    const autoStart = el.settingsAutostart.checked
+    const notifyHidden = el.settingsNotifyHidden.checked
+    const hideOnFullscreen = el.settingsHideFullscreen.checked
+    await desktop.saveSettings({ serverUrl: base, token, scale, sound, autoStart, notifyHidden, hideOnFullscreen })
     settings.serverUrl = base
     settings.token = token
+    settings.scale = scale
+    settings.sound = sound
+    settings.autoStart = autoStart
+    settings.notifyHidden = notifyHidden
+    settings.hideOnFullscreen = hideOnFullscreen
     historyLoaded = false
     closeSettings()
     connect()
@@ -454,12 +722,15 @@ function spawnHearts(count = 5) {
 
 function interact() {
   markActivity()
+  beep(720, 0.08)
   setPetState('happy')
   pushBubble(PET_LINES[Math.floor(Math.random() * PET_LINES.length)], 'pet')
 }
 
 function feed() {
   markActivity()
+  beep(520, 0.08)
+  window.setTimeout(() => beep(780, 0.1), 90)
   el.app.dataset.state = 'happy'
   el.app.dataset.state = 'happy'
   playClip(VIDEOS.eat, { loop: false, duration: 3200 })
@@ -547,6 +818,9 @@ function bind() {
   el.chatForm.addEventListener('submit', (event) => void sendMessage(event))
   el.settingsForm.addEventListener('submit', (event) => void saveSettings(event))
   el.settingsTest.addEventListener('click', () => void testConnection())
+  el.settingsScale.addEventListener('input', () => {
+    el.settingsScaleValue.textContent = `${Math.round(Number(el.settingsScale.value) * 100)}%`
+  })
   el.settingsCancel.addEventListener('click', () => {
     if (!settings.token) {
       showError('先填令牌才能连接')

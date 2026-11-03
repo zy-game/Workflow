@@ -4,20 +4,40 @@
  * 透明、无边框、置顶、跳过任务栏；渲染层只通过 preload 暴露的最小 API
  * 读写设置与退出，不直接拿 Node。
  */
-const { app, BrowserWindow, ipcMain, Menu, safeStorage, screen, shell, Tray, nativeImage } = require('electron')
+const { app, BrowserWindow, Notification, ipcMain, Menu, safeStorage, screen, shell, Tray, nativeImage } = require('electron')
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
+const { execFile } = require('node:child_process')
 
 
 const here = __dirname
-const bootFile = path.join(here, 'boot.log')
-function boot(msg) { try { require('node:fs').appendFileSync(bootFile, new Date().toISOString() + ' ' + msg + '\n') } catch {} }
-boot('module loaded'); process.on('uncaughtException', (e) => boot('uncaught ' + (e && e.stack || e))); process.on('unhandledRejection', (e) => boot('rejection ' + (e && e.stack || e)))
+process.on('uncaughtException', (error) => console.error('[qingmei] uncaught', error))
+process.on('unhandledRejection', (error) => console.error('[qingmei] rejection', error))
 const rendererDir = path.join(here, '..', 'renderer')
+// Windows 上中文 userData 路径会让打包版 Electron 启动崩溃；统一用 ASCII 目录。
+// 显式 --user-data-dir 仍优先（测试/多实例用）。
+if (!process.argv.some((arg) => arg.startsWith('--user-data-dir'))) {
+  const candidates = [
+    path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'qingmei-desktop'),
+    path.join(app.getPath('home'), '.qingmei-desktop'),
+  ]
+  for (const candidate of candidates) {
+    try {
+      mkdirSync(candidate, { recursive: true })
+      app.setPath('userData', candidate)
+      break
+    } catch {
+      // 该目录不可写就试下一个（CI/受限账户下 AppData 可能不可写）
+    }
+  }
+}
 
 let win = null
 let tray = null
 let settingsCache = null
+let fullscreenTimer = null
+let hiddenByFullscreen = false
+const liveNotifications = new Set()
 
 function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json')
@@ -35,8 +55,18 @@ function readSettings() {
     serverUrl: typeof stored.serverUrl === 'string' ? stored.serverUrl : process.env.QM_SERVER_URL || 'http://127.0.0.1:7410',
     token: decryptToken(stored),
     bounds: stored.bounds && typeof stored.bounds === 'object' ? stored.bounds : null,
+    scale: clampScale(stored.scale),
+    sound: stored.sound !== false,
+    autoStart: stored.autoStart === true,
+    notifyHidden: stored.notifyHidden !== false,
+    hideOnFullscreen: stored.hideOnFullscreen === true,
   }
   return settingsCache
+}
+
+function clampScale(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(1.5, Math.max(0.7, number)) : 1
 }
 
 function decryptToken(stored) {
@@ -54,7 +84,15 @@ function decryptToken(stored) {
 function persist(settings) {
   const dir = path.dirname(settingsPath())
   mkdirSync(dir, { recursive: true })
-  const payload = { serverUrl: settings.serverUrl, bounds: settings.bounds ?? null }
+  const payload = {
+    serverUrl: settings.serverUrl,
+    bounds: settings.bounds ?? null,
+    scale: clampScale(settings.scale),
+    sound: settings.sound !== false,
+    autoStart: settings.autoStart === true,
+    notifyHidden: settings.notifyHidden !== false,
+    hideOnFullscreen: settings.hideOnFullscreen === true,
+  }
   if (settings.token) {
     if (safeStorage.isEncryptionAvailable()) payload.tokenEnc = safeStorage.encryptString(settings.token).toString('base64')
     else payload.tokenPlain = settings.token
@@ -85,10 +123,77 @@ function createTray() {
   }
 }
 
-function defaultBounds() {
+function applyAutoStart(enabled) {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(enabled),
+      ...(app.isPackaged ? {} : { path: process.execPath, args: [app.getAppPath()] }),
+    })
+  } catch (error) {
+    console.error('[qingmei] 设置开机自启失败', error)
+  }
+}
+
+function resizeForScale(scale) {
+  if (!win || win.isDestroyed()) return
+  const previous = win.getBounds()
+  const width = Math.round(380 * scale)
+  const height = Math.round(560 * scale)
+  win.webContents.setZoomFactor(scale)
+  win.setBounds({
+    x: previous.x + previous.width - width,
+    y: previous.y + previous.height - height,
+    width,
+    height,
+  })
+}
+
+function boundsVisible(bounds) {
+  if (!bounds) return false
+  return screen.getAllDisplays().some((display) => {
+    const area = display.workArea
+    return (
+      bounds.x < area.x + area.width &&
+      bounds.x + bounds.width > area.x &&
+      bounds.y < area.y + area.height &&
+      bounds.y + bounds.height > area.y
+    )
+  })
+}
+
+function checkFullscreen() {
+  if (!win || win.isDestroyed() || !readSettings().hideOnFullscreen) return
+  const script = path.join(here, 'fullscreen.ps1')
+  execFile(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+    { timeout: 5000, windowsHide: true },
+    (error, stdout) => {
+      if (error || !win || win.isDestroyed()) return
+      const fullscreen = String(stdout).trim() === '1'
+      if (fullscreen && win.isVisible()) {
+        hiddenByFullscreen = true
+        win.hide()
+      } else if (!fullscreen && hiddenByFullscreen) {
+        hiddenByFullscreen = false
+        win.showInactive()
+      }
+    },
+  )
+}
+
+function setFullscreenWatch(enabled) {
+  clearInterval(fullscreenTimer)
+  fullscreenTimer = null
+  if (!enabled || process.platform !== 'win32') return
+  fullscreenTimer = setInterval(checkFullscreen, 6000)
+  fullscreenTimer.unref?.()
+}
+
+function defaultBounds(scale = 1) {
   const area = screen.getPrimaryDisplay().workArea
-  const width = 380
-  const height = 560
+  const width = Math.round(380 * scale)
+  const height = Math.round(560 * scale)
   return {
     width,
     height,
@@ -98,13 +203,16 @@ function defaultBounds() {
 }
 
 function createWindow() {
-  boot('createWindow')
   const settings = readSettings()
-  const bounds = settings.bounds ?? defaultBounds()
+  const scale = clampScale(settings.scale)
+  const width = Math.round(380 * scale)
+  const height = Math.round(560 * scale)
+  const saved = settings.bounds && boundsVisible(settings.bounds) ? settings.bounds : null
+  const bounds = saved ? { ...saved, width, height } : defaultBounds(scale)
   win = new BrowserWindow({
     ...bounds,
-    width: 380,
-    height: 560,
+    width,
+    height,
     frame: false,
     transparent: true,
     resizable: false,
@@ -126,11 +234,9 @@ function createWindow() {
   })
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  win.webContents.on('render-process-gone', (_e, details) => boot('render gone ' + JSON.stringify(details)))
-  win.webContents.on('did-fail-load', (_e, code, desc) => boot('fail load ' + code + ' ' + desc))
   win.loadFile(path.join(rendererDir, 'index.html'))
   win.once('ready-to-show', () => {
-    boot('ready-to-show')
+    win.webContents.setZoomFactor(scale)
     win.showInactive()
     const action = process.env.QM_DESKTOP_ACTION
     if (action === 'feed') {
@@ -138,6 +244,11 @@ function createWindow() {
         void win.webContents.executeJavaScript(
           "document.getElementById('pet').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))",
         )
+      }, 600)
+    }
+    if (action === 'chat') {
+      setTimeout(() => {
+        void win.webContents.executeJavaScript("document.getElementById('bubble-text').click()")
       }, 600)
     }
     const shot = process.env.QM_DESKTOP_SCREENSHOT
@@ -164,6 +275,8 @@ function createWindow() {
                   petSrc: document.getElementById('pet')?.getAttribute('src'),
                   petTime: document.getElementById('pet')?.currentTime,
                   petPaused: document.getElementById('pet')?.paused,
+                  viewport: [window.innerWidth, window.innerHeight],
+                  dpr: window.devicePixelRatio,
                 })
               `)
               writeFileSync(`${shot}.json`, info)
@@ -197,19 +310,47 @@ if (!gotLock) {
     if (process.platform === 'darwin') app.dock?.hide()
     Menu.setApplicationMenu(null)
     createWindow()
+    applyAutoStart(readSettings().autoStart)
+    setFullscreenWatch(readSettings().hideOnFullscreen)
 
     ipcMain.handle('settings:get', () => {
       const settings = readSettings()
-      return { serverUrl: settings.serverUrl, token: settings.token, hasToken: Boolean(settings.token) }
+      return {
+        serverUrl: settings.serverUrl,
+        token: settings.token,
+        hasToken: Boolean(settings.token),
+        scale: settings.scale,
+        sound: settings.sound,
+        autoStart: settings.autoStart,
+        notifyHidden: settings.notifyHidden,
+        hideOnFullscreen: settings.hideOnFullscreen,
+      }
     })
 
     ipcMain.handle('settings:save', (_event, incoming) => {
       const serverUrl = typeof incoming?.serverUrl === 'string' ? incoming.serverUrl.trim() : ''
       const token = typeof incoming?.token === 'string' ? incoming.token.trim() : ''
       if (!/^https?:\/\/\S+$/i.test(serverUrl)) throw new Error('服务器地址必须是 http(s) URL')
-      const settings = { ...readSettings(), serverUrl, token }
+      const current = readSettings()
+      const scale = clampScale(incoming?.scale ?? current.scale)
+      const settings = {
+        ...current,
+        serverUrl,
+        token,
+        scale,
+        sound: incoming?.sound !== false,
+        autoStart: incoming?.autoStart === true,
+        notifyHidden: incoming?.notifyHidden !== false,
+        hideOnFullscreen: incoming?.hideOnFullscreen === true,
+      }
+      if (scale !== current.scale) {
+        resizeForScale(scale)
+        if (win && !win.isDestroyed()) settings.bounds = win.getBounds()
+      }
       persist(settings)
-      return { ok: true }
+      applyAutoStart(settings.autoStart)
+      setFullscreenWatch(settings.hideOnFullscreen)
+      return { ok: true, scale }
     })
 
     ipcMain.handle('menu:popup', () => {
@@ -225,6 +366,23 @@ if (!gotLock) {
         { type: 'separator' },
         { label: '退出青梅', click: () => app.quit() },
       ]).popup({ window: win ?? undefined })
+      return true
+    })
+
+    ipcMain.handle('notify:show', (_event, payload) => {
+      if (!win || win.isVisible()) return false
+      const notification = new Notification({
+        title: String(payload?.title ?? '青梅'),
+        body: String(payload?.body ?? '').slice(0, 240),
+        silent: true,
+      })
+      liveNotifications.add(notification)
+      notification.on('click', () => {
+        win?.show()
+        win?.focus()
+      })
+      notification.on('close', () => liveNotifications.delete(notification))
+      notification.show()
       return true
     })
 

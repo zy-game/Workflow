@@ -4,6 +4,7 @@ import {
   BubbleQueue,
   SseParser,
   bubbleForEvent,
+  plainText,
   eventsUrl,
   mapHistory,
   normalizeServerUrl,
@@ -50,6 +51,25 @@ test('事件转气泡：assistant / 审批 / 失败任务', () => {
   )
   assert.equal(bubbleForEvent({ event: 'task-finished', data: JSON.stringify({ status: 'done' }) }), null)
   assert.equal(bubbleForEvent({ event: 'delta', data: '{}' }), null)
+})
+
+test('气泡文本：去掉 Markdown 标记', () => {
+  const source = [
+    '## 标题',
+    '',
+    '- **重点** 一条',
+    '- `代码` [链接](https://example.com)',
+    '',
+    '```text',
+    '块',
+    '```',
+  ].join('\n')
+  assert.equal(plainText(source), ['标题', '', '• 重点 一条', '• 代码 链接', '', '块'].join('\n'))
+  const bubble = bubbleForEvent({
+    event: 'assistant',
+    data: JSON.stringify({ blocks: [{ type: 'text', text: '**加粗**' }] }),
+  })
+  assert.equal(bubble.text, '加粗')
 })
 
 test('气泡队列：先进先出、过期清理', () => {

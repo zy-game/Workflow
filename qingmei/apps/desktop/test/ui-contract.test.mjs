@@ -50,6 +50,11 @@ test('界面元素齐全', () => {
     'settings-modal',
     'settings-server',
     'settings-token',
+    'settings-scale',
+    'settings-sound',
+    'settings-autostart',
+    'settings-notify-hidden',
+    'settings-hide-fullscreen',
     'settings-save',
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `缺少 #${id}`)
@@ -82,6 +87,16 @@ test('交互：点击/右键/拖动/设置', () => {
   assert.match(app, /playFun/);
   assert.match(app, /setIgnoreMouseEvents\(true\)/)
   assert.match(app, /elementFromPoint/)
+  assert.match(main, /setZoomFactor/);
+  assert.match(main, /setLoginItemSettings/);
+  assert.match(main, /notify:show/);
+  assert.match(app, /addEventListener\('chunk'/) ;
+  assert.match(app, /renderMarkdown/);
+  assert.match(app, /flushOutbox/);
+  assert.match(app, /OUTBOX_KEY/);
+  assert.match(main, /setFullscreenWatch/);
+  assert.match(main, /fullscreen\.ps1/);
+  assert.ok(existsSync(join(root, 'electron', 'fullscreen.ps1')));
   assert.match(main, /setIgnoreMouseEvents/)
   assert.match(preload, /setIgnoreMouseEvents/)
   assert.match(html, /id="drag-handle"/)

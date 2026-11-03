@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('qmDesktop', {
   quit: () => ipcRenderer.send('app:quit'),
   setIgnoreMouseEvents: (ignore) => ipcRenderer.send('window:ignore-mouse', Boolean(ignore)),
   moveBy: (dx, dy) => ipcRenderer.send('window:move-by', { dx, dy }),
+  notify: (payload) => ipcRenderer.invoke('notify:show', payload),
   hide: () => ipcRenderer.send('window:hide'),
   onOpenSettings: (callback) => {
     ipcRenderer.on('open-settings', () => callback())

@@ -54,6 +54,7 @@
     <div id="settings-modal" class="settings-modal" hidden>
       <form id="settings-form" class="settings-card">
         <h1>青梅桌面</h1>
+        <p id="settings-welcome" class="settings-welcome">第一次使用：填服务器和令牌，点「测试连接」，再保存。</p>
         <label>
           服务器地址
           <input id="settings-server" type="url" placeholder="http://127.0.0.1:7410" required />
@@ -62,6 +63,17 @@
           访问令牌
           <input id="settings-token" type="password" placeholder="QM_TOKEN" autocomplete="off" />
         </label>
+        <label class="settings-range">
+          桌宠大小
+          <input id="settings-scale" type="range" min="0.7" max="1.5" step="0.05" value="1" />
+          <span id="settings-scale-value">100%</span>
+        </label>
+        <div class="settings-toggles">
+          <label><input id="settings-sound" type="checkbox" checked /> 互动音效</label>
+          <label><input id="settings-autostart" type="checkbox" /> 开机自启</label>
+          <label><input id="settings-notify-hidden" type="checkbox" checked /> 隐藏时系统通知</label>
+          <label><input id="settings-hide-fullscreen" type="checkbox" /> 全屏时自动隐藏</label>
+        </div>
         <p id="settings-error" class="settings-error" hidden></p>
         <div class="settings-actions">
           <button id="settings-test" type="button" class="ghost">测试连接</button>
