@@ -489,3 +489,39 @@ test('设备域：同设备事实召回加权', async () => {
     await dispose()
   }
 })
+
+test('情节巩固：同会话跨日相似情节按 embedding 合并', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    const store = ctx.reflect.get('store', false) as {
+      collection: (name: string) => { insert: (row: Record<string, unknown>) => Promise<unknown> }
+    }
+    const episodes = store.collection('qm_mem_episode')
+    const now = Date.now()
+    for (const [days, summary] of [
+      [1, '杭州出差行程确认'],
+      [2, '杭州出差酒店确认'],
+    ] as const) {
+      await episodes.insert({
+        id: `ep_day_${days}`,
+        kind: 'episode',
+        session_id: 'chat',
+        summary,
+        subject: 'session:chat',
+        predicate: 'summary',
+        audience: 'owner',
+        salience: 0.5,
+        confidence: 0.9,
+        origin_kind: 'channel',
+        origin_id: 'test',
+        created_at: now - days * 24 * 60 * 60 * 1000,
+        archived_at: null,
+      })
+    }
+    const report = await ctx.memory.consolidateEpisodes()
+    assert.equal(report.groups, 1)
+    assert.equal(report.merged, 2)
+  } finally {
+    await dispose()
+  }
+})

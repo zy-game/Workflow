@@ -524,16 +524,35 @@ export class SqliteMemory extends MemoryService {
     const rows = (await this.episodes.find({})).filter(
       (row) => !row.archived_at && row.created_at >= since && row.kind !== 'fact',
     )
-    const groups = new Map<string, EpisodeRow[]>()
+    // 先按会话/日形成原子组（同日默认视为同一事件）
+    const dayGroups = new Map<string, EpisodeRow[]>()
     for (const row of rows) {
       const day = new Date(row.created_at).toISOString().slice(0, 10)
       const key = `${row.session_id}:${day}`
-      const list = groups.get(key) ?? []
+      const list = dayGroups.get(key) ?? []
       list.push(row)
-      groups.set(key, list)
+      dayGroups.set(key, list)
     }
+
+    // 再按 embedding 把同会话跨日组聚成事件
+    const clusters: { sessionId: string; rows: EpisodeRow[]; vector: number[] }[] = []
+    for (const list of dayGroups.values()) {
+      const sessionId = list[0]!.session_id
+      const vector = centroid(list)
+      const target = clusters.find(
+        (cluster) => cluster.sessionId === sessionId && cosine(cluster.vector, vector) >= 0.55,
+      )
+      if (target) {
+        target.rows.push(...list)
+        target.vector = centroid(target.rows)
+      } else {
+        clusters.push({ sessionId, rows: [...list], vector })
+      }
+    }
+
     let merged = 0
-    for (const list of groups.values()) {
+    for (const cluster of clusters) {
+      const list = cluster.rows
       if (list.length < 2) continue
       const unique = [...new Set(list.map((row) => row.summary.trim()).filter(Boolean))]
       if (unique.length < 2) continue
@@ -556,7 +575,7 @@ export class SqliteMemory extends MemoryService {
       for (const row of list) await this.episodes.update(row.id, { archived_at: now })
       merged += list.length
     }
-    return { at: new Date(now), scanned: rows.length, groups: groups.size, merged }
+    return { at: new Date(now), scanned: rows.length, groups: clusters.length, merged }
   }
 
   /**
@@ -772,6 +791,17 @@ function parseVector(raw: string): number[] {
     return []
   }
 }
+function centroid(rows: EpisodeRow[]): number[] {
+  if (rows.length === 0) return []
+  const sum = new Array(128).fill(0)
+  for (const row of rows) {
+    const vector = localEmbedding(row.summary)
+    for (let i = 0; i < sum.length; i += 1) sum[i] += vector[i] ?? 0
+  }
+  const norm = Math.sqrt(sum.reduce((total, value) => total + value * value, 0))
+  return norm > 0 ? sum.map((value) => value / norm) : sum
+}
+
 function similarity(row: FactRow, tokens: string[]): number {
   if (tokens.length === 0) return 0
   const haystack = `${row.subject}${row.predicate}${row.object}`.toLowerCase()
