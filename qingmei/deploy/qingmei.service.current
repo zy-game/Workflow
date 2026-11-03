@@ -1,0 +1,18 @@
+[Unit]
+Description=Qingmei (current symlink shell)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/qingmei
+EnvironmentFile=/etc/qingmei/env
+ExecStart=/opt/node24/bin/node /opt/qingmei/current/apps/server/src/index.ts --config /opt/qingmei/qingmei.yml
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
