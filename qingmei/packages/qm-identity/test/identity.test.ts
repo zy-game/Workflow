@@ -150,3 +150,43 @@ test('autoBindOwner=false 时不做首绑', async () => {
     await h.dispose()
   }
 })
+
+test('双通道绑定：QQ 发起验证码，飞书确认后两个渠道都绑 owner', async () => {
+  const h = await setup({ autoBindOwner: false })
+  try {
+    const started = await h.call({
+      method: 'POST',
+      path: '/api/v1/identity/verify/start',
+      query: {},
+      headers: {},
+      body: { channel: 'qq', platformUserId: 'qq-user', displayName: '主人' },
+    })
+    assert.equal(started.status, 200)
+    const code = (started.body as { code: string }).code
+    assert.match(code, /^[A-Z0-9]{8}$/)
+
+    const confirmed = await h.call({
+      method: 'POST',
+      path: '/api/v1/identity/verify/confirm',
+      query: {},
+      headers: {},
+      body: { code, channel: 'feishu', platformUserId: 'fs-user' },
+    })
+    assert.equal(confirmed.status, 200)
+    const listed = await h.identity.list()
+    assert.equal(listed.filter((item) => item.actorId === 'owner').length, 2)
+    assert.ok(listed.some((item) => item.channel === 'qq' && item.platformUserId === 'qq-user'))
+    assert.ok(listed.some((item) => item.channel === 'feishu' && item.platformUserId === 'fs-user'))
+
+    const replay = await h.call({
+      method: 'POST',
+      path: '/api/v1/identity/verify/confirm',
+      query: {},
+      headers: {},
+      body: { code, channel: 'feishu', platformUserId: 'fs-user' },
+    })
+    assert.equal(replay.status, 404)
+  } finally {
+    await h.dispose()
+  }
+})

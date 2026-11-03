@@ -8,6 +8,7 @@
 import type { Context } from 'cordis'
 import {
   IdentityService,
+  uid,
   type Actor,
   type ChannelId,
   type GatewayRequest,
@@ -33,6 +34,16 @@ const ROLES: Actor['role'][] = ['owner', 'family', 'guest', 'stranger']
 interface ActorRow extends Row {
   display_name: string
   role: string
+}
+
+interface VerifyRow extends Row {
+  code: string
+  channel: string
+  platform_user_id: string
+  display_name: string
+  status: string
+  expires_at: number
+  created_at: number
 }
 
 interface BindingRow extends Row {
@@ -214,6 +225,77 @@ export function apply(ctx: Context, config: IdentityConfig = {}): void {
     }),
   )
 
+  const store = ctx.reflect.get('store', false) as StoreService | undefined
+  const verifies = store?.collection<VerifyRow>('qm_identity_verify')
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/identity/verify/start',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const channel = typeof body.channel === 'string' ? body.channel.trim() : ''
+        const platformUserId =
+          typeof body.platformUserId === 'string' ? body.platformUserId.trim() : ''
+        if (!channel || !platformUserId || !verifies) {
+          res.status(400).send({ ok: false, error: 'channel、platformUserId 必填' })
+          return
+        }
+        const code = uid('bind').slice(-8).toUpperCase()
+        const expiresAt = Date.now() + 10 * 60 * 1000
+        await verifies.insert({
+          id: uid('verify'),
+          code,
+          channel,
+          platform_user_id: platformUserId,
+          display_name: typeof body.displayName === 'string' ? body.displayName.trim() : '',
+          status: 'pending',
+          expires_at: expiresAt,
+          created_at: Date.now(),
+        })
+        res.status(200).send({ ok: true, code, expiresAt: new Date(expiresAt).toISOString() })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/identity/verify/confirm',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const code = typeof body.code === 'string' ? body.code.trim().toUpperCase() : ''
+        const channel = typeof body.channel === 'string' ? body.channel.trim() : ''
+        const platformUserId =
+          typeof body.platformUserId === 'string' ? body.platformUserId.trim() : ''
+        if (!code || !channel || !platformUserId || !verifies) {
+          res.status(400).send({ ok: false, error: 'code、channel、platformUserId 必填' })
+          return
+        }
+        const pending = (await verifies.find({}))
+          .filter(
+            (row) =>
+              row.code === code &&
+              row.status === 'pending' &&
+              row.expires_at > Date.now(),
+          )
+          .sort((a, b) => b.created_at - a.created_at)[0]
+        if (!pending) {
+          res.status(404).send({ ok: false, error: '验证码不存在或已过期' })
+          return
+        }
+        const first = await identity.bind('owner', pending.channel as ChannelId, pending.platform_user_id, {
+          ...(pending.display_name ? { displayName: pending.display_name } : {}),
+          role: 'owner',
+        })
+        if (pending.channel !== channel || pending.platform_user_id !== platformUserId) {
+          await identity.bind('owner', channel as ChannelId, platformUserId, { role: 'owner' })
+        }
+        await verifies.update(pending.id, { status: 'used' })
+        res.status(200).send({ ok: true, actor: first })
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'POST',
