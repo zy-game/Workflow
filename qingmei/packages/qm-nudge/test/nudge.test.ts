@@ -288,3 +288,21 @@ test('W3/W4：合同与白名单校验、30 秒取消窗口、L4 每日一次', 
     await h.dispose()
   }
 })
+
+test('W3/W4 状态：明确只有服务端队列，没有设备执行器', async () => {
+  const h = await setup()
+  try {
+    const status = await h.call({ method: 'GET', path: '/api/v1/enforcement/status', query: {}, headers: {} })
+    assert.equal(status.status, 200)
+    const body = status.body as {
+      mode: string
+      executor: string
+      deviceExecutors: { id: string; status: string }[]
+    }
+    assert.equal(body.mode, 'server-queue-only')
+    assert.equal(body.executor, 'none')
+    assert.ok(body.deviceExecutors.some((item) => item.id === 'windows-focus-mode' && item.status === 'future'))
+  } finally {
+    await h.dispose()
+  }
+})

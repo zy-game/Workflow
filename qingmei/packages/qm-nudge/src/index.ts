@@ -325,7 +325,7 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
           if (!run) continue
           items.push(toState(run, row))
         }
-        res.status(200).send({ ok: true, items })
+        res.status(200).send({ ok: true, items, executor: 'none' })
       },
     }),
   )
@@ -409,11 +409,35 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
             expiresAt: new Date(row.expires_at),
             facts: JSON.parse(row.facts_json) as string[],
           }))
-        res.status(200).send({ ok: true, items })
+        res.status(200).send({ ok: true, items, executor: 'none' })
       },
     }),
   )
 
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/enforcement/status',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const rows = await enforcements.find({})
+        const pending = rows.filter((row) => row.status === 'pending').length
+        res.status(200).send({
+          ok: true,
+          mode: 'server-queue-only',
+          executor: 'none',
+          pending,
+          doc: 'docs/16 §8.1',
+          deviceExecutors: [
+            { id: 'windows-focus-mode', status: 'future' },
+            { id: 'windows-block-apps', status: 'future' },
+            { id: 'android-device-admin', status: 'future' },
+            { id: 'ios-force-action', status: 'unsupported' },
+          ],
+          note: 'W3/W4 只提供服务端请求队列与失效安全；没有设备执行器，不会真的锁屏/屏蔽',
+        })
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'POST',
@@ -439,7 +463,12 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
           })
           return
         }
-        res.status(201).send({ ok: true, enforcement: { id: row.id, action: row.action, status: row.status } })
+        res.status(201).send({
+          ok: true,
+          enforcement: { id: row.id, action: row.action, status: row.status },
+          executor: 'none',
+          note: '设备执行器在 docs/16 §8.1 属于 Future；请求只会排队或过期',
+        })
       },
     }),
   )

@@ -83,6 +83,8 @@
 服务端的执行请求队列已经做好（合同强度 + 动作白名单、30 秒取消窗口、L4 每日一次、无执行器到期失效，
 见 `POST /api/v1/enforcement/request` 与 `qm-nudge`），但**没有设备执行器**：
 队列里的 `focus-mode` / `block-apps` / `close-chat` / `lock-screen` 不会真的执行。
+`GET /api/v1/enforcement/status` 显式返回 `executor: none` 与各平台 `future/unsupported`，
+`POST /api/v1/enforcement/request` 的 201 也带同样的提示。
 
 | 项 | 现状 | 为什么暂缓 | 拉回主线的触发 |
 | --- | --- | --- | --- |
