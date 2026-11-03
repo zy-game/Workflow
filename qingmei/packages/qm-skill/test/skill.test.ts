@@ -149,3 +149,55 @@ test('安装器：写入新技能；覆盖已有技能后可回读新版', async
     await h.dispose()
   }
 })
+
+test('30 天熔断与回滚：第 4 次覆盖被拒，rollback 恢复上一版', async () => {
+  const h = await setup()
+  try {
+    for (const [index, body] of ['v2', 'v3', 'v4'].entries()) {
+      const res = await h.call({
+        method: 'POST',
+        path: '/api/v1/skills/install',
+        query: {},
+        headers: {},
+        body: { name: 'weekly-report', description: `第 ${index + 2} 版`, body: `# ${body}` },
+      })
+      assert.equal(res.status, 200)
+    }
+    const blocked = await h.call({
+      method: 'POST',
+      path: '/api/v1/skills/install',
+      query: {},
+      headers: {},
+      body: { name: 'weekly-report', body: '# v5' },
+    })
+    assert.equal(blocked.status, 400)
+    assert.match((blocked.body as { error: string }).error, /30 天内/)
+
+    const history = await h.call({
+      method: 'GET',
+      path: '/api/v1/skills/history',
+      query: { name: 'weekly-report' },
+      headers: {},
+    })
+    const items = (history.body as { items: { id: string }[] }).items
+    assert.equal(items.length, 3)
+
+    const rolled = await h.call({
+      method: 'POST',
+      path: '/api/v1/skills/rollback',
+      query: {},
+      headers: {},
+      body: { name: 'weekly-report', id: items[0]!.id },
+    })
+    assert.equal(rolled.status, 200)
+    const read = await h.call({
+      method: 'GET',
+      path: '/api/v1/skills/read',
+      query: { name: 'weekly-report' },
+      headers: {},
+    })
+    assert.match((read.body as { skill: { body: string } }).skill.body, /v3/)
+  } finally {
+    await h.dispose()
+  }
+})

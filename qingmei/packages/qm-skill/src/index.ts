@@ -9,6 +9,7 @@
  * 工具白名单随定义返回，由执行器/宿主决定是否裁剪。
  */
 import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { readdirSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { Context } from 'cordis'
@@ -85,6 +86,41 @@ class FileSkills extends SkillService {
     return this.definitions.find((definition) => definition.name === skillName) ?? null
   }
 
+  history(skillName: string): { id: string; at: number }[] {
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(skillName)) return []
+    return this.backups(skillName).map((item) => ({ id: item.id, at: item.at }))
+  }
+
+  async rollback(skillName: string, id?: string): Promise<SkillDefinition> {
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(skillName)) throw new Error('技能名不合法')
+    const list = this.backups(skillName)
+    const chosen = id ? list.find((item) => item.id === id) : list[0]
+    if (!chosen) throw new Error(`没有可回滚的版本：${skillName}`)
+    const folder = path.join(this.dir, skillName)
+    const safety = path.join(this.dir, '.backup', `${skillName}-${Date.now()}`)
+    await mkdir(path.dirname(safety), { recursive: true })
+    if (existsSync(folder)) await rename(folder, safety)
+    await cp(chosen.path, folder, { recursive: true })
+    await this.load()
+    const restored = this.definitions.find((definition) => definition.name === skillName)
+    if (!restored) throw new Error('回滚后校验失败：技能没有被加载')
+    return restored
+  }
+
+  private backups(skillName: string): { id: string; path: string; at: number }[] {
+    const dir = path.join(this.dir, '.backup')
+    if (!existsSync(dir)) return []
+    const prefix = `${skillName}-`
+    return readdirSync(dir)
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => ({
+        id: name,
+        path: path.join(dir, name),
+        at: Number(name.slice(prefix.length)) || 0,
+      }))
+      .filter((item) => Number.isFinite(item.at) && item.at > 0)
+      .sort((a, b) => b.at - a.at)
+  }
   async install(input: {
     name: string
     body: string
@@ -96,6 +132,10 @@ class FileSkills extends SkillService {
     const body = String(input.body ?? '')
     if (!body.trim()) throw new Error('SKILL.md 不能为空')
     const folder = path.join(this.dir, skillName)
+    const recent = this.backups(skillName).filter((item) => item.at >= Date.now() - 30 * 24 * 60 * 60 * 1000)
+    if (existsSync(folder) && recent.length >= 3) {
+      throw new Error('同一技能 30 天内已被自动修改 3 次，先人工复核')
+    }
     const backup = path.join(this.dir, '.backup', `${skillName}-${Date.now()}`)
     let hadExisting = false
     if (existsSync(folder)) {
@@ -195,6 +235,47 @@ export function apply(ctx: Context, config: SkillConfig = {}): void {
           res.status(200).send({ ok: true, skill })
         } catch (error) {
           res.status(400).send({ ok: false, error: error instanceof Error ? error.message : '安装失败' })
+        }
+      },
+    }),
+  )
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/skills/history',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
+        const skills = ctx.reflect.get('skills', false) as SkillService & {
+          history?: (name: string) => { id: string; at: number }[]
+        }
+        if (!name) {
+          res.status(400).send({ ok: false, error: 'name 必填' })
+          return
+        }
+        res.status(200).send({ ok: true, items: skills.history?.(name) ?? [] })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/skills/rollback',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const name = typeof body.name === 'string' ? body.name.trim() : ''
+        const id = typeof body.id === 'string' ? body.id.trim() : undefined
+        const skills = ctx.reflect.get('skills', false) as SkillService & {
+          rollback?: (name: string, id?: string) => Promise<SkillDefinition>
+        }
+        if (!name || !skills.rollback) {
+          res.status(400).send({ ok: false, error: 'name 必填或当前实现不支持回滚' })
+          return
+        }
+        try {
+          res.status(200).send({ ok: true, skill: await skills.rollback(name, id) })
+        } catch (error) {
+          res.status(404).send({ ok: false, error: error instanceof Error ? error.message : '回滚失败' })
         }
       },
     }),
