@@ -22,6 +22,7 @@ export const PRESERVE = new Set([
   'config-snapshots',
   'qingmei.yml',
   'tmp',
+  'dist',
 ])
 
 function parseArgs(argv) {

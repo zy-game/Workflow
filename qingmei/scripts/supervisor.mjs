@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
-const SKIP_SEGMENTS = new Set(['data', 'node_modules', '.git'])
+const SKIP_SEGMENTS = new Set(['data', 'node_modules', '.git', 'dist'])
 
 export async function copyTree(from, to, { skip = SKIP_SEGMENTS } = {}) {
   await rm(to, { recursive: true, force: true })
