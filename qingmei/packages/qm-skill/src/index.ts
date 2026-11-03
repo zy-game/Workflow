@@ -200,71 +200,6 @@ export function apply(ctx: Context, config: SkillConfig = {}): void {
   const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
   if (!gateway) return
 
-  const marketPath = path.resolve(
-    config.marketPath ?? path.join(config.skillsDir ?? path.join(process.cwd(), 'skills'), 'market.json'),
-  )
-  const readMarket = async (): Promise<
-    { id: string; name: string; description: string; tools: string[]; body: string }[]
-  > => {
-    try {
-      const parsed = JSON.parse(await readFile(marketPath, 'utf8')) as { items?: unknown }
-      return Array.isArray(parsed.items)
-        ? (parsed.items as { id: string; name: string; description: string; tools: string[]; body: string }[])
-        : []
-    } catch {
-      return []
-    }
-  }
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'GET',
-      path: '/api/v1/skills/market',
-      async handler(_req: GatewayRequest, res: GatewayResponse) {
-        res.status(200).send({ ok: true, items: await readMarket(), cached: true })
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'POST',
-      path: '/api/v1/skills/market/install',
-      async handler(req: GatewayRequest, res: GatewayResponse) {
-        const body = (req.body ?? {}) as Record<string, unknown>
-        const id = typeof body.id === 'string' ? body.id.trim() : ''
-        const entry = (await readMarket()).find((item) => item.id === id)
-        if (!entry) {
-          res.status(404).send({ ok: false, error: '市场里没有这个技能' })
-          return
-        }
-        const skills = ctx.reflect.get('skills', false) as SkillService & {
-          install?: (input: {
-            name: string
-            body: string
-            description?: string
-            tools?: string[]
-          }) => Promise<SkillDefinition>
-        }
-        if (!skills.install) {
-          res.status(501).send({ ok: false, error: '当前技能实现不支持安装' })
-          return
-        }
-        try {
-          const skill = await skills.install({
-            name: entry.name,
-            body: entry.body,
-            description: entry.description,
-            tools: Array.isArray(entry.tools) ? entry.tools : [],
-          })
-          res.status(200).send({ ok: true, skill })
-        } catch (error) {
-          res.status(400).send({ ok: false, error: error instanceof Error ? error.message : '安装失败' })
-        }
-      },
-    }),
-  )
-
   ctx.effect(() =>
     gateway.route({
       method: 'GET',
@@ -300,7 +235,12 @@ export function apply(ctx: Context, config: SkillConfig = {}): void {
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const body = (req.body ?? {}) as Record<string, unknown>
         const skills = ctx.reflect.get('skills', false) as SkillService & {
-          install?: (input: { name: string; body: string; description?: string; tools?: string[] }) => Promise<SkillDefinition>
+          install?: (input: {
+            name: string
+            body: string
+            description?: string
+            tools?: string[]
+          }) => Promise<SkillDefinition>
         }
         if (!skills?.install) {
           res.status(501).send({ ok: false, error: '当前技能实现不支持安装' })
@@ -320,6 +260,7 @@ export function apply(ctx: Context, config: SkillConfig = {}): void {
       },
     }),
   )
+
   ctx.effect(() =>
     gateway.route({
       method: 'GET',

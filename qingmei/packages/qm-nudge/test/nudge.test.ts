@@ -214,94 +214,19 @@ test('expectedPercent：线性与自定义曲线', () => {
   assert.equal(Math.round(nudgePlugin.expectedPercent(curved, mid.getTime()) ?? -1), 80)
 })
 
-test('W3/W4：合同与白名单校验、30 秒取消窗口、L4 每日一次', async () => {
+
+test('设备执行器已移除：/api/v1/enforcement/* 不再注册', async () => {
   const h = await setup()
   try {
-    const start = h.nowMs()
-    const strict = await h.task.create({
-      prompt: '重点任务',
-      contract: {
-        deadline: new Date(start + 2 * 60 * 60 * 1000),
-        enforcement: 'strict',
-        allowedActions: ['focus-mode'],
-      },
-    })
-
-    const requested = await h.call({
+    const res = await h.call({
       method: 'POST',
       path: '/api/v1/enforcement/request',
       query: {},
       headers: {},
-      body: { taskId: strict.id, level: 3 },
+      body: { taskId: 'x', level: 3 },
     })
-    assert.equal(requested.status, 201)
-    const created = (requested.body as { enforcement: { id: string; action: string; status: string } }).enforcement
-    assert.equal(created.action, 'focus-mode')
-    assert.equal(created.status, 'pending')
-
-    const listed = await h.call({ method: 'GET', path: '/api/v1/enforcement', query: {}, headers: {} })
-    assert.equal((listed.body as { items: unknown[] }).items.length, 1)
-
-    const cancelled = await h.call({
-      method: 'POST',
-      path: '/api/v1/enforcement/cancel',
-      query: {},
-      headers: {},
-      body: { id: created.id },
-    })
-    assert.equal(cancelled.status, 200)
-
-    const tooHigh = await h.call({
-      method: 'POST',
-      path: '/api/v1/enforcement/request',
-      query: {},
-      headers: {},
-      body: { taskId: strict.id, level: 4 },
-    })
-    assert.equal(tooHigh.status, 400, 'strict 不能到 L4')
-
-    const contract = await h.task.create({
-      prompt: '硬承诺',
-      contract: {
-        deadline: new Date(start + 2 * 60 * 60 * 1000),
-        enforcement: 'contract',
-        allowedActions: ['lock-screen'],
-      },
-    })
-    const l4 = await h.call({
-      method: 'POST',
-      path: '/api/v1/enforcement/request',
-      query: {},
-      headers: {},
-      body: { taskId: contract.id, level: 4 },
-    })
-    assert.equal(l4.status, 201)
-    const again = await h.call({
-      method: 'POST',
-      path: '/api/v1/enforcement/request',
-      query: {},
-      headers: {},
-      body: { taskId: contract.id, level: 4 },
-    })
-    assert.equal(again.status, 400, 'L4 每日一次')
-  } finally {
-    await h.dispose()
-  }
-})
-
-test('W3/W4 状态：明确只有服务端队列，没有设备执行器', async () => {
-  const h = await setup()
-  try {
-    const status = await h.call({ method: 'GET', path: '/api/v1/enforcement/status', query: {}, headers: {} })
-    assert.equal(status.status, 200)
-    const body = status.body as {
-      mode: string
-      executor: string
-      deviceExecutors: { id: string; status: string }[]
-    }
-    assert.equal(body.mode, 'server-queue-only')
-    assert.equal(body.executor, 'none')
-    assert.ok(body.deviceExecutors.some((item) => item.id === 'windows-focus-mode' && item.status === 'future'))
+    assert.equal(res.handled, false)
+    assert.equal(res.status, 0)
   } finally {
     await h.dispose()
   }
