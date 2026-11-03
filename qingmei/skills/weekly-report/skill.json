@@ -1,0 +1,5 @@
+{
+  "name": "weekly-report",
+  "description": "把最近任务整理成完成/进行中/阻塞/下周计划四段式周报",
+  "tools": ["qm_project_status"]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "project-status",
+  "description": "按项目汇总最近任务、阻塞与失败，给一句下一步建议",
+  "tools": ["qm_project_status"]
+}

@@ -98,6 +98,9 @@ importers:
       '@qingmei/qm-nudge':
         specifier: workspace:*
         version: link:../../packages/qm-nudge
+      '@qingmei/qm-opener':
+        specifier: workspace:*
+        version: link:../../packages/qm-opener
       '@qingmei/qm-reminder':
         specifier: workspace:*
         version: link:../../packages/qm-reminder
@@ -107,6 +110,9 @@ importers:
       '@qingmei/qm-review':
         specifier: workspace:*
         version: link:../../packages/qm-review
+      '@qingmei/qm-skill':
+        specifier: workspace:*
+        version: link:../../packages/qm-skill
       '@qingmei/qm-task':
         specifier: workspace:*
         version: link:../../packages/qm-task
@@ -550,6 +556,25 @@ importers:
         specifier: workspace:*
         version: link:../service-gateway
 
+  packages/qm-opener:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
   packages/qm-reminder:
     dependencies:
       '@qingmei/core':
@@ -603,6 +628,19 @@ importers:
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-skill:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway

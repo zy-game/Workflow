@@ -25,6 +25,7 @@ import {
   type ConversationProfileService,
   type MemoryService,
   type ProfileEntry,
+  type SkillService,
   type Row,
   type StoreService,
   type TurnChunk,
@@ -273,10 +274,28 @@ export function apply(ctx: Context, config: AgentConfig): void {
         problems.push(`群策略读取失败：${messageOf(error)}`)
       }
     }
+    let skillsText = ''
+    const skills = ctx.reflect.get('skills', false) as SkillService | undefined
+    if (skills && audience === 'owner') {
+      try {
+        const list = await skills.list()
+        if (list.length > 0) {
+          skillsText = [
+            '【可用技能】',
+            ...list.slice(0, 8).map((item) => `- ${item.name}：${item.description || '（无描述）'}`),
+            '需要时用 qm_skill_read 读完整步骤。',
+          ].join('\n')
+        }
+      } catch (error) {
+        problems.push(`技能读取失败：${messageOf(error)}`)
+      }
+    }
+
     const memoryBlock = [
       profileText ? `【关于主人】\n${profileText}` : '',
       memoryText ? `【已知记忆】\n${memoryText}` : '',
       groupNote ? `【本群规则】\n${groupNote}` : '',
+      skillsText,
     ].filter(Boolean).join('\n\n')
 
     try {

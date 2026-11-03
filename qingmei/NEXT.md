@@ -132,6 +132,19 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P7：A6/A7/A8 主动开场 + M6 技能包
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/qm-opener`（新） | 机会窗口/理由校验/每日上限；承诺解析（明天带饭 → 次日 20:00）；回应状态机；7 天不重复措辞、偏好分钟、拒绝暂停 |
+| `packages/qm-skill`（新） | `skills/<name>/SKILL.md + skill.json` 热加载；`GET /skills`、`POST reload`；MCP `qm_skill_list/read`；owner prompt 注入技能名 |
+| `packages/host-mcp` / `qm-agent` | 技能工具与提示注入 |
+| `skills/` | 两个示例技能：weekly-report、project-status |
+| 配置 | dev/prod 各加两项（32 项插件） |
+| 测试 | 355 全绿 |
+
+> M4 三端宿主、M7 Watch 缺真实客户端/硬件，延期；W3/W4 同理。
+
 ### P7 起步：A4 记忆热点 + 周报
 
 | 文件 | 改了什么 |

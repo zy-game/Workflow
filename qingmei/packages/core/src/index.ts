@@ -924,6 +924,24 @@ export interface AuditEntry {
   traceId: string
 }
 
+/** 技能包（M6）：纯 Markdown + skill.json，不需要改代码 */
+export interface SkillDefinition {
+  name: string
+  description: string
+  /** 该技能允许使用的工具名（白名单，执行器可据此裁剪） */
+  tools: string[]
+  /** 技能目录绝对路径 */
+  dir: string
+}
+
+export abstract class SkillService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'skills')
+  }
+  abstract list(): Promise<SkillDefinition[]>
+  abstract read(name: string): Promise<(SkillDefinition & { body: string }) | null>
+  abstract reload(): Promise<SkillDefinition[]>
+}
 /** 审计只追加：没有 update / delete */
 export abstract class AuditService extends Service {
   constructor(ctx: Context) {

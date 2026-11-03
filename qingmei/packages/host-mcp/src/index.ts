@@ -24,6 +24,7 @@ import {
   type ScheduleService,
   type TaskRun,
   type TaskRunnerService,
+  type SkillService,
   type TaskService,
 } from '@qingmei/core'
 
@@ -161,6 +162,40 @@ export interface HostTool {
   call(args: Record<string, unknown>): Promise<ToolResult>
 }
 
+function skillTools(skills: SkillService): HostTool[] {
+  return [
+    {
+      name: 'qm_skill_list',
+      description: '列出已安装的技能包（Markdown 说明 + 工具白名单）。不知道某项任务该怎么做时先看一眼。',
+      inputSchema: { type: 'object', properties: {} },
+      async call() {
+        const items = await skills.list()
+        if (items.length === 0) return textResult('还没有安装技能包。')
+        return textResult(
+          items
+            .map((item) => `- ${item.name}：${item.description || '（无描述）'}${item.tools.length ? `（工具：${item.tools.join(', ')}）` : ''}`)
+            .join('\n'),
+        )
+      },
+    },
+    {
+      name: 'qm_skill_read',
+      description: '读取某个技能包的完整 Markdown 说明，按它的步骤执行。',
+      inputSchema: {
+        type: 'object',
+        properties: { name: { type: 'string', description: '技能名，来自 qm_skill_list' } },
+        required: ['name'],
+      },
+      async call(args) {
+        const name = String(args.name ?? '').trim()
+        if (!name) return textResult('name 不能为空')
+        const skill = await skills.read(name)
+        if (!skill) return textResult(`没有技能「${name}」。先用 qm_skill_list 看有哪些。`)
+        return textResult(skill.body)
+      },
+    },
+  ]
+}
 export interface ToolDeps {
   memory: MemoryService
   schedule: ScheduleService
@@ -168,11 +203,14 @@ export interface ToolDeps {
   runner: TaskRunnerService
   /** 有就用它判断能不能派人盘点；没有就只给账本快照 */
   harness?: HarnessService
+  /** 有技能包就多两个工具 */
+  skills?: SkillService
 }
 
 /** 工具注册表：新增能力只在这里加一项，schema、描述、处理逻辑都在一处 */
 export function createTools(deps: ToolDeps): HostTool[] {
   return [
+    ...(deps.skills ? skillTools(deps.skills) : []),
     {
       name: 'memory_recall',
       description: '召回青梅记住的、与查询相关的事实。回答用户问题前应先查一次。',
@@ -669,7 +707,8 @@ export class McpHost extends McpService {
     if (!approval) throw new Error('[host-mcp] 缺少 approval 服务')
 
     const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
-    this.tools = createTools({ memory, schedule, task, runner, ...(harness ? { harness } : {}) })
+    const skills = ctx.reflect.get('skills', false) as SkillService | undefined
+    this.tools = createTools({ memory, schedule, task, runner, ...(harness ? { harness } : {}), ...(skills ? { skills } : {}) })
     this.toolsByName = new Map(this.tools.map((tool) => [tool.name, tool]))
     this.guard = {
       permission,
