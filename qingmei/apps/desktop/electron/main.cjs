@@ -172,9 +172,14 @@ function checkFullscreen() {
   const script = path.join(here, 'fullscreen.ps1')
   execFile(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', "& '" + script + "'"],
     { timeout: 5000, windowsHide: true },
     (error, stdout) => {
+      if (process.env.QM_DESKTOP_DEBUG) {
+        try {
+          require('node:fs').appendFileSync(process.env.QM_DESKTOP_DEBUG, 'fs error=' + (error?.message ?? '') + ' out=' + String(stdout).trim() + '\n')
+        } catch {}
+      }
       if (error || !win || win.isDestroyed()) return
       const fullscreen = String(stdout).trim() === '1'
       if (fullscreen && win.isVisible()) {
@@ -317,7 +322,6 @@ if (!gotLock) {
     Menu.setApplicationMenu(null)
     createWindow()
     applyAutoStart(readSettings().autoStart)
-    setFullscreenWatch(readSettings().hideOnFullscreen)
 
     ipcMain.handle('settings:get', () => {
       const settings = readSettings()
@@ -357,7 +361,6 @@ if (!gotLock) {
       }
       persist(settings)
       applyAutoStart(settings.autoStart)
-      setFullscreenWatch(settings.hideOnFullscreen)
       return { ok: true, scale }
     })
 

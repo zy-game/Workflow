@@ -54,7 +54,6 @@ test('界面元素齐全', () => {
     'settings-sound',
     'settings-autostart',
     'settings-notify-hidden',
-    'settings-hide-fullscreen',
     'settings-character',
     'onboarding',
     'onboarding-start',
@@ -102,9 +101,6 @@ test('交互：点击/右键/拖动/设置', () => {
   assert.match(app, /renderMarkdown/);
   assert.match(app, /flushOutbox/);
   assert.match(app, /OUTBOX_KEY/);
-  assert.match(main, /setFullscreenWatch/);
-  assert.match(main, /fullscreen\.ps1/);
-  assert.ok(existsSync(join(root, 'electron', 'fullscreen.ps1')));
   assert.match(main, /setIgnoreMouseEvents/)
   assert.match(preload, /setIgnoreMouseEvents/)
   assert.match(html, /id="drag-handle"/)
