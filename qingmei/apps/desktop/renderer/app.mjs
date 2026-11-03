@@ -68,29 +68,39 @@ const PET_LINES = [
   '辛苦啦。',
 ]
 
-const GIFS = {
-  idle: ['./assets/gifs/idle-breath.gif', './assets/gifs/idle-look.gif'],
-  sleep: './assets/gifs/sleep.gif',
-  think: './assets/gifs/think.gif',
-  eat: './assets/gifs/eat-rice.gif',
-  drag: './assets/gifs/drag.gif',
+const VIDEOS = {
+  idle: ['./assets/webm/idle-breath.webm'],
+  sleep: './assets/webm/sleep.webm',
+  think: './assets/webm/think.webm',
+  eat: './assets/webm/eat-rice.webm',
+  drag: './assets/webm/drag.webm',
   click: [
-    './assets/gifs/click-happy.gif',
-    './assets/gifs/click-wave.gif',
-    './assets/gifs/click-shy.gif',
-    './assets/gifs/click-pout.gif',
-    './assets/gifs/click-tickle.gif',
+    './assets/webm/click-happy.webm',
+    './assets/webm/click-wave.webm',
+    './assets/webm/click-shy.webm',
+    './assets/webm/click-pout.webm',
+    './assets/webm/click-tickle.webm',
   ],
-  fun: ['./assets/gifs/fun-mirror.gif', './assets/gifs/fun-whale.gif', './assets/gifs/fun-water.gif'],
+  fun: ['./assets/webm/fun-mirror.webm', './assets/webm/fun-whale.webm', './assets/webm/fun-water.webm'],
 }
 
 let idleIndex = 0
 let clipTimer = 0
+let currentClip = ''
 
-function playGif(src, { duration = 0 } = {}) {
-  const img = el.pet
-  if (!img) return
-  img.src = new URL(src, location.href).href + '#' + Date.now()
+function playClip(src, { loop = true, duration = 0 } = {}) {
+  const video = el.pet
+  if (!video) return
+  const absolute = new URL(src, location.href).href
+  if (currentClip !== absolute) {
+    currentClip = absolute
+    video.loop = loop
+    video.src = src
+    video.load()
+  } else {
+    video.loop = loop
+  }
+  void video.play().catch(() => undefined)
   clearTimeout(clipTimer)
   if (duration > 0) {
     clipTimer = window.setTimeout(() => {
@@ -102,7 +112,7 @@ function playGif(src, { duration = 0 } = {}) {
 }
 
 function idleClip() {
-  playGif(GIFS.idle[idleIndex++ % GIFS.idle.length])
+  playClip(VIDEOS.idle[idleIndex++ % VIDEOS.idle.length])
 }
 
 function setPetState(state) {
@@ -113,26 +123,26 @@ function setPetState(state) {
     return
   }
   if (state === 'sleeping') {
-    playGif(GIFS.sleep)
+    playClip(VIDEOS.sleep)
     return
   }
   if (state === 'thinking') {
-    playGif(GIFS.think)
+    playClip(VIDEOS.think)
     return
   }
   if (state === 'happy' || state === 'alert') {
-    playGif(GIFS.click[Math.floor(Math.random() * GIFS.click.length)], { duration: 2400 })
+    playClip(VIDEOS.click[Math.floor(Math.random() * VIDEOS.click.length)], { loop: false, duration: 2400 })
     return
   }
   if (state === 'dragging') {
-    playGif(GIFS.drag)
+    playClip(VIDEOS.drag)
   }
 }
 
 function playFun() {
   if (['dragging', 'sleeping', 'thinking'].includes(el.app.dataset.state)) return
   el.app.dataset.state = 'happy'
-  playGif(GIFS.fun[Math.floor(Math.random() * GIFS.fun.length)], { duration: 3200 })
+  playClip(VIDEOS.fun[Math.floor(Math.random() * VIDEOS.fun.length)], { loop: false, duration: 3200 })
   pushBubble('自己找点乐子～', 'pet')
   if (Math.random() < 0.4) spawnHearts(3)
 }
@@ -454,7 +464,7 @@ function feed() {
   markActivity()
   el.app.dataset.state = 'happy'
   el.app.dataset.state = 'happy'
-  playGif(GIFS.eat, { duration: 3200 })
+  playClip(VIDEOS.eat, { loop: false, duration: 3200 })
   pushBubble('好吃！谢谢款待～', 'pet')
   spawnHearts(6)
 }
@@ -464,7 +474,6 @@ function bind() {
   window.setInterval(() => {
     if ((el.app.dataset.state === 'idle' || el.app.dataset.state === 'offline') && el.chat.hidden && el.settingsModal.hidden) {
       if (Math.random() < 0.35) playFun()
-      else idleClip()
     }
   }, 20000)
   desktop.onPetAction((action) => {

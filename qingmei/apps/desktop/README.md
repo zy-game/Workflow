@@ -78,7 +78,7 @@ ode apps/desktop/node_modules/electron/install.js（国内可先设 ELECTRON_MIR
 ## 素材与许可
 
 桌宠动画取自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT），经 [shenliuyu18/dafeiyu-pet](https://github.com/shenliuyu18/dafeiyu-pet) 使用；
-以官方透明 GIF 播放（220×124）；为避免抖动不再叠加 CSS 缩放/倾斜动画。许可全文见 enderer/assets/THIRD-PARTY-dsh-pet-LICENSE.txt。
+以透明 WebM（VP9 alpha，640×360）播放；为避免抖动不叠加 CSS 缩放/倾斜动画，待机固定一段循环。许可全文见 enderer/assets/THIRD-PARTY-dsh-pet-LICENSE.txt。
 
 ## 已知限制
 

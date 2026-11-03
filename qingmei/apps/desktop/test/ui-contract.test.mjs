@@ -56,9 +56,9 @@ test('界面元素齐全', () => {
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `缺少 #${id}`)
   }
-  assert.match(html, /<img[^>]*id="pet"/)
+  assert.match(html, /<video[^>]*id="pet"/)
   for (const clip of ['idle-breath', 'idle-look', 'sleep', 'think', 'eat-rice', 'drag', 'click-happy', 'click-wave', 'click-shy', 'click-pout', 'click-tickle', 'fun-mirror', 'fun-whale', 'fun-water']) {
-    assert.ok(existsSync(join(root, 'renderer', 'assets', 'gifs', clip + '.gif')), '缺少动画 ' + clip + '.gif')
+    assert.ok(existsSync(join(root, 'renderer', 'assets', 'webm', clip + '.webm')), '缺少动画 ' + clip + '.webm')
   }
 })
 
