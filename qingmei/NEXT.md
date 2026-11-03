@@ -140,7 +140,7 @@ sudo journalctl -u qingmei -n 50 --no-pager
 | `packages/qm-incident` | playbook（解决时写根因/动作，复犯自动派诊断）、拒绝 3 次停用 + 反例、`POST rollback` 取消自动任务、`runId` |
 | `packages/qm-review`（新） | 每月 1 号报告（回合/任务/故障/主动性、失败 Top、消息抽样）；`POST /api/v1/review/run|score`；低分提醒 |
 | 配置 | dev/prod 各加一项（27 项插件） |
-| 测试 | 332 全绿 |
+| 测试 | 333 全绿 |
 
 > P5 最小版收口；未做：不可变外壳/版本目录、配置类自动修复、逐条评分卡/C 类提案。
 
