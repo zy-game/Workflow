@@ -27,6 +27,7 @@ import {
 import { LlmService, type ChatRequest, type ChatStreamChunk } from '@qingmei/service-llm'
 import {
   ConversationProfileService,
+  IdentityService,
   MemoryService,
   type ConversationPolicy,
   type ConversationProfile,
@@ -152,6 +153,7 @@ interface FakeState {
   profile: ProfileEntry[]
   profileCalls: { audience?: string }[]
   groupProfile: { note: string; maxChars: number; forbiddenTopics?: string[] } | null
+  identityRole: 'owner' | 'guest' | 'none'
   recalls: RecallQuery[]
   sent: OutboundEnvelope[]
   published: GatewayEvent[]
@@ -168,6 +170,7 @@ function createFakes(options: FakeOptions) {
     profile: [],
     profileCalls: [],
     groupProfile: null,
+    identityRole: 'owner',
     recalls: [],
     sent: [],
     published: [],
@@ -333,7 +336,34 @@ function createFakes(options: FakeOptions) {
       return state.groupProfile!.note
     }
   }
-  return { state, adapter, FakeStore, FakeGateway, FakeLlm, FakeMemory, FakeProfile }
+  class FakeIdentity extends IdentityService {
+    constructor(ctx: Context) {
+      super(ctx)
+    }
+    private current(): { id: string; displayName: string; role: 'owner' | 'family' | 'guest' | 'stranger' } | null {
+      if (state.identityRole === 'none') return null
+      return { id: 'owner', displayName: '主人', role: state.identityRole }
+    }
+    async resolve(): Promise<{ id: string; displayName: string; role: 'owner' } | { id: string; displayName: string; role: 'guest' } | null> {
+      return this.current() as never
+    }
+    async ensureOwner(): Promise<never> {
+      return this.current() as never
+    }
+    async bind(): Promise<never> {
+      throw new Error('not used')
+    }
+    async unbind(): Promise<number> {
+      return 0
+    }
+    async actor(): Promise<null> {
+      return null
+    }
+    async list(): Promise<[]> {
+      return []
+    }
+  }
+  return { state, adapter, FakeStore, FakeGateway, FakeLlm, FakeMemory, FakeProfile, FakeIdentity }
 }
 
 // ────────────────────────────────────────────── 测试脚手架
@@ -355,6 +385,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(fakes.FakeLlm)
   await ctx.plugin(fakes.FakeMemory)
   await ctx.plugin(fakes.FakeProfile)
+  await ctx.plugin(fakes.FakeIdentity)
   await ctx.plugin(historyPlugin)
   await ctx.plugin(agent, { persona: PERSONA })
   ctx.channel.register(fakes.adapter)
@@ -703,4 +734,14 @@ test('groupPolicyViolation：禁止话题与敏感信息', () => {
   assert.equal(agent.groupPolicyViolation('我记得你养狗', policy), 'memory')
   assert.equal(agent.groupPolicyViolation('电话 13800138000', policy), 'sensitive')
   assert.equal(agent.groupPolicyViolation('今天天气不错', policy), null)
+})
+
+test('身份闸：陌生账号回「未授权」，不进入模型', async () => {
+  const h = await boot({ chunks: ['不该出现'] })
+  h.state.identityRole = 'guest'
+  h.ctx.events.emit(EVENTS.inbound, inbound('在吗'))
+  await delay(30)
+  assert.equal(h.state.requests.length, 0)
+  const sent = h.state.sent.at(-1)!.blocks[0] as { text: string }
+  assert.match(sent.text, /未授权/)
 })

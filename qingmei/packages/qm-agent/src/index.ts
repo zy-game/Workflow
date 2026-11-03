@@ -18,6 +18,7 @@ import {
   type ChannelService,
   type GatewayService,
   type HarnessService,
+  type IdentityService,
   type InboundMessage,
   type AuditService,
   type ConversationPolicy,
@@ -195,6 +196,30 @@ export function apply(ctx: Context, config: AgentConfig): void {
   async function runTurn(message: InboundMessage): Promise<void> {
     // 被审批等控制指令消费掉的消息不再进入对话回合
     if (message.handledBy) return
+
+    // 身份闸：私聊必须解析到 owner；每渠道首个私聊自动绑 owner（单用户部署）
+    if (message.conversation.kind !== 'group') {
+      const identity = ctx.reflect.get('identity', false) as IdentityService | undefined
+      if (identity) {
+        const actor =
+          (await identity.resolve(message.channel, message.sender.platformUserId)) ??
+          (await identity.ensureOwner(
+            message.channel,
+            message.sender.platformUserId,
+            message.sender.displayName,
+          ))
+        if (!actor || actor.role !== 'owner') {
+          await channel
+            .send({
+              channel: message.channel,
+              conversationId: message.conversation.id,
+              blocks: [{ type: 'text', text: '未授权：请先在设置里绑定账号' }],
+            })
+            .catch(() => undefined)
+          return
+        }
+      }
+    }
     const sessionId = sessionIdOf(message)
     const userText = textOf(message.blocks)
     const traceId = uid('turn')

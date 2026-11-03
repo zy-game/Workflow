@@ -828,6 +828,34 @@ export interface Actor {
   role: 'owner' | 'family' | 'guest' | 'stranger'
 }
 
+export interface IdentityBinding {
+  channel: ChannelId
+  platformUserId: string
+  actorId: string
+  displayName: string
+  createdAt: Date
+}
+
+export abstract class IdentityService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'identity')
+  }
+  /** 未知账号返回 null */
+  abstract resolve(channel: ChannelId, platformUserId: string): Promise<Actor | null>
+  abstract bind(
+    actorId: string,
+    channel: ChannelId,
+    platformUserId: string,
+    options?: { displayName?: string; role?: Actor['role'] },
+  ): Promise<Actor>
+  abstract unbind(actorId: string, channel: ChannelId): Promise<number>
+  abstract actor(id: string): Promise<Actor | null>
+  abstract list(): Promise<IdentityBinding[]>
+  /** 单用户部署的首绑：该渠道还没有 owner 时，把第一个私聊用户绑成 owner */
+  async ensureOwner(_channel: ChannelId, _platformUserId: string, _displayName?: string): Promise<Actor | null> {
+    return null
+  }
+}
 export interface PermissionRequest {
   actor: Actor
   channel: ChannelId

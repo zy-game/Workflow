@@ -70,6 +70,9 @@
 # 群画像：未配置的群回「权限未配置」，打标签后按策略回复
 - name: '@qingmei/qm-conversation-profile'
 
+# 身份绑定：每渠道第一个私聊自动绑 owner，之后陌生账号需显式 bind
+- name: '@qingmei/qm-identity'
+
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 

@@ -132,6 +132,18 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P4：N+ 身份绑定
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `IdentityService`（resolve/bind/unbind/actor/list/ensureOwner） |
+| `packages/qm-identity`（新） | actor + `channel:platformUserId` 绑定；每渠道首个私聊自动绑 owner；`GET /api/v1/identity`、`POST /bind`、`POST /unbind` |
+| `packages/qm-agent` | 私聊身份闸：解析不到 owner 且不能首绑 → 回「未授权」，不调模型 |
+| 配置 | dev/prod 各加一项（25 项插件） |
+| 测试 | 316 全绿 |
+
+> 未做：双通道确认流程、family/guest 的记忆视口。
+
 ### P4：N+ 跨端起步
 
 | 文件 | 改了什么 |
