@@ -56,6 +56,10 @@
     env:
       QM_DSH_API_KEY: { $env: 'QM_DSH_API_KEY' }
 
+- name: '@qingmei/service-persona'
+  config:
+    path: personas/qingmei.json
+
 - name: '@qingmei/qm-agent'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
