@@ -52,6 +52,8 @@ interface StoredTurn extends Row {
   session_id: string
   status: 'ok' | 'partial' | 'failed' | 'aborted'
   steps: number
+  tokens_in: number | null
+  tokens_out: number | null
   latency_ms: number | null
   error_code: string | null
   created_at: number
@@ -188,7 +190,9 @@ export function apply(ctx: Context): void {
         id: end.traceId,
         session_id: end.sessionId,
         status: end.ok ? 'ok' : 'failed',
-        steps: 0,
+        steps: typeof end.steps === 'number' ? end.steps : 0,
+        tokens_in: typeof end.tokensIn === 'number' ? end.tokensIn : null,
+        tokens_out: typeof end.tokensOut === 'number' ? end.tokensOut : null,
         latency_ms: latency,
         error_code: null,
         created_at: nextCreatedAt() - (latency ?? 0),

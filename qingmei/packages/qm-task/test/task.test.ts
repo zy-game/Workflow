@@ -335,10 +335,10 @@ test('重启恢复：排队中的 run 会重新排队并执行', async () => {
   }
 })
 
-test('重启恢复：执行中的 run 没有 resume，如实记 failed', async () => {
+test('重启恢复：执行中的 run 重新排队并再次派发', async () => {
   let runningId = ''
   const h = await setup(
-    { chunks: ['不会跑到这里'] },
+    { chunks: ['恢复后继续跑'] },
     {
       pre: async (task) => {
         const run = await task.create({ prompt: '重启前正在跑的任务', title: '中断任务' })
@@ -348,13 +348,12 @@ test('重启恢复：执行中的 run 没有 resume，如实记 failed', async (
     },
   )
   try {
-    const failed = await waitFor(async () => {
+    const finished = await waitFor(async () => {
       const current = await h.task.get(runningId)
       return current && current.finishedAt ? current : null
-    }, '中断任务收尾')
-    assert.equal(failed.status, 'failed')
-    assert.match(failed.error ?? '', /进程重启/)
-    assert.equal(h.harness!.requests.length, 0, '不应再拉起执行')
+    }, '中断任务恢复收尾')
+    assert.equal(finished.status, 'done')
+    assert.equal(h.harness!.requests.length, 1, '应重新派发一次')
   } finally {
     await h.dispose()
   }

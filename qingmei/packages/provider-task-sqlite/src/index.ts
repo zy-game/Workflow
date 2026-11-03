@@ -132,6 +132,18 @@ export class SqliteTask extends TaskService {
     return rows.sort((a, b) => b.created_at - a.created_at).slice(0, take).map(toRun)
   }
 
+  async resume(id: string): Promise<TaskRun | null> {
+    const row = await this.collection.get(id)
+    if (!row) return null
+    if (row.status === 'done' || row.status === 'cancelled') return toRun(row)
+    return this.patch(row, {
+      status: 'queued',
+      error: null,
+      result: null,
+      started_at: null,
+      finished_at: null,
+    })
+  }
   async start(id: string, patch: { sessionId?: string } = {}): Promise<TaskRun | null> {
     const row = await this.collection.get(id)
     if (!row || row.finished_at !== null) return null

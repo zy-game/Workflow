@@ -36,6 +36,7 @@ const SYNAPSE_COLLECTION = 'qm_mem_synapse'
 const PROVENANCE_COLLECTION = 'qm_mem_provenance'
 const EVENT_COLLECTION = 'qm_memory_event'
 const EPISODE_COLLECTION = 'qm_mem_episode'
+const WORKING_COLLECTION = 'qm_mem_working'
 const DAY_MS = 24 * 60 * 60 * 1000
 const HALF_LIFE_MS = 30 * DAY_MS
 const SPREAD = 0.6
@@ -97,6 +98,12 @@ interface EpisodeRow extends Row {
   created_at: number
 }
 
+interface WorkingRow extends Row {
+  session_id: string
+  ids_json: string
+  at: number
+}
+
 interface MessageRow extends Row {
   role?: string
   text?: string
@@ -120,6 +127,7 @@ export class SqliteMemory extends MemoryService {
   private readonly provenance
   private readonly events
   private readonly episodes
+  private readonly workingRows
   private readonly messages
   /** 会话 → 上一轮点亮的节点（工作记忆；进程内，重启清空） */
   private readonly working = new Map<string, { ids: string[]; at: number }>()
@@ -135,6 +143,7 @@ export class SqliteMemory extends MemoryService {
     this.provenance = store.collection<ProvenanceRow>(PROVENANCE_COLLECTION)
     this.events = store.collection<EventRow>(EVENT_COLLECTION)
     this.episodes = store.collection<EpisodeRow>(EPISODE_COLLECTION)
+    this.workingRows = store.collection<WorkingRow>(WORKING_COLLECTION)
     this.messages = store.collection<MessageRow>('qm_message')
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
@@ -303,6 +312,24 @@ export class SqliteMemory extends MemoryService {
     return { created, merged }
   }
 
+  private async ensureWorking(sessionId: string): Promise<void> {
+    if (this.working.has(sessionId)) return
+    try {
+      const row = await this.workingRows.get(sessionId)
+      if (!row) return
+      if (Date.now() - row.at > 2 * 60 * 60 * 1000) return
+      this.working.set(sessionId, { ids: JSON.parse(row.ids_json) as string[], at: row.at })
+    } catch {
+      // 工作记忆只是加速，读失败就当没有
+    }
+  }
+
+  private async saveWorking(sessionId: string, entry: { ids: string[]; at: number }): Promise<void> {
+    const payload = { ids_json: JSON.stringify(entry.ids), at: entry.at }
+    const existing = await this.workingRows.get(sessionId)
+    if (existing) await this.workingRows.update(sessionId, payload)
+    else await this.workingRows.insert({ id: sessionId, session_id: sessionId, ...payload })
+  }
   private async recordEvent(
     key: string | undefined,
     neuronId: string,
@@ -316,6 +343,7 @@ export class SqliteMemory extends MemoryService {
   }
 
   async recall(query: RecallQuery): Promise<RecallResult> {
+    if (query.sessionId) await this.ensureWorking(query.sessionId)
     const audience = query.audience?.trim() || 'owner'
     const visible = (await this.collection.find({ where: { valid_to: null } })).filter((row) =>
       visibleTo(row, audience),
@@ -389,7 +417,9 @@ export class SqliteMemory extends MemoryService {
 
     // ③ 更新工作记忆：本轮点亮的前 N 个节点留给下一轮
     if (query.sessionId && scored.length > 0) {
-      this.working.set(query.sessionId, { ids: scored.slice(0, WORKING_LIMIT).map((entry) => entry.row.id), at: now })
+      const entry = { ids: scored.slice(0, WORKING_LIMIT).map((entry) => entry.row.id), at: now }
+      this.working.set(query.sessionId, entry)
+      void this.saveWorking(query.sessionId, entry).catch(() => undefined)
     }
 
     // ④ 召回无副作用：强化放到返回后异步做

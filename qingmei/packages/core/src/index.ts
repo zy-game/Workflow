@@ -408,6 +408,10 @@ export interface TurnEnd {
   latencyMs?: number
   /** 本回合用户说了什么：记忆抽取要用，避免再查库 */
   userText?: string
+  /** 工具循环轮数 */
+  steps?: number
+  tokensIn?: number
+  tokensOut?: number
   error?: string
 }
 
@@ -842,6 +846,8 @@ export abstract class TaskService extends Service {
   abstract list(limit?: number): Promise<TaskRun[]>
   /** queued|needs_approval → running */
   abstract start(id: string, patch?: { sessionId?: string }): Promise<TaskRun | null>
+  /** 重启后把中断的 run 放回队列（不清空原始 prompt/产物） */
+  abstract resume(id: string): Promise<TaskRun | null>
   /** running → needs_approval（等主人确认）或回到 running */
   abstract setStatus(id: string, status: 'running' | 'needs_approval'): Promise<TaskRun | null>
   abstract reportProgress(

@@ -364,6 +364,7 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
 
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const resumeOnRestart = config.resumeOnRestart !== false
   const harnessId = config.harnessId ?? DEFAULT_HARNESS
   const maxConcurrent = Math.max(1, Number(config.maxConcurrent) || DEFAULT_MAX_CONCURRENT)
   const quietHours = parseQuietHours(config.quietHours)
@@ -400,6 +401,12 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           continue
         }
         if (run.status === 'running' || run.status === 'needs_approval') {
+          if (resumeOnRestart) {
+            const resumed = await task.resume(run.id)
+            if (resumed && available) runner.dispatch(resumed)
+            ctx.logger.info('[qm-task] 重启恢复：' + run.id + ' 重新排队')
+            continue
+          }
           await task.finish(run.id, {
             status: 'failed',
             error: '进程重启：任务在执行中被中断（resume 未实现）',
@@ -464,6 +471,31 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
         }
         const limit = Number(req.query.limit ?? LIST_LIMIT)
         res.status(200).send({ ok: true, items: await task.list(Number.isFinite(limit) ? limit : LIST_LIMIT) })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/tasks/resume',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 不能为空' })
+          return
+        }
+        const run = await task.resume(id)
+        if (!run) {
+          res.status(404).send({ ok: false, error: '没有这个任务' })
+          return
+        }
+        if (run.status !== 'done' && run.status !== 'cancelled') {
+          const available = harness ? await harness.available().catch(() => false) : false
+          if (available) runner.dispatch(run)
+        }
+        res.status(200).send({ ok: true, run })
       },
     }),
   )

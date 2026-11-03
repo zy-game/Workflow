@@ -297,3 +297,19 @@ test('合同：截止/强度/进展信号/期望曲线持久化', async () => {
     await h.dispose()
   }
 })
+
+test('resume：把中断的 running 放回 queued，可再次 start', async () => {
+  const h = await setup()
+  try {
+    const run = await h.task.create({ prompt: '跑测试' })
+    await h.task.start(run.id)
+    const resumed = await h.task.resume(run.id)
+    assert.equal(resumed?.status, 'queued')
+    assert.equal(resumed?.startedAt, null)
+    assert.equal(resumed?.finishedAt, null)
+    const again = await h.task.start(run.id)
+    assert.equal(again?.status, 'running')
+  } finally {
+    await h.dispose()
+  }
+})

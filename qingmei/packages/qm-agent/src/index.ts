@@ -232,6 +232,9 @@ export function apply(ctx: Context, config: AgentConfig): void {
     const problems: string[] = []
     const controller = new AbortController()
     let reply = ''
+    let steps = 0
+    let tokensIn = 0
+    let tokensOut = 0
 
     // 视口决定能看到哪些记忆：群聊只注入该群的 public 事实（docs/05 M1 验收第 5 条）
     // 群视口带上渠道前缀：不同渠道的会话 id 即使撞了也不会互相看到
@@ -327,6 +330,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
           if (event.type === 'text') {
             reply += event.text
             publishChunk(sessionId, event.text)
+          } else if (event.type === 'tool') {
+            steps += 1
+          } else if (event.type === 'usage') {
+            tokensIn += Number(event.usage.inputTokens) || 0
+            tokensOut += Number(event.usage.outputTokens) || 0
           } else if (event.type === 'error') {
             problems.push(event.message)
           }
@@ -342,6 +350,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
           { role: 'user', content: userText },
         ]
         reply = await streamReply(sessionId, messages, controller.signal)
+        steps = 1
       }
     } catch (error) {
       controller.abort()
@@ -396,6 +405,9 @@ export function apply(ctx: Context, config: AgentConfig): void {
       text: reply,
       userText,
       latencyMs: Date.now() - startedAt,
+      steps,
+      tokensIn,
+      tokensOut,
     }
     if (problems.length > 0) end.error = problems.join('；')
     ctx.events.emit(EVENTS.turnEnd, end)
