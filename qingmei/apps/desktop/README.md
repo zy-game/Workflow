@@ -71,6 +71,11 @@ preload 最小面、界面元素、点击穿透与协议契约。
 - **electron/dist 不存在**：pnpm install 跳过了 Electron 的下载脚本时，执行 
 ode apps/desktop/node_modules/electron/install.js（国内可先设 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/）。
 
+## 素材与许可
+
+桌宠动画取自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT），经 [shenliuyu18/dafeiyu-pet](https://github.com/shenliuyu18/dafeiyu-pet) 使用；
+以透明 WebM（VP9 alpha）播放，效果等同 GIF，但体积更小、边缘更干净。许可全文见 enderer/assets/THIRD-PARTY-dsh-pet-LICENSE.txt。
+
 ## 已知限制
 
 - 没有托盘图标：退出走桌宠右键菜单（需要托盘可以后续加）。

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -56,7 +56,10 @@ test('界面元素齐全', () => {
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `缺少 #${id}`)
   }
-  assert.match(html, /<svg[^>]*id="pet"/)
+  assert.match(html, /<video[^>]*id="pet"/)
+  for (const clip of ['idle-breath', 'idle-look', 'sleep', 'think', 'eat-rice', 'drag', 'click-happy', 'click-wave']) {
+    assert.ok(existsSync(join(root, 'renderer', 'assets', 'anims', clip + '.webm')), '缺少动画 ' + clip + '.webm')
+  }
 })
 
 test('通知与输入走现有 Web 协议', () => {

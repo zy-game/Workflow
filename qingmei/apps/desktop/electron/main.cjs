@@ -153,6 +153,8 @@ function createWindow() {
                   bubbleHidden: document.getElementById('bubble')?.hidden,
                   bubbleText: document.getElementById('bubble-text')?.textContent,
                   chatHidden: document.getElementById('chat')?.hidden,
+                  videoTime: document.getElementById('pet')?.currentTime,
+                  videoPaused: document.getElementById('pet')?.paused,
                 })
               `)
               writeFileSync(`${shot}.json`, info)

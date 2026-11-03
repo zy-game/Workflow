@@ -67,13 +67,60 @@ const PET_LINES = [
   '辛苦啦。',
 ]
 
+const VIDEOS = {
+  idle: ['./assets/anims/idle-breath.webm', './assets/anims/idle-look.webm'],
+  sleep: './assets/anims/sleep.webm',
+  think: './assets/anims/think.webm',
+  click: ['./assets/anims/click-happy.webm', './assets/anims/click-wave.webm'],
+  eat: './assets/anims/eat-rice.webm',
+  drag: './assets/anims/drag.webm',
+}
+
+let idleIndex = 0
+let lastVideo = ''
+
+function playClip(src, { loop = true } = {}) {
+  const video = el.pet
+  if (!video) return
+  const absolute = new URL(src, location.href).href
+  if (lastVideo === absolute && !video.ended) {
+    if (video.paused) void video.play().catch(() => undefined)
+    return
+  }
+  lastVideo = absolute
+  video.loop = loop
+  video.src = src
+  video.load()
+  void video.play().catch(() => undefined)
+}
+
+function idleClip() {
+  playClip(VIDEOS.idle[idleIndex++ % VIDEOS.idle.length], { loop: true })
+}
 function setPetState(state) {
+  const previous = el.app.dataset.state
   el.app.dataset.state = state
   clearTimeout(stateResetTimer)
+  if (state === 'idle' || state === 'offline') {
+    if (previous !== 'idle' && previous !== 'offline') idleClip()
+    return
+  }
+  if (state === 'sleeping') {
+    playClip(VIDEOS.sleep, { loop: true })
+    return
+  }
+  if (state === 'thinking') {
+    playClip(VIDEOS.think, { loop: true })
+    return
+  }
   if (state === 'happy' || state === 'alert') {
-    stateResetTimer = window.setTimeout(() => {
-      el.app.dataset.state = isOnline() ? 'idle' : 'offline'
-    }, 1400)
+    const clips = VIDEOS.click
+    playClip(clips[Math.floor(Math.random() * clips.length)], { loop: false })
+    stateResetTimer = window.setTimeout(() => setPetState(isOnline() ? 'idle' : 'offline'), 1600)
+    return
+  }
+  if (state === 'dragging') {
+    playClip(VIDEOS.drag, { loop: true })
   }
 }
 
@@ -393,12 +440,26 @@ function interact() {
 
 function feed() {
   markActivity()
-  setPetState('happy')
+  el.app.dataset.state = 'happy'
+  playClip(VIDEOS.eat, { loop: false })
   pushBubble('好吃！谢谢款待～', 'pet')
   spawnHearts(6)
+  clearTimeout(stateResetTimer)
+  stateResetTimer = window.setTimeout(() => setPetState(isOnline() ? 'idle' : 'offline'), 2600)
 }
 
 function bind() {
+  idleClip()
+  el.pet.addEventListener('ended', () => {
+    if (el.app.dataset.state === 'happy' || el.app.dataset.state === 'alert') {
+      setPetState(isOnline() ? 'idle' : 'offline')
+    }
+  })
+  window.setInterval(() => {
+    if ((el.app.dataset.state === 'idle' || el.app.dataset.state === 'offline') && el.chat.hidden) {
+      idleClip()
+    }
+  }, 12000)
   el.chatButton.addEventListener('click', () => {
     markActivity()
     toggleChat()
@@ -432,6 +493,7 @@ function bind() {
     dragState.y = event.screenY
     suppressClick = true
     el.app.dataset.dragging = 'true'
+    if (el.app.dataset.state !== 'dragging') setPetState('dragging')
     desktop.moveBy(dx, dy)
     markActivity()
   })
@@ -440,7 +502,10 @@ function bind() {
     const moved = dragState.moved
     dragState = null
     delete el.app.dataset.dragging
-    if (moved) window.setTimeout(() => { suppressClick = false }, 250)
+    if (moved) {
+      setPetState(isOnline() ? 'idle' : 'offline')
+      window.setTimeout(() => { suppressClick = false }, 250)
+    }
   }
   el.pet.addEventListener('pointerup', endDrag)
   el.pet.addEventListener('pointercancel', endDrag)
