@@ -310,3 +310,36 @@ test('where null 只匹配显式 null，不匹配缺失字段', async () => {
     assert.equal(await collection.count({ where: { v: null } }), 1)
   })
 })
+
+test('内置迁移：回填 qm_turn 的 steps/tokens_in/tokens_out', async () => {
+  const dir = makeTempDir()
+  const file = join(dir, 'legacy.db')
+  try {
+    const raw = new DatabaseSync(file)
+    raw.exec(`CREATE TABLE records (name TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (name, id))`)
+    raw
+      .prepare('INSERT INTO records (name, id, json, created_at) VALUES (?, ?, ?, ?)')
+      .run('qm_turn', 't_old', JSON.stringify({ id: 't_old', status: 'ok', latency_ms: 10 }), Date.now())
+    raw.close()
+
+    const { store, ctx } = await openStore(file)
+    try {
+      const row = await store.collection<Row>('qm_turn').get('t_old')
+      assert.equal((row as Record<string, unknown> | undefined)?.steps, 0)
+      assert.equal((row as Record<string, unknown> | undefined)?.tokens_in, null)
+      assert.equal((row as Record<string, unknown> | undefined)?.tokens_out, null)
+    } finally {
+      store.close()
+    }
+
+    const verify = new DatabaseSync(file)
+    try {
+      const applied = verify.prepare('SELECT id FROM qm_migration ORDER BY id').all() as unknown as { id: string }[]
+      assert.deepEqual(applied.map((row) => row.id), ['001-qm-turn-steps-tokens', '002-qm-audit-conversation'])
+    } finally {
+      verify.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -29,6 +29,19 @@ CREATE TABLE IF NOT EXISTS records (
 )
 `
 
+const BUILT_IN_MIGRATIONS: Migration[] = [
+  {
+    id: '001-qm-turn-steps-tokens',
+    sql: `UPDATE records SET json = json_set(json, '$.steps', 0, '$.tokens_in', NULL, '$.tokens_out', NULL)
+      WHERE name = 'qm_turn' AND json_type(json, '$.steps') IS NULL`,
+  },
+  {
+    id: '002-qm-audit-conversation',
+    sql: `UPDATE records SET json = json_set(json, '$.conversation_id', NULL)
+      WHERE name = 'qm_audit' AND json_type(json, '$.conversation_id') IS NULL`,
+  },
+]
+
 interface StoredRow {
   id: string
   json: string
@@ -71,6 +84,7 @@ export class SqliteStore extends StoreService {
       throw error
     }
     this.db = db
+    await this.migrate(BUILT_IN_MIGRATIONS)
   }
 
   close(): void {
