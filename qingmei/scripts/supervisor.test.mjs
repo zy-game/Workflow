@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { deployWithRollback } from './supervisor.mjs'
+import { deployWithRollback, rollbackTo } from './supervisor.mjs'
 
 async function setup(version = 'old') {
   const dir = await mkdtemp(join(tmpdir(), 'qm-supervisor-'))
@@ -78,6 +78,26 @@ test('回滚后仍不健康：交由人工', async () => {
       timeoutMs: 150,
     })
     assert.deepEqual(result, { ok: false, rolledBack: true, healthy: false })
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('回滚到指定历史版本', async () => {
+  const h = await setup('new')
+  try {
+    const fromDir = join(h.dir, 'old-release')
+    await mkdir(fromDir, { recursive: true })
+    await writeFile(join(fromDir, 'version.txt'), 'old')
+    const result = await rollbackTo({
+      appDir: h.appDir,
+      fromDir,
+      restart: async () => undefined,
+      health: async () => (await readFile(join(h.appDir, 'version.txt'), 'utf8')) === 'old',
+      timeoutMs: 200,
+    })
+    assert.deepEqual(result, { ok: true, healthy: true, from: fromDir })
+    assert.equal(await readFile(join(h.appDir, 'version.txt'), 'utf8'), 'old')
   } finally {
     await h.dispose()
   }

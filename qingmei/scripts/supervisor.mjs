@@ -63,6 +63,7 @@ export async function deployWithRollback({
   restart,
   health,
   timeoutMs = 60_000,
+  historyDir = null,
   log = () => {},
 }) {
   await copyTree(appDir, backupDir)
@@ -70,6 +71,7 @@ export async function deployWithRollback({
   await restart()
   if (await waitHealthy(health, timeoutMs)) {
     log('新版本健康')
+    if (historyDir) await copyTree(backupDir, path.join(historyDir, String(Date.now())))
     return { ok: true, rolledBack: false, healthy: true }
   }
 
@@ -79,6 +81,15 @@ export async function deployWithRollback({
   const healthy = await waitHealthy(health, timeoutMs)
   log(healthy ? '已回滚到旧版本' : '回滚后仍不健康，需要人工介入')
   return { ok: false, rolledBack: true, healthy }
+}
+
+/** 把指定历史版本覆盖回 app 并重启；用于“回滚到任一版本” */
+export async function rollbackTo({ appDir, fromDir, restart, health, timeoutMs = 60_000, log = () => {} }) {
+  await mergeTree(fromDir, appDir)
+  await restart()
+  const healthy = await waitHealthy(health, timeoutMs)
+  log(healthy ? `已回滚到 ${fromDir}` : '回滚后仍不健康，需要人工介入')
+  return { ok: healthy, healthy, from: fromDir }
 }
 
 function parseArgs(argv) {
@@ -100,8 +111,35 @@ async function main() {
   const service = args.service ?? 'qingmei'
   const healthUrl = args.health ?? 'http://127.0.0.1:7410/healthz'
   const timeoutMs = Number(args.timeout ?? 60_000)
+  const historyDir = args.history ? path.resolve(args.history) : path.join(path.dirname(appDir), 'qingmei-history')
+  const rollbackToDir = args['rollback-to'] ? path.resolve(args['rollback-to']) : null
 
   if (!existsSync(appDir)) throw new Error(`app 目录不存在：${appDir}`)
+
+  const restart = async () => {
+    execFileSync('systemctl', ['restart', service], { stdio: 'inherit' })
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+  }
+  const health = async () => {
+    const response = await fetch(healthUrl, { signal: AbortSignal.timeout(4000) })
+    if (!response.ok) return false
+    const body = await response.json()
+    return body.ok !== false
+  }
+
+  if (rollbackToDir) {
+    const result = await rollbackTo({
+      appDir,
+      fromDir: rollbackToDir,
+      restart,
+      health,
+      timeoutMs,
+      log: (message) => console.log(`[supervisor] ${message}`),
+    })
+    if (!result.healthy) process.exitCode = 1
+    return
+  }
+
   if (!existsSync(tarball)) throw new Error(`tarball 不存在：${tarball}`)
 
   const result = await deployWithRollback({
@@ -114,17 +152,10 @@ async function main() {
         execFileSync('sh', ['-c', args.install], { cwd: appDir, stdio: 'inherit', env: process.env })
       }
     },
-    restart: async () => {
-      execFileSync('systemctl', ['restart', service], { stdio: 'inherit' })
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-    },
-    health: async () => {
-      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(4000) })
-      if (!response.ok) return false
-      const body = await response.json()
-      return body.ok !== false
-    },
+    restart,
+    health,
     timeoutMs,
+    historyDir,
     log: (message) => console.log(`[supervisor] ${message}`),
   })
 

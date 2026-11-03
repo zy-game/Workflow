@@ -142,6 +142,22 @@ test('评分：低分给改进提醒；重复生成不重复建行', async () =>
     assert.equal(low.status, 200)
     assert.equal(h.channel.sent.length, 2, '低分应追加一条提醒')
 
+    const proposals = await h.call({ method: 'GET', path: '/api/v1/review/proposals', query: {}, headers: {} })
+    const proposalItems = (proposals.body as { items: { id: string; suggestion: string }[] }).items
+    assert.equal(proposalItems.length, 1)
+    assert.match(proposalItems[0]!.suggestion, /建议/)
+
+    const dismissed = await h.call({
+      method: 'POST',
+      path: '/api/v1/review/proposals/dismiss',
+      query: {},
+      headers: {},
+      body: { id: proposalItems[0]!.id },
+    })
+    assert.equal(dismissed.status, 200)
+    const afterDismiss = await h.call({ method: 'GET', path: '/api/v1/review/proposals', query: {}, headers: {} })
+    assert.equal((afterDismiss.body as { items: unknown[] }).items.length, 0)
+
     await h.call({ method: 'POST', path: '/api/v1/review/run', query: {}, headers: {} })
     const listed = await h.call({ method: 'GET', path: '/api/v1/review', query: {}, headers: {} })
     assert.equal((listed.body as { items: unknown[] }).items.length, 1, '同月只保留一份')

@@ -32,6 +32,14 @@ export const inject = ['store', 'channel', 'gateway']
 
 const REVIEW_COLLECTION = 'qm_review'
 
+interface ProposalRow extends Row {
+  review_id: string
+  month: string
+  suggestion: string
+  status: string
+  created_at: number
+}
+
 interface ReviewRow extends Row {
   month: string
   at: number
@@ -80,6 +88,7 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
   if (!gateway) throw new Error('[qm-review] 缺少 gateway 服务')
 
   const reviews = store.collection<ReviewRow>(REVIEW_COLLECTION)
+  const proposals = store.collection<ProposalRow>('qm_review_proposal')
   const turns = store.collection<TurnRow>('qm_turn')
   const messages = store.collection<{ id: string; role: string; text: string; created_at: number }>('qm_message')
   const tasks = store.collection<TaskRow>('qm_task_run')
@@ -263,6 +272,14 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
         const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : null
         await reviews.update(id, { score: Math.round(score), note })
         if (score < minScore) {
+          await proposals.insert({
+            id: uid('prop'),
+            review_id: id,
+            month: row.month,
+            suggestion: `本月自评 ${Math.round(score)}/10，低于 ${minScore}。建议：从报告里挑一件最影响体验的事，下月只改它；必要时调整人格/提示词。`,
+            status: 'proposed',
+            created_at: Date.now(),
+          })
           await channel
             .send({
               channel: 'web',
@@ -276,6 +293,48 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
             })
             .catch(() => undefined)
         }
+        res.status(200).send({ ok: true })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/review/proposals',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const items = (await proposals.find({}))
+          .filter((row) => row.status === 'proposed')
+          .sort((a, b) => b.created_at - a.created_at)
+          .map((row) => ({
+            id: row.id,
+            reviewId: row.review_id,
+            month: row.month,
+            suggestion: row.suggestion,
+            createdAt: new Date(row.created_at),
+          }))
+        res.status(200).send({ ok: true, items })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/review/proposals/dismiss',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const row = await proposals.get(id)
+        if (!row || row.status !== 'proposed') {
+          res.status(404).send({ ok: false, error: '没有这条提案' })
+          return
+        }
+        await proposals.update(id, { status: 'dismissed' })
         res.status(200).send({ ok: true })
       },
     }),
