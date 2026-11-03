@@ -58,14 +58,14 @@ function fakeResponse(): FakeResponse {
   return { res, read: () => ({ status, body }) }
 }
 
-async function setup() {
+async function setup(config: profilePlugin.ConversationProfileConfig = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-profile-'))
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'profile.db') })
   await storeFiber
   await ctx.plugin(gatewayPlugin)
   const channel = new FakeChannel(ctx)
-  const pluginFiber = ctx.plugin(profilePlugin)
+  const pluginFiber = ctx.plugin(profilePlugin, config)
   await pluginFiber
   // 等启动时的画像缓存加载
   await new Promise((resolve) => setTimeout(resolve, 20))
@@ -173,6 +173,80 @@ test('configure 参数校验：未知标签 400', async () => {
     })
     assert.equal(bad.status, 400)
     assert.match((bad.body as { error: string }).error, /未知标签/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('标签建议：消息够了给建议，采纳后写入画像', async () => {
+  const h = await setup({ suggestAfterMessages: 3 })
+  try {
+    for (const [index, text] of ['合同要改', '报价再确认', '交付时间定一下'].entries()) {
+      const message = groupMessage(`m${index}`)
+      message.blocks = [{ type: 'text', text }]
+      h.ctx.events.emit(EVENTS.inbound, message)
+    }
+
+    const listed = await (async () => {
+      for (let i = 0; i < 50; i += 1) {
+        const result = await h.call({ method: 'GET', path: '/api/v1/conversations/suggestions', query: {}, headers: {} })
+        const items = (result.body as { items: { id: string; tag: string; evidence: string; conversationId: string }[] }).items
+        if (items.length > 0) return items
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      throw new Error('等待建议超时')
+    })()
+    assert.equal(listed[0]?.tag, 'client')
+    assert.match(listed[0]?.evidence ?? '', /合同|报价|交付/)
+
+    const accepted = await h.call({
+      method: 'POST',
+      path: '/api/v1/conversations/suggestions/accept',
+      query: {},
+      headers: {},
+      body: { id: listed[0]!.id },
+    })
+    assert.equal(accepted.status, 200)
+    const profile = (accepted.body as { profile: { tags: string[]; status: string } }).profile
+    assert.equal(profile.status, 'configured')
+    assert.deepEqual(profile.tags, ['client'])
+
+    const after = await h.call({ method: 'GET', path: '/api/v1/conversations/suggestions', query: {}, headers: {} })
+    assert.equal((after.body as { items: unknown[] }).items.length, 0, '采纳后不再展示')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('标签建议：拒绝后不再出现', async () => {
+  const h = await setup({ suggestAfterMessages: 3 })
+  try {
+    for (const [index, text] of ['周会排期', '项目进度', '上线时间'].entries()) {
+      const message = groupMessage(`d${index}`)
+      message.blocks = [{ type: 'text', text }]
+      h.ctx.events.emit(EVENTS.inbound, message)
+    }
+    const items = await (async () => {
+      for (let i = 0; i < 50; i += 1) {
+        const result = await h.call({ method: 'GET', path: '/api/v1/conversations/suggestions', query: {}, headers: {} })
+        const rows = (result.body as { items: { id: string; tag: string }[] }).items
+        if (rows.length > 0) return rows
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      throw new Error('等待建议超时')
+    })()
+    assert.equal(items[0]?.tag, 'work')
+
+    const dismissed = await h.call({
+      method: 'POST',
+      path: '/api/v1/conversations/suggestions/dismiss',
+      query: {},
+      headers: {},
+      body: { id: items[0]!.id },
+    })
+    assert.equal(dismissed.status, 200)
+    const after = await h.call({ method: 'GET', path: '/api/v1/conversations/suggestions', query: {}, headers: {} })
+    assert.equal((after.body as { items: unknown[] }).items.length, 0)
   } finally {
     await h.dispose()
   }

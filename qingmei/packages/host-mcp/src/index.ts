@@ -201,6 +201,7 @@ export function createTools(deps: ToolDeps): HostTool[] {
           predicate: { type: 'string' },
           object: { type: 'string' },
           confidence: { type: 'number' },
+          idempotencyKey: { type: 'string', description: '可选幂等键：同一键只写一次' },
         },
         required: ['subject', 'predicate', 'object'],
       },
@@ -213,6 +214,9 @@ export function createTools(deps: ToolDeps): HostTool[] {
           confidence: Number(args.confidence ?? 0.8),
           sensitivity: 'private',
           origin: { kind: 'harness', id: 'mcp' },
+          ...(typeof args.idempotencyKey === 'string' && args.idempotencyKey.trim()
+            ? { idempotencyKey: args.idempotencyKey.trim() }
+            : {}),
         }
         if (!record.subject || !record.predicate || !record.object) {
           throw new Error('subject/predicate/object 都不能为空')
@@ -593,7 +597,7 @@ function textResult(text: string): ToolResult {
 function memoryRecordsOf(raw: unknown, runId: string): MemoryRecord[] {
   if (!Array.isArray(raw)) return []
   const records: MemoryRecord[] = []
-  for (const item of raw) {
+  for (const [index, item] of raw.entries()) {
     if (!item || typeof item !== 'object') continue
     const entry = item as Record<string, unknown>
     const subject = String(entry.subject ?? '').trim()
@@ -608,6 +612,7 @@ function memoryRecordsOf(raw: unknown, runId: string): MemoryRecord[] {
       confidence: typeof entry.confidence === 'number' ? entry.confidence : 0.7,
       sensitivity: 'private',
       origin: { kind: 'harness', id: `task:${runId}` },
+      idempotencyKey: `task:${runId}:${index}`,
     })
   }
   return records

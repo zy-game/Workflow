@@ -132,6 +132,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P4 收口：标签建议 + 内存幂等
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/provider-memory-sqlite` | `qm_memory_event`：带 `idempotencyKey` 的上报只应用一次；`qm_finish_task` 的任务记忆按 runId+序号自带键 |
+| `packages/qm-conversation-profile` | 群消息累计到阈值后给一次标签建议（关键词 + 证据，只建议）；`GET /suggestions`、`POST accept|dismiss` |
+| `apps/web` | 群组面板展示建议，可采纳/忽略 |
+| 测试 | 319 全绿 |
+
+> P4 剩余（按需再启）：embedding 种子、thread/设备域、双通道确认、工具清单裁剪。
+
 ### P4：N+ 身份绑定
 
 | 文件 | 改了什么 |

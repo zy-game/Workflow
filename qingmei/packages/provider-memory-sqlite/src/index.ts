@@ -34,6 +34,7 @@ export const inject = ['store']
 const COLLECTION = 'qm_mem_fact'
 const SYNAPSE_COLLECTION = 'qm_mem_synapse'
 const PROVENANCE_COLLECTION = 'qm_mem_provenance'
+const EVENT_COLLECTION = 'qm_memory_event'
 const DAY_MS = 24 * 60 * 60 * 1000
 const HALF_LIFE_MS = 30 * DAY_MS
 const SPREAD = 0.6
@@ -66,6 +67,12 @@ interface FactRow extends Row {
   valid_to: number | null
 }
 
+interface EventRow extends Row {
+  source: string
+  applied_at: number
+  neuron_ids: string
+}
+
 interface ProvenanceRow extends Row {
   neuron_id: string
   origin_kind: string
@@ -86,6 +93,7 @@ export class SqliteMemory extends MemoryService {
   private readonly collection
   private readonly synapses
   private readonly provenance
+  private readonly events
   /** 会话 → 上一轮点亮的节点（工作记忆；进程内，重启清空） */
   private readonly working = new Map<string, { ids: string[]; at: number }>()
   private readonly limit: number
@@ -98,6 +106,7 @@ export class SqliteMemory extends MemoryService {
     this.collection = store.collection<FactRow>(COLLECTION)
     this.synapses = store.collection<SynapseRow>(SYNAPSE_COLLECTION)
     this.provenance = store.collection<ProvenanceRow>(PROVENANCE_COLLECTION)
+    this.events = store.collection<EventRow>(EVENT_COLLECTION)
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
   }
@@ -108,6 +117,10 @@ export class SqliteMemory extends MemoryService {
     for (const record of records) {
       const normalized = normalize(record)
       if (!normalized || normalized.confidence < this.minConfidence) continue
+
+      // 幂等事件：同一上报只应用一次（docs/10 §4）
+      const idempotencyKey = normalized.idempotencyKey?.trim()
+      if (idempotencyKey && (await this.events.get(idempotencyKey))) continue
 
       // 同一 subject+predicate 的所有有效行：完全相同的三元组合并，不同 object 的让位
       const live = await this.collection.find({
@@ -134,6 +147,7 @@ export class SqliteMemory extends MemoryService {
           confidence: Math.min(1, Math.max(same.confidence, normalized.confidence) + 0.02),
           audience: normalized.audience,
         })
+        await this.recordEvent(idempotencyKey, same.id, now, normalized.origin)
         merged.push(same.id)
         continue
       }
@@ -164,9 +178,22 @@ export class SqliteMemory extends MemoryService {
         origin_id: normalized.origin.id,
         observed_at: now,
       })
+      await this.recordEvent(idempotencyKey, inserted.id, now, normalized.origin)
       created.push(inserted.id)
     }
     return { created, merged }
+  }
+
+  private async recordEvent(
+    key: string | undefined,
+    neuronId: string,
+    now: number,
+    origin: MemoryRecord['origin'],
+  ): Promise<void> {
+    if (!key) return
+    await this.events
+      .insert({ id: key, source: origin.kind, applied_at: now, neuron_ids: JSON.stringify([neuronId]) })
+      .catch(() => undefined)
   }
 
   async recall(query: RecallQuery): Promise<RecallResult> {
@@ -432,6 +459,7 @@ function normalize(record: MemoryRecord): MemoryRecord | null {
     sensitivity: record.sensitivity ?? 'private',
     audience: record.audience?.trim() || 'owner',
     origin: record.origin ?? { kind: 'manual', id: 'unknown' },
+    ...(record.idempotencyKey?.trim() ? { idempotencyKey: record.idempotencyKey.trim() } : {}),
   }
 }
 

@@ -578,6 +578,8 @@ export interface MemoryRecord {
   /** 可见范围：'owner' 只给主人；'group:<id>' 群内可见。缺省 owner */
   audience?: string
   origin: { kind: 'channel' | 'harness' | 'self' | 'doc' | 'manual'; id: string }
+  /** 同一上报的幂等键；相同键只应用一次（docs/10 §4） */
+  idempotencyKey?: string
   occurredAt?: Date
 }
 

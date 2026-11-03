@@ -18,6 +18,9 @@ const ENDPOINTS = {
   autonomyRollback: './api/v1/autonomy/rollback',
   conversations: './api/v1/conversations',
   conversationsConfigure: './api/v1/conversations/configure',
+  conversationSuggestions: './api/v1/conversations/suggestions',
+  conversationSuggestionAccept: './api/v1/conversations/suggestions/accept',
+  conversationSuggestionDismiss: './api/v1/conversations/suggestions/dismiss',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -63,6 +66,7 @@ const el = {
   conversationsToggle: document.getElementById('conversations-toggle'),
   conversations: document.getElementById('conversations'),
   conversationsList: document.getElementById('conversations-list'),
+  conversationsSuggestions: document.getElementById('conversations-suggestions'),
   conversationsEmpty: document.getElementById('conversations-empty'),
   conversationsError: document.getElementById('conversations-error'),
   conversationsRefresh: document.getElementById('conversations-refresh'),
@@ -725,14 +729,64 @@ async function loadConversations() {
   if (!state.token || state.conversationsLoading) return
   state.conversationsLoading = true
   try {
-    const res = await fetch(ENDPOINTS.conversations, { headers: withAuth({ Accept: 'application/json' }) })
+    const [res, suggestions] = await Promise.all([
+      fetch(ENDPOINTS.conversations, { headers: withAuth({ Accept: 'application/json' }) }),
+      fetch(ENDPOINTS.conversationSuggestions, { headers: withAuth({ Accept: 'application/json' }) }),
+    ])
     if (!res.ok) throw new Error(`加载群组失败（HTTP ${res.status}）`)
     renderConversations(await res.json())
+    renderConversationSuggestions(suggestions.ok ? await suggestions.json() : { items: [] })
     showConversationsError('')
   } catch (error) {
     showConversationsError(error instanceof TypeError ? '无法连接服务' : error.message || '加载群组失败')
   } finally {
     state.conversationsLoading = false
+  }
+}
+
+function renderConversationSuggestions(body) {
+  const items = Array.isArray(body?.items) ? body.items : []
+  if (!el.conversationsSuggestions) return
+  el.conversationsSuggestions.replaceChildren()
+  for (const item of items) {
+    const row = document.createElement('li')
+    row.className = 'autonomy-item'
+    const text = document.createElement('p')
+    text.className = 'autonomy-budget'
+    text.textContent = `💡 ${item.conversationId} 可能是 ${item.tag}（${item.evidence}）`
+    const accept = document.createElement('button')
+    accept.className = 'ghost'
+    accept.type = 'button'
+    accept.textContent = '采纳'
+    accept.addEventListener('click', () => void decideSuggestion(item.id, true))
+    const dismiss = document.createElement('button')
+    dismiss.className = 'ghost'
+    dismiss.type = 'button'
+    dismiss.textContent = '忽略'
+    dismiss.addEventListener('click', () => void decideSuggestion(item.id, false))
+    row.append(text, accept, dismiss)
+    el.conversationsSuggestions.append(row)
+  }
+}
+
+async function decideSuggestion(id, accept) {
+  if (!state.token) return
+  try {
+    const res = await fetch(
+      accept ? ENDPOINTS.conversationSuggestionAccept : ENDPOINTS.conversationSuggestionDismiss,
+      {
+        method: 'POST',
+        headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+        body: JSON.stringify({ id }),
+      },
+    )
+    const detail = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(detail?.error || `操作失败（HTTP ${res.status}）`)
+    showConversationsError('')
+    await loadConversations()
+    setStatus('online', accept ? '已采纳标签建议' : '已忽略标签建议')
+  } catch (error) {
+    showConversationsError(error instanceof TypeError ? '无法连接服务' : error.message || '操作失败')
   }
 }
 

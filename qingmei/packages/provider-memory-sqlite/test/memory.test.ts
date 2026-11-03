@@ -324,3 +324,21 @@ test('多源印证：不同来源提升置信度，同一来源重复不重复�
     await dispose()
   }
 })
+
+test('幂等事件：同一 idempotencyKey 只应用一次', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    const record = { ...fact('主人', '喜欢', '咖啡', 0.8), idempotencyKey: 'evt_1' }
+    await ctx.memory.ingest([record])
+    await ctx.memory.ingest([record])
+
+    const store = (ctx as unknown as { reflect: { get(name: string, required: false): unknown } }).reflect.get('store', false) as {
+      collection(name: string): { find(): Promise<Record<string, unknown>[]> }
+    }
+    assert.equal((await store.collection('qm_mem_fact').find()).length, 1)
+    assert.equal((await store.collection('qm_memory_event').find()).length, 1)
+    assert.equal((await store.collection('qm_mem_provenance').find()).length, 1)
+  } finally {
+    await dispose()
+  }
+})

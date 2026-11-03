@@ -9,6 +9,8 @@ import type { Context } from 'cordis'
 import {
   EVENTS,
   GROUP_TAG_POLICIES,
+  textOf,
+  uid,
   ConversationProfileService,
   type ChannelId,
   type ChannelService,
@@ -26,6 +28,8 @@ import {
 export interface ConversationProfileConfig {
   /** 固定话术；docs/11 要求确定性路径，不调模型 */
   pendingReply?: string
+  /** 累计多少条群消息后给标签建议，默认 8 */
+  suggestAfterMessages?: number
 }
 
 export const name = 'qm-conversation-profile'
@@ -39,6 +43,24 @@ const LABELS: Record<GroupTag, string> = {
   family: '家人群',
   client: '客户群',
   temp: '临时群',
+}
+
+interface StatsRow extends Row {
+  channel: string
+  platform_conversation_id: string
+  count: number
+  texts_json: string
+}
+
+interface SuggestionRow extends Row {
+  channel: string
+  platform_conversation_id: string
+  tag: string
+  base: string
+  note: string
+  evidence: string
+  status: string
+  created_at: number
 }
 
 interface ProfileRow extends Row {
@@ -56,14 +78,22 @@ class SqliteConversationProfile extends ConversationProfileService {
   private readonly collection
   private readonly cache = new Map<string, ConversationProfile>()
   private readonly pendingReply: string
+  private readonly channel: ChannelService
+  private readonly suggestAfter: number
+  private readonly stats
+  private readonly suggestions
   private queue: Promise<unknown> = Promise.resolve()
 
-  constructor(ctx: Context, pendingReply: string) {
+  constructor(ctx: Context, pendingReply: string, channel: ChannelService, suggestAfter: number) {
     super(ctx)
     this.pendingReply = pendingReply
+    this.channel = channel
+    this.suggestAfter = Math.max(1, suggestAfter)
     const store = ctx.reflect.get('store', false) as StoreService | undefined
     if (!store) throw new Error('[qm-conversation-profile] 缺少 store 服务')
     this.collection = store.collection<ProfileRow>(COLLECTION)
+    this.stats = store.collection<StatsRow>('qm_conversation_stats')
+    this.suggestions = store.collection<SuggestionRow>('qm_conversation_suggestion')
   }
 
   /** 启动时把已有画像读进缓存，让「未配置」判断不必等异步查询 */
@@ -98,7 +128,16 @@ class SqliteConversationProfile extends ConversationProfileService {
     tags: GroupTag[]
     title?: string
   }): Promise<ConversationProfile> {
-    return this.serialize(async () => {
+    return this.serialize(() => this.configureInner(input))
+  }
+
+  private async configureInner(input: {
+    channel: ChannelId
+    conversationId: string
+    tags: GroupTag[]
+    title?: string
+  }): Promise<ConversationProfile> {
+    return (async () => {
       const tags = [...new Set(input.tags)].filter((tag): tag is GroupTag => TAGS.includes(tag))
       if (tags.length === 0) throw new Error('至少给一个合法标签')
       const id = keyOf(input.channel, input.conversationId)
@@ -128,7 +167,7 @@ class SqliteConversationProfile extends ConversationProfileService {
       const profile = toProfile(row!)
       this.cache.set(id, profile)
       return profile
-    })
+    })()
   }
 
   /** 把新群登记为 pending；已存在则只更新活跃时间 */
@@ -188,6 +227,108 @@ class SqliteConversationProfile extends ConversationProfileService {
     return `本群标签：${labels}；回复不超过 ${policy.maxChars} 字；语气${policy.tone}${policy.proactive ? '' : '；不主动发言'}${forbidden}`
   }
 
+  /** 记录群消息；达到阈值后给一次标签建议（只建议，不自动应用） */
+  async recordGroupMessage(channel: ChannelId, conversationId: string, text: string): Promise<void> {
+    const trimmed = text.trim().slice(0, 200)
+    if (!trimmed) return
+    await this.serialize(async () => {
+      const id = keyOf(channel, conversationId)
+      const existing = await this.stats.get(id)
+      const texts = existing ? parseJson<string[]>(existing.texts_json, []) : []
+      texts.push(trimmed)
+      if (texts.length > 20) texts.shift()
+      const count = (existing?.count ?? 0) + 1
+      if (existing) await this.stats.update(id, { count, texts_json: JSON.stringify(texts) })
+      else {
+        await this.stats.insert({
+          id,
+          channel,
+          platform_conversation_id: conversationId,
+          count,
+          texts_json: JSON.stringify(texts),
+        })
+      }
+
+      if (count < this.suggestAfter) return
+      const rows = await this.suggestions.find({})
+      if (rows.some((row) => row.channel === channel && row.platform_conversation_id === conversationId)) return
+
+      const suggestion = classifySuggestion(texts)
+      await this.suggestions.insert({
+        id: uid('sug'),
+        channel,
+        platform_conversation_id: conversationId,
+        tag: suggestion.tag,
+        base: suggestion.tag,
+        note: suggestion.note,
+        evidence: suggestion.evidence,
+        status: 'proposed',
+        created_at: Date.now(),
+      })
+      await this.channel
+        .send({
+          channel: 'web',
+          conversationId: 'owner',
+          blocks: [
+            {
+              type: 'text',
+              text: `💡 群 ${conversationId} 可能是${LABELS[suggestion.tag]}（证据：${suggestion.evidence}）。采纳：POST /api/v1/conversations/suggestions/accept`,
+            },
+          ],
+        })
+        .catch(() => undefined)
+    })
+  }
+
+  async listSuggestions(): Promise<{
+    id: string
+    channel: ChannelId
+    conversationId: string
+    tag: GroupTag
+    note: string
+    evidence: string
+    createdAt: Date
+  }[]> {
+    const rows = await this.suggestions.find({})
+    return rows
+      .filter((row) => row.status === 'proposed')
+      .sort((a, b) => b.created_at - a.created_at)
+      .map((row) => ({
+        id: row.id,
+        channel: row.channel as ChannelId,
+        conversationId: row.platform_conversation_id,
+        tag: row.tag as GroupTag,
+        note: row.note,
+        evidence: row.evidence,
+        createdAt: new Date(row.created_at),
+      }))
+  }
+
+  async acceptSuggestion(id: string): Promise<ConversationProfile | null> {
+    return this.serialize(async () => {
+      const suggestion = await this.suggestions.get(id)
+      if (!suggestion || suggestion.status !== 'proposed') return null
+      const current = await this.get(suggestion.channel as ChannelId, suggestion.platform_conversation_id)
+      const tags = [...new Set([...(current?.tags ?? []), suggestion.tag as GroupTag])]
+      const profile = await this.configureInner({
+        channel: suggestion.channel as ChannelId,
+        conversationId: suggestion.platform_conversation_id,
+        tags,
+        ...(current?.title ? { title: current.title } : {}),
+      })
+      await this.suggestions.update(id, { status: 'accepted' })
+      return profile
+    })
+  }
+
+  async dismissSuggestion(id: string): Promise<boolean> {
+    return this.serialize(async () => {
+      const suggestion = await this.suggestions.get(id)
+      if (!suggestion || suggestion.status !== 'proposed') return false
+      await this.suggestions.update(id, { status: 'dismissed' })
+      return true
+    })
+  }
   private serialize<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queue.then(fn, fn)
     this.queue = run.then(
@@ -205,11 +346,19 @@ export function apply(ctx: Context, config: ConversationProfileConfig = {}): voi
   if (!gateway) throw new Error('[qm-conversation-profile] 缺少 gateway 服务')
 
   const pendingReply = config.pendingReply ?? '权限未配置'
-  const profiles = new SqliteConversationProfile(ctx, pendingReply)
+  const profiles = new SqliteConversationProfile(
+    ctx,
+    pendingReply,
+    channel,
+    config.suggestAfterMessages ?? 8,
+  )
   void profiles.load().catch(() => undefined)
 
   ctx.events.on(EVENTS.inbound, (message: InboundMessage) => {
     if (message.conversation.kind !== 'group') return
+    void profiles
+      .recordGroupMessage(message.channel, message.conversation.id, textOf(message.blocks))
+      .catch(() => undefined)
     // 同步判断：缓存在启动时已加载，未配置的群不进入模型
     const cached = profiles.getCached(message.channel, message.conversation.id)
     if (cached && cached.status === 'configured') {
@@ -245,6 +394,101 @@ export function apply(ctx: Context, config: ConversationProfileConfig = {}): voi
       })
       .catch(() => undefined)
   })
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/conversations/suggestions',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        res.status(200).send({ ok: true, items: await profiles.listSuggestions() })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/conversations/suggestions/accept',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const profile = await profiles.acceptSuggestion(id)
+        if (!profile) {
+          res.status(404).send({ ok: false, error: '没有这条建议' })
+          return
+        }
+        res.status(200).send({ ok: true, profile, policy: profiles.policy(profile) })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/conversations/suggestions/dismiss',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const ok = await profiles.dismissSuggestion(id)
+        res.status(ok ? 200 : 404).send(ok ? { ok: true } : { ok: false, error: '没有这条建议' })
+      },
+    }),
+  )
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/conversations/suggestions',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        res.status(200).send({ ok: true, items: await profiles.listSuggestions() })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/conversations/suggestions/accept',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const profile = await profiles.acceptSuggestion(id)
+        if (!profile) {
+          res.status(404).send({ ok: false, error: '没有这条建议' })
+          return
+        }
+        res.status(200).send({ ok: true, profile, policy: profiles.policy(profile) })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/conversations/suggestions/dismiss',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const ok = await profiles.dismissSuggestion(id)
+        res.status(ok ? 200 : 404).send(ok ? { ok: true } : { ok: false, error: '没有这条建议' })
+      },
+    }),
+  )
 
   ctx.effect(() =>
     gateway.route({
@@ -290,6 +534,43 @@ export function apply(ctx: Context, config: ConversationProfileConfig = {}): voi
   )
 }
 
+const SUGGEST_KEYWORDS: Record<GroupTag, string[]> = {
+  client: ['合同', '报价', '交付', '甲方', '需求'],
+  work: ['进度', '项目', '周会', '排期', '上线'],
+  family: ['孩子', '家里', '爸妈', '生日'],
+  casual: [],
+  temp: [],
+}
+
+/** 只给建议：按关键词粗分，证据写清楚，最终由 owner 采纳 */
+export function classifySuggestion(texts: string[]): { tag: GroupTag; note: string; evidence: string } {
+  let best: GroupTag = 'casual'
+  let bestHits: string[] = []
+  for (const tag of ['client', 'work', 'family'] as GroupTag[]) {
+    const hits = SUGGEST_KEYWORDS[tag].filter((keyword) => texts.some((text) => text.includes(keyword)))
+    if (hits.length > bestHits.length) {
+      best = tag
+      bestHits = hits
+    }
+  }
+  if (bestHits.length === 0) {
+    return { tag: 'casual', note: '没有明显的工作/客户/家庭关键词，倾向吹水群', evidence: `${texts.length} 条消息，无匹配关键词` }
+  }
+  const count = texts.filter((text) => bestHits.some((keyword) => text.includes(keyword))).length
+  return {
+    tag: best,
+    note: `群消息里出现了${bestHits.join('、')}，建议归为${LABELS[best]}`,
+    evidence: `${bestHits.join('、')}（${count}/${texts.length} 条）`,
+  }
+}
+
+function parseJson<T>(raw: string, fallback: T): T {
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
 function keyOf(channel: ChannelId, conversationId: string): string {
   return `${channel}:${conversationId}`
 }
