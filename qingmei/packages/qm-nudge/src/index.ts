@@ -9,7 +9,7 @@
  */
 import type { Context } from 'cordis'
 import {
-  EVENTS,
+  uid,
   type ChannelService,
   type GatewayRequest,
   type GatewayResponse,
@@ -31,6 +31,11 @@ export const name = 'qm-nudge'
 export const inject = ['task', 'channel', 'gateway', 'store']
 
 const COLLECTION = 'qm_nudge_state'
+const ENFORCEMENT_COLLECTION = 'qm_enforcement'
+const ENFORCE_ACTIONS: Record<number, string[]> = {
+  3: ['focus-mode', 'block-apps', 'close-chat'],
+  4: ['close-chat', 'lock-screen'],
+}
 const HOUR = 60 * 60 * 1000
 const COOLDOWN: Record<number, number> = { 0: 3 * HOUR, 1: 3 * HOUR, 2: 6 * HOUR, 3: 12 * HOUR, 4: 24 * HOUR }
 
@@ -44,6 +49,17 @@ interface NudgeRow extends Row {
   paused_until: number
   escape_day: string
   escape_used: number
+}
+
+interface EnforcementRow extends Row {
+  task_id: string
+  level: number
+  action: string
+  status: string
+  requested_at: number
+  cancel_until: number
+  expires_at: number
+  facts_json: string
 }
 
 export interface NudgeState {
@@ -104,6 +120,7 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
   if (!store) throw new Error('[qm-nudge] 缺少 store 服务')
 
   const states = store.collection<NudgeRow>(COLLECTION)
+  const enforcements = store.collection<EnforcementRow>(ENFORCEMENT_COLLECTION)
   const now = () => (config.clock ? config.clock() : new Date())
   let ticking = false
 
@@ -112,6 +129,12 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
     ticking = true
     try {
       const nowMs = now().getTime()
+      // 没有执行器时，排队动作到期自动失效（失效安全）
+      for (const row of await enforcements.find({})) {
+        if (row.status === 'pending' && nowMs > row.expires_at) {
+          await enforcements.update(row.id, { status: 'expired' })
+        }
+      }
       const runs = await task.list(100)
       const changed: NudgeState[] = []
       for (const run of runs) {
@@ -181,6 +204,7 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
           row.updated_at = nowMs
           await save(row)
           await notify(run, target, facts)
+          if (target >= 3) await requestFor(run, target, facts, nowMs)
           changed.push(toState(run, row))
           continue
         }
@@ -192,6 +216,54 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
     } finally {
       ticking = false
     }
+  }
+
+  /** W3/W4：只排队，不执行；无设备执行器时停在 pending 并过期 */
+  async function requestFor(
+    run: TaskRun,
+    level: number,
+    facts: string[],
+    nowMs: number,
+  ): Promise<EnforcementRow | null> {
+    const contract = run.contract
+    if (!contract || level < 3) return null
+    if (level === 3 && contract.enforcement !== 'strict' && contract.enforcement !== 'contract') return null
+    if (level === 4 && contract.enforcement !== 'contract') return null
+    const allowed = contract.allowedActions ?? []
+    const action = (ENFORCE_ACTIONS[level] ?? []).find((item) => allowed.includes(item))
+    if (!action) return null
+    if (level === 4) {
+      const today = dayKey(new Date(nowMs))
+      const used = (await enforcements.find({})).filter(
+        (row) => row.task_id === run.id && row.level === 4 && dayKey(new Date(row.requested_at)) === today,
+      ).length
+      if (used >= 1) return null
+    }
+    const row: EnforcementRow = {
+      id: uid('enf'),
+      task_id: run.id,
+      level,
+      action,
+      status: 'pending',
+      requested_at: nowMs,
+      cancel_until: nowMs + 30_000,
+      expires_at: nowMs + 5 * 60_000,
+      facts_json: JSON.stringify(facts),
+    }
+    await enforcements.insert(row)
+    await channel
+      .send({
+        channel: 'web',
+        conversationId: 'owner',
+        blocks: [
+          {
+            type: 'text',
+            text: `🛡️ 已排队 L${level} 摩擦动作「${action}」，30 秒内可取消。当前没有设备执行器，不会真的执行。`,
+          },
+        ],
+      })
+      .catch(() => undefined)
+    return row
   }
 
   async function save(row: NudgeRow): Promise<void> {
@@ -317,6 +389,86 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
       },
     }),
   )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/enforcement',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const items = (await enforcements.find({}))
+          .sort((a, b) => b.requested_at - a.requested_at)
+          .slice(0, 30)
+          .map((row) => ({
+            id: row.id,
+            taskId: row.task_id,
+            level: row.level,
+            action: row.action,
+            status: row.status,
+            requestedAt: new Date(row.requested_at),
+            cancelUntil: new Date(row.cancel_until),
+            expiresAt: new Date(row.expires_at),
+            facts: JSON.parse(row.facts_json) as string[],
+          }))
+        res.status(200).send({ ok: true, items })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/enforcement/request',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const taskId = typeof body.taskId === 'string' ? body.taskId.trim() : ''
+        const level = Number(body.level ?? 3)
+        if (!taskId || (level !== 3 && level !== 4)) {
+          res.status(400).send({ ok: false, error: 'taskId 必填，level 为 3 或 4' })
+          return
+        }
+        const run = await task.get(taskId)
+        if (!run) {
+          res.status(404).send({ ok: false, error: '没有这个任务' })
+          return
+        }
+        const row = await requestFor(run, level, ['手动请求'], now().getTime())
+        if (!row) {
+          res.status(400).send({
+            ok: false,
+            error: '合同强度不足、动作不在白名单，或今日 L4 次数已用完',
+          })
+          return
+        }
+        res.status(201).send({ ok: true, enforcement: { id: row.id, action: row.action, status: row.status } })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/enforcement/cancel',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const row = await enforcements.get(id)
+        if (!row || row.status !== 'pending') {
+          res.status(404).send({ ok: false, error: '没有待执行的请求' })
+          return
+        }
+        await enforcements.update(id, { status: 'cancelled' })
+        res.status(200).send({ ok: true })
+      },
+    }),
+  )
+}
+
+function dayKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 export const defaultExport = { name, inject, apply }
