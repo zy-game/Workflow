@@ -23,19 +23,32 @@ import {
 
 export interface SkillConfig {
   skillsDir?: string
+  /** 离线市场索引，默认 <skillsDir>/market.json */
+  marketPath?: string
+  /** 允许技能声明的工具白名单 */
+  allowedTools?: string[]
 }
 
 export const name = 'qm-skill'
 export const inject = ['gateway']
 
+const DEFAULT_ALLOWED_TOOLS = [
+  'memory_recall','memory_remember',
+  'schedule_list', 'schedule_create', 'schedule_update', 'schedule_cancel', 'schedule_pause', 'schedule_resume',
+  'qm_finish_task', 'qm_report_progress', 'qm_publish_artifact',
+  'qm_skill_list', 'qm_skill_read', 'qm_request_approval',
+]
+
 class FileSkills extends SkillService {
   private readonly dir: string
+  private readonly allowedTools: Set<string>
   private ready: Promise<void> = Promise.resolve()
   private definitions: (SkillDefinition & { body: string })[] = []
 
   constructor(ctx: Context, config: SkillConfig = {}) {
     super(ctx)
     this.dir = config.skillsDir ?? path.join(process.cwd(), 'skills')
+    this.allowedTools = new Set([...DEFAULT_ALLOWED_TOOLS, ...(config.allowedTools ?? [])])
     this.ready = this.load()
   }
 
@@ -131,6 +144,9 @@ class FileSkills extends SkillService {
     if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(skillName)) throw new Error('技能名只允许小写字母/数字/短横线（≤40）')
     const body = String(input.body ?? '')
     if (!body.trim()) throw new Error('SKILL.md 不能为空')
+    const tools = Array.isArray(input.tools) ? input.tools.map(String).slice(0, 20) : []
+    const denied = tools.find((tool) => !this.allowedTools.has(tool))
+    if (denied) throw new Error(`技能声明了未授权工具：${denied}`)
     const folder = path.join(this.dir, skillName)
     const recent = this.backups(skillName).filter((item) => item.at >= Date.now() - 30 * 24 * 60 * 60 * 1000)
     if (existsSync(folder) && recent.length >= 3) {
@@ -152,7 +168,7 @@ class FileSkills extends SkillService {
           {
             name: skillName,
             description: String(input.description ?? '').slice(0, 300),
-            tools: Array.isArray(input.tools) ? input.tools.map(String).slice(0, 20) : [],
+            tools,
           },
           null,
           2,
@@ -183,6 +199,71 @@ export function apply(ctx: Context, config: SkillConfig = {}): void {
   ctx.plugin(FileSkills, config)
   const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
   if (!gateway) return
+
+  const marketPath = path.resolve(
+    config.marketPath ?? path.join(config.skillsDir ?? path.join(process.cwd(), 'skills'), 'market.json'),
+  )
+  const readMarket = async (): Promise<
+    { id: string; name: string; description: string; tools: string[]; body: string }[]
+  > => {
+    try {
+      const parsed = JSON.parse(await readFile(marketPath, 'utf8')) as { items?: unknown }
+      return Array.isArray(parsed.items)
+        ? (parsed.items as { id: string; name: string; description: string; tools: string[]; body: string }[])
+        : []
+    } catch {
+      return []
+    }
+  }
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/skills/market',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        res.status(200).send({ ok: true, items: await readMarket(), cached: true })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/skills/market/install',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        const entry = (await readMarket()).find((item) => item.id === id)
+        if (!entry) {
+          res.status(404).send({ ok: false, error: '市场里没有这个技能' })
+          return
+        }
+        const skills = ctx.reflect.get('skills', false) as SkillService & {
+          install?: (input: {
+            name: string
+            body: string
+            description?: string
+            tools?: string[]
+          }) => Promise<SkillDefinition>
+        }
+        if (!skills.install) {
+          res.status(501).send({ ok: false, error: '当前技能实现不支持安装' })
+          return
+        }
+        try {
+          const skill = await skills.install({
+            name: entry.name,
+            body: entry.body,
+            description: entry.description,
+            tools: Array.isArray(entry.tools) ? entry.tools : [],
+          })
+          res.status(200).send({ ok: true, skill })
+        } catch (error) {
+          res.status(400).send({ ok: false, error: error instanceof Error ? error.message : '安装失败' })
+        }
+      },
+    }),
+  )
 
   ctx.effect(() =>
     gateway.route({

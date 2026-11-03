@@ -201,3 +201,69 @@ test('30 天熔断与回滚：第 4 次覆盖被拒，rollback 恢复上一版',
     await h.dispose()
   }
 })
+
+test('离线技能市场：列表与按 id 安装', async () => {
+  const h = await setup()
+  try {
+    writeFileSync(
+      join(h.skillsDir, 'market.json'),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            id: 'standup',
+            name: 'standup',
+            description: '每日站会',
+            tools: ['qm_finish_task'],
+            body: '# 站会\n三句话。',
+          },
+        ],
+      }),
+    )
+    const listed = await h.call({ method: 'GET', path: '/api/v1/skills/market', query: {}, headers: {} })
+    assert.equal(listed.status, 200)
+    assert.equal((listed.body as { items: { id: string }[] }).items[0]?.id, 'standup')
+    const installed = await h.call({
+      method: 'POST',
+      path: '/api/v1/skills/market/install',
+      query: {},
+      headers: {},
+      body: { id: 'standup' },
+    })
+    assert.equal(installed.status, 200)
+    const read = await h.call({
+      method: 'GET',
+      path: '/api/v1/skills/read',
+      query: { name: 'standup' },
+      headers: {},
+    })
+    assert.match((read.body as { skill: { body: string } }).skill.body, /三句话/)
+    const missing = await h.call({
+      method: 'POST',
+      path: '/api/v1/skills/market/install',
+      query: {},
+      headers: {},
+      body: { id: 'nope' },
+    })
+    assert.equal(missing.status, 404)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('技能工具白名单：未授权工具拒绝安装', async () => {
+  const h = await setup()
+  try {
+    const res = await h.call({
+      method: 'POST',
+      path: '/api/v1/skills/install',
+      query: {},
+      headers: {},
+      body: { name: 'unsafe', body: '# x', tools: ['shell_exec'] },
+    })
+    assert.equal(res.status, 400)
+    assert.match((res.body as { error: string }).error, /未授权工具/)
+  } finally {
+    await h.dispose()
+  }
+})
