@@ -58,6 +58,26 @@
           >
             群组
           </button>
+          <button
+            id="review-toggle"
+            class="ghost"
+            type="button"
+            aria-expanded="false"
+            aria-controls="review"
+            title="月度复盘"
+          >
+            复盘
+          </button>
+          <button
+            id="incidents-toggle"
+            class="ghost"
+            type="button"
+            aria-expanded="false"
+            aria-controls="incidents"
+            title="查看故障与自愈"
+          >
+            故障
+          </button>
           <span
             id="status"
             class="status"
@@ -131,6 +151,39 @@
         <p id="conversations-error" class="autonomy-error" role="alert" hidden></p>
         <ul id="conversations-suggestions" class="conversation-suggestions"></ul>
         <ul id="conversations-list" class="autonomy-list"></ul>
+      </section>
+
+      <section id="incidents" class="autonomy" hidden aria-labelledby="incidents-title">
+        <div class="autonomy-head">
+          <h2 id="incidents-title" class="autonomy-title">故障</h2>
+          <div class="autonomy-tools">
+            <button id="incidents-refresh" class="ghost" type="button">刷新</button>
+            <button id="incidents-close" class="ghost" type="button">关闭</button>
+          </div>
+        </div>
+        <p id="incidents-empty" class="autonomy-empty">
+          还没有故障记录。回合或任务失败时会自动记在这里。
+        </p>
+        <p id="incidents-error" class="autonomy-error" role="alert" hidden></p>
+        <ul id="incidents-list" class="autonomy-list"></ul>
+      </section>
+
+      <section id="review" class="autonomy" hidden aria-labelledby="review-title">
+        <div class="autonomy-head">
+          <h2 id="review-title" class="autonomy-title">复盘</h2>
+          <div class="autonomy-tools">
+            <button id="review-run" class="ghost" type="button">生成本月</button>
+            <button id="review-refresh" class="ghost" type="button">刷新</button>
+            <button id="review-close" class="ghost" type="button">关闭</button>
+          </div>
+        </div>
+        <p id="review-empty" class="autonomy-empty">还没有复盘报告。下月 1 号会自动生成。</p>
+        <p id="review-error" class="autonomy-error" role="alert" hidden></p>
+        <pre id="review-markdown" class="review-markdown"></pre>
+        <div class="review-score">
+          <label>本月评分 <input id="review-score-input" type="number" min="1" max="10" /></label>
+          <button id="review-score-submit" class="ghost" type="button">提交评分</button>
+        </div>
       </section>
 
       <section id="schedules" class="schedules" hidden aria-labelledby="schedules-title">

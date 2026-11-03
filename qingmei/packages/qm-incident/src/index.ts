@@ -193,18 +193,7 @@ export function apply(ctx: Context, config: IncidentConfig = {}): void {
       })
 
       if (runId) {
-        await channel
-          .send({
-            channel: 'web',
-            conversationId: 'owner',
-            blocks: [
-              {
-                type: 'text',
-                text: `♻️ 命中 playbook（${fingerprint}），已自动派诊断任务 ${runId}\n根因假设：${playbook!.root_cause.slice(0, 120)}`,
-              },
-            ],
-          })
-          .catch(() => undefined)
+        // docs/05 S2：命中 playbook 的自动修复不弹窗，只在 incident 账本里留痕
       } else if (canPropose) {
         const suggestion = playbook
           ? `\n已有 playbook：${playbook.root_cause.slice(0, 100)} → ${playbook.action.slice(0, 100)}（未自动执行）`

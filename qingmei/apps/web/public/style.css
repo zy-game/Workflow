@@ -1004,3 +1004,21 @@ body {
   margin: 0 0 10px;
   padding: 0;
 }
+
+.review-markdown {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 50vh;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.review-score {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}

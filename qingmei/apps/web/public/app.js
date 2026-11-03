@@ -21,6 +21,13 @@ const ENDPOINTS = {
   conversationSuggestions: './api/v1/conversations/suggestions',
   conversationSuggestionAccept: './api/v1/conversations/suggestions/accept',
   conversationSuggestionDismiss: './api/v1/conversations/suggestions/dismiss',
+  incidents: './api/v1/incidents',
+  incidentDispatch: './api/v1/incidents/dispatch',
+  incidentRollback: './api/v1/incidents/rollback',
+  incidentResolve: './api/v1/incidents/resolve',
+  review: './api/v1/review',
+  reviewRun: './api/v1/review/run',
+  reviewScore: './api/v1/review/score',
 }
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
@@ -67,6 +74,23 @@ const el = {
   conversations: document.getElementById('conversations'),
   conversationsList: document.getElementById('conversations-list'),
   conversationsSuggestions: document.getElementById('conversations-suggestions'),
+  incidentsToggle: document.getElementById('incidents-toggle'),
+  incidents: document.getElementById('incidents'),
+  incidentsList: document.getElementById('incidents-list'),
+  incidentsEmpty: document.getElementById('incidents-empty'),
+  incidentsError: document.getElementById('incidents-error'),
+  incidentsRefresh: document.getElementById('incidents-refresh'),
+  incidentsClose: document.getElementById('incidents-close'),
+  reviewToggle: document.getElementById('review-toggle'),
+  review: document.getElementById('review'),
+  reviewMarkdown: document.getElementById('review-markdown'),
+  reviewEmpty: document.getElementById('review-empty'),
+  reviewError: document.getElementById('review-error'),
+  reviewRun: document.getElementById('review-run'),
+  reviewRefresh: document.getElementById('review-refresh'),
+  reviewClose: document.getElementById('review-close'),
+  reviewScoreInput: document.getElementById('review-score-input'),
+  reviewScoreSubmit: document.getElementById('review-score-submit'),
   conversationsEmpty: document.getElementById('conversations-empty'),
   conversationsError: document.getElementById('conversations-error'),
   conversationsRefresh: document.getElementById('conversations-refresh'),
@@ -95,6 +119,11 @@ const state = {
   autonomyLoading: false,
   conversationsOpen: false,
   conversationsLoading: false,
+  incidentsOpen: false,
+  incidentsLoading: false,
+  reviewOpen: false,
+  reviewLoading: false,
+  reviewId: null,
   autonomyMode: 'A1',
   autonomyLocked: false,
 }
@@ -706,6 +735,8 @@ function setConversationsOpen(open) {
     setTasksOpen(false)
     setSchedulesOpen(false)
     setAutonomyOpen(false)
+    setIncidentsOpen(false)
+    setReviewOpen(false)
     void loadConversations()
   }
 }
@@ -856,6 +887,200 @@ function showConversationsError(message) {
   el.conversationsError.textContent = message
   el.conversationsError.hidden = !message
 }
+
+function setIncidentsOpen(open) {
+  state.incidentsOpen = open
+  if (!el.incidents) return
+  el.incidents.hidden = !open
+  el.incidentsToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    setTasksOpen(false)
+    setSchedulesOpen(false)
+    setAutonomyOpen(false)
+    setConversationsOpen(false)
+    void loadIncidents()
+  }
+}
+
+const INCIDENT_STATUS_TEXT = {
+  open: '待处理',
+  proposed: '待处理',
+  acknowledged: '已派诊断',
+  fused: '已熔断',
+  resolved: '已解决',
+}
+
+async function loadIncidents() {
+  if (!state.token || state.incidentsLoading) return
+  state.incidentsLoading = true
+  try {
+    const res = await fetch(ENDPOINTS.incidents, { headers: withAuth({ Accept: 'application/json' }) })
+    if (!res.ok) throw new Error(`加载故障失败（HTTP ${res.status}）`)
+    renderIncidents(await res.json())
+    showIncidentsError('')
+  } catch (error) {
+    showIncidentsError(error instanceof TypeError ? '无法连接服务' : error.message || '加载故障失败')
+  } finally {
+    state.incidentsLoading = false
+  }
+}
+
+function renderIncidents(body) {
+  const items = Array.isArray(body?.items) ? body.items : []
+  if (!el.incidentsList) return
+  el.incidentsList.replaceChildren()
+  if (el.incidentsEmpty) el.incidentsEmpty.hidden = items.length > 0
+  for (const item of items) {
+    const row = document.createElement('li')
+    row.className = 'autonomy-item'
+    const title = document.createElement('p')
+    title.className = 'autonomy-title'
+    title.textContent = `${INCIDENT_STATUS_TEXT[item.status] ?? item.status} · ${item.fingerprint}`
+    const meta = document.createElement('p')
+    meta.className = 'autonomy-budget'
+    meta.textContent = `${String(item.message).slice(0, 120)} · 出现 ${item.count} 次 · ${formatWhen(item.lastAt, null)}`
+    row.append(title, meta)
+
+    const tools = document.createElement('div')
+    tools.className = 'autonomy-tools'
+    if (item.status === 'proposed' || item.status === 'open' || item.status === 'fused') {
+      const dispatch = document.createElement('button')
+      dispatch.className = 'ghost'
+      dispatch.type = 'button'
+      dispatch.textContent = '派诊断'
+      dispatch.addEventListener('click', () => void incidentAction(ENDPOINTS.incidentDispatch, item.id, '已派诊断'))
+      tools.append(dispatch)
+    }
+    if (item.runId) {
+      const rollback = document.createElement('button')
+      rollback.className = 'ghost'
+      rollback.type = 'button'
+      rollback.textContent = '回滚任务'
+      rollback.addEventListener('click', () => void incidentAction(ENDPOINTS.incidentRollback, item.id, '已回滚'))
+      tools.append(rollback)
+    }
+    if (item.status !== 'resolved') {
+      const resolve = document.createElement('button')
+      resolve.className = 'ghost'
+      resolve.type = 'button'
+      resolve.textContent = '解决'
+      resolve.addEventListener('click', () => void incidentAction(ENDPOINTS.incidentResolve, item.id, '已解决'))
+      tools.append(resolve)
+    }
+    row.append(tools)
+    el.incidentsList.append(row)
+  }
+}
+
+async function incidentAction(endpoint, id, okText) {
+  if (!state.token) return
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify({ id }),
+    })
+    const detail = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(detail?.error || `操作失败（HTTP ${res.status}）`)
+    showIncidentsError('')
+    await loadIncidents()
+    setStatus('online', okText)
+  } catch (error) {
+    showIncidentsError(error instanceof TypeError ? '无法连接服务' : error.message || '操作失败')
+  }
+}
+
+function showIncidentsError(message) {
+  if (!el.incidentsError) return
+  el.incidentsError.textContent = message
+  el.incidentsError.hidden = !message
+}
+
+function setReviewOpen(open) {
+  state.reviewOpen = open
+  if (!el.review) return
+  el.review.hidden = !open
+  el.reviewToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    setTasksOpen(false)
+    setSchedulesOpen(false)
+    setAutonomyOpen(false)
+    setConversationsOpen(false)
+    setIncidentsOpen(false)
+    void loadReview()
+  }
+}
+
+async function loadReview() {
+  if (!state.token || state.reviewLoading) return
+  state.reviewLoading = true
+  try {
+    const res = await fetch(ENDPOINTS.review, { headers: withAuth({ Accept: 'application/json' }) })
+    if (!res.ok) throw new Error(`加载复盘失败（HTTP ${res.status}）`)
+    const body = await res.json()
+    renderReview(Array.isArray(body.items) ? body.items[0] : null)
+    showReviewError('')
+  } catch (error) {
+    showReviewError(error instanceof TypeError ? '无法连接服务' : error.message || '加载复盘失败')
+  } finally {
+    state.reviewLoading = false
+  }
+}
+
+function renderReview(item) {
+  if (!el.reviewMarkdown) return
+  state.reviewId = item?.id ?? null
+  el.reviewMarkdown.textContent = item?.markdown ?? ''
+  if (el.reviewEmpty) el.reviewEmpty.hidden = Boolean(item)
+  if (el.reviewScoreInput) el.reviewScoreInput.value = item?.score ?? ''
+}
+
+async function runReview() {
+  if (!state.token) return
+  try {
+    const res = await fetch(ENDPOINTS.reviewRun, {
+      method: 'POST',
+      headers: withAuth({ Accept: 'application/json' }),
+    })
+    const detail = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(detail?.error || `生成失败（HTTP ${res.status}）`)
+    renderReview(detail?.review ?? null)
+    showReviewError('')
+    setStatus('online', '已生成月度复盘')
+  } catch (error) {
+    showReviewError(error instanceof TypeError ? '无法连接服务' : error.message || '生成失败')
+  }
+}
+
+async function submitReviewScore() {
+  if (!state.token || !state.reviewId) return
+  const score = Number(el.reviewScoreInput?.value)
+  if (!Number.isFinite(score) || score < 1 || score > 10) {
+    showReviewError('评分需在 1..10')
+    return
+  }
+  try {
+    const res = await fetch(ENDPOINTS.reviewScore, {
+      method: 'POST',
+      headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+      body: JSON.stringify({ id: state.reviewId, score }),
+    })
+    const detail = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(detail?.error || `提交失败（HTTP ${res.status}）`)
+    showReviewError('')
+    await loadReview()
+    setStatus('online', `已记录评分 ${score}/10`)
+  } catch (error) {
+    showReviewError(error instanceof TypeError ? '无法连接服务' : error.message || '提交失败')
+  }
+}
+
+function showReviewError(message) {
+  if (!el.reviewError) return
+  el.reviewError.textContent = message
+  el.reviewError.hidden = !message
+}
+
 function setSchedulesOpen(open) {
   state.schedulesOpen = open
   el.schedules.hidden = !open
@@ -863,6 +1088,8 @@ function setSchedulesOpen(open) {
   if (open) {
     setTasksOpen(false)
     setAutonomyOpen(false)
+    setIncidentsOpen(false)
+    setReviewOpen(false)
     void loadSchedules()
   }
 }
@@ -980,6 +1207,8 @@ function setTasksOpen(open) {
   if (open) {
     setSchedulesOpen(false)
     setAutonomyOpen(false)
+    setIncidentsOpen(false)
+    setReviewOpen(false)
     void loadTasks()
     void loadApprovals()
   }
@@ -995,6 +1224,8 @@ function setAutonomyOpen(open) {
   if (open) {
     setTasksOpen(false)
     setSchedulesOpen(false)
+    setIncidentsOpen(false)
+    setReviewOpen(false)
     void loadAutonomy()
   }
 }
@@ -1426,12 +1657,22 @@ function bindEvents() {
   el.conversationsToggle?.addEventListener('click', () => setConversationsOpen(!state.conversationsOpen))
   el.conversationsRefresh?.addEventListener('click', () => void loadConversations())
   el.conversationsClose?.addEventListener('click', () => setConversationsOpen(false))
+  el.incidentsToggle?.addEventListener('click', () => setIncidentsOpen(!state.incidentsOpen))
+  el.incidentsRefresh?.addEventListener('click', () => void loadIncidents())
+  el.incidentsClose?.addEventListener('click', () => setIncidentsOpen(false))
+  el.reviewToggle?.addEventListener('click', () => setReviewOpen(!state.reviewOpen))
+  el.reviewRun?.addEventListener('click', () => void runReview())
+  el.reviewRefresh?.addEventListener('click', () => void loadReview())
+  el.reviewClose?.addEventListener('click', () => setReviewOpen(false))
+  el.reviewScoreSubmit?.addEventListener('click', () => void submitReviewScore())
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.schedulesOpen) setSchedulesOpen(false)
     if (state.tasksOpen) setTasksOpen(false)
     if (state.autonomyOpen) setAutonomyOpen(false)
     if (state.conversationsOpen) setConversationsOpen(false)
+    if (state.incidentsOpen) setIncidentsOpen(false)
+    if (state.reviewOpen) setReviewOpen(false)
   })
 }
 
