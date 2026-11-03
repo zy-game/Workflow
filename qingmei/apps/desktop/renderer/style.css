@@ -641,3 +641,111 @@ input {
 [hidden] {
   display: none !important;
 }
+
+.chat-button {
+  position: absolute;
+  left: 12px;
+  bottom: 18px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 246, 0.85);
+  cursor: pointer;
+  z-index: 12;
+  -webkit-app-region: no-drag;
+  line-height: 1;
+  font-size: 13px;
+}
+
+.chat-button:hover {
+  border-color: var(--accent);
+}
+
+.zzz {
+  display: none;
+  position: absolute;
+  right: 34px;
+  top: 34px;
+  z-index: 9;
+  font-size: 18px;
+  font-weight: 700;
+  color: rgba(47, 107, 79, 0.55);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  letter-spacing: 6px;
+}
+
+#app[data-state="sleeping"] .zzz {
+  display: block;
+  visibility: visible;
+  opacity: 1;
+  animation: zzz-float 2.4s ease-in-out infinite;
+}
+
+#app[data-state="sleeping"] .eye {
+  animation: none;
+  transform: scaleY(0.08);
+  transform-origin: center;
+  transition: transform 300ms ease;
+}
+
+#app[data-state="sleeping"] .mouth {
+  d: path("M116 116 Q120 112 124 116");
+}
+
+.hearts {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.heart {
+  position: absolute;
+  left: 50%;
+  bottom: 190px;
+  font-size: 16px;
+  animation: heart-float 1.1s ease-out forwards;
+}
+
+#pet-stage {
+  transform: rotate(var(--lean, 0deg)) translateX(var(--lean-x, 0px));
+  transition: transform 140ms ease-out;
+}
+
+#app[data-dragging="true"] .pet {
+  cursor: grabbing;
+}
+
+@keyframes zzz-float {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(-6px);
+    opacity: 0.8;
+  }
+}
+
+@keyframes heart-float {
+  0% {
+    transform: translate(-50%, 0) scale(0.7);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--drift, 0px)), -90px) scale(1.15);
+    opacity: 0;
+  }
+}
+
+.pet:focus:not(:focus-visible) {
+  outline: none;
+}

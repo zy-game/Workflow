@@ -14,6 +14,8 @@ const desktop = window.qmDesktop ?? {
   onOpenSettings: () => undefined,
   onReconnect: () => undefined,
   setIgnoreMouseEvents: () => undefined,
+  moveBy: () => undefined,
+  hide: () => undefined,
 }
 
 const el = {
@@ -29,6 +31,8 @@ const el = {
   chatForm: document.getElementById('chat-form'),
   chatInput: document.getElementById('chat-input'),
   chatSend: document.getElementById('chat-send'),
+  chatButton: document.getElementById('chat-button'),
+  hearts: document.getElementById('hearts'),
   pet: document.getElementById('pet'),
   settingsButton: document.getElementById('settings-button'),
   statusDot: document.getElementById('status-dot'),
@@ -51,7 +55,17 @@ let stateResetTimer = 0
 let sending = false
 let historyLoaded = false
 
-const KIND_LABEL = { message: '青梅', approval: '审批', error: '故障' }
+const KIND_LABEL = { message: '青梅', approval: '审批', error: '故障', pet: '青梅' }
+const PET_LINES = [
+  '在呢。',
+  '摸摸头～',
+  '今天也慢慢来。',
+  '我在这儿。',
+  '要不要喝口水？',
+  '别急，一件一件来。',
+  '陪你一会儿。',
+  '辛苦啦。',
+]
 
 function setPetState(state) {
   el.app.dataset.state = state
@@ -348,13 +362,93 @@ async function saveSettings(event) {
   }
 }
 
+let lastActivity = Date.now()
+let clickTimer = 0
+let suppressClick = false
+let dragState = null
+
+function markActivity() {
+  lastActivity = Date.now()
+  if (el.app.dataset.state === 'sleeping') setPetState(isOnline() ? 'idle' : 'offline')
+}
+
+function spawnHearts(count = 5) {
+  for (let index = 0; index < count; index += 1) {
+    const heart = document.createElement('span')
+    heart.className = 'heart'
+    heart.textContent = index % 2 === 0 ? '💚' : '💛'
+    heart.style.left = `${42 + Math.random() * 28}%`
+    heart.style.setProperty('--drift', `${Math.round((Math.random() - 0.5) * 70)}px`)
+    heart.style.animationDelay = `${index * 70}ms`
+    el.hearts.append(heart)
+    window.setTimeout(() => heart.remove(), 1400 + index * 70)
+  }
+}
+
+function interact() {
+  markActivity()
+  setPetState('happy')
+  pushBubble(PET_LINES[Math.floor(Math.random() * PET_LINES.length)], 'pet')
+}
+
+function feed() {
+  markActivity()
+  setPetState('happy')
+  pushBubble('好吃！谢谢款待～', 'pet')
+  spawnHearts(6)
+}
+
 function bind() {
-  el.pet.addEventListener('click', () => {
-    setPetState('happy')
+  el.chatButton.addEventListener('click', () => {
+    markActivity()
     toggleChat()
   })
+  el.pet.addEventListener('click', () => {
+    if (suppressClick) return
+    clearTimeout(clickTimer)
+    clickTimer = window.setTimeout(interact, 220)
+  })
+  el.pet.addEventListener('dblclick', () => {
+    clearTimeout(clickTimer)
+    feed()
+  })
+  el.pet.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return
+    markActivity()
+    dragState = { x: event.screenX, y: event.screenY, moved: false }
+    try {
+      el.pet.setPointerCapture(event.pointerId)
+    } catch {
+      // 某些输入设备不支持捕获
+    }
+  })
+  el.pet.addEventListener('pointermove', (event) => {
+    if (!dragState) return
+    const dx = event.screenX - dragState.x
+    const dy = event.screenY - dragState.y
+    if (Math.abs(dx) + Math.abs(dy) < 3) return
+    dragState.moved = true
+    dragState.x = event.screenX
+    dragState.y = event.screenY
+    suppressClick = true
+    el.app.dataset.dragging = 'true'
+    desktop.moveBy(dx, dy)
+    markActivity()
+  })
+  const endDrag = () => {
+    if (!dragState) return
+    const moved = dragState.moved
+    dragState = null
+    delete el.app.dataset.dragging
+    if (moved) window.setTimeout(() => { suppressClick = false }, 250)
+  }
+  el.pet.addEventListener('pointerup', endDrag)
+  el.pet.addEventListener('pointercancel', endDrag)
   el.pet.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
+    if (event.key === ' ') {
+      event.preventDefault()
+      interact()
+    } else if (event.key === 'Enter') {
       event.preventDefault()
       toggleChat()
     }
@@ -384,14 +478,33 @@ function bind() {
   window.addEventListener('mousemove', (event) => {
     const target = document.elementFromPoint(event.clientX, event.clientY)
     const interactive = Boolean(
-      target?.closest('#pet, #bubble, #chat, #drag-handle, #settings-button, #settings-modal'),
+      target?.closest('#pet, #bubble, #chat, #drag-handle, #chat-button, #settings-button, #settings-modal'),
     )
+    if (target?.closest('#pet-stage') && el.app.dataset.state !== 'sleeping') {
+      const rect = el.pet.getBoundingClientRect()
+      const dx = event.clientX - (rect.left + rect.width / 2)
+      document.documentElement.style.setProperty('--lean', `${Math.max(-3, Math.min(3, dx / 60))}deg`)
+      document.documentElement.style.setProperty('--lean-x', `${Math.max(-6, Math.min(6, dx / 20))}px`)
+    } else {
+      document.documentElement.style.setProperty('--lean', '0deg')
+      document.documentElement.style.setProperty('--lean-x', '0px')
+    }
     const next = !interactive
     if (next !== ignoringMouse) {
       ignoringMouse = next
       desktop.setIgnoreMouseEvents(next)
     }
   })
+  window.setInterval(() => {
+    if (
+      Date.now() - lastActivity > 90_000 &&
+      el.chat.hidden &&
+      el.settingsModal.hidden &&
+      el.app.dataset.state !== 'thinking'
+    ) {
+      setPetState('sleeping')
+    }
+  }, 5000)
   desktop.onOpenSettings(() => openSettings())
   desktop.onReconnect(() => connect())
   window.addEventListener('keydown', (event) => {

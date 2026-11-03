@@ -1,3 +1,7 @@
 dist/
 shot.png
 *.log
+
+.data*/
+shot.png*
+desktop.png

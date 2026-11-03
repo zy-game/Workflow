@@ -15,13 +15,13 @@ pnpm --filter @qingmei/desktop start
 
 首次启动会弹设置：
 
-- **服务器地址**：例如 `http://139.155.78.241:7410`（本机服务用 `http://127.0.0.1:7410`）
+- **服务器地址**：生产用 `https://139.155.78.241:8710`（nginx）；本机服务用 `http://127.0.0.1:7410`
 - **访问令牌**：和 Web 面板同一个 `QM_TOKEN`
 
 也可以用环境变量跳过首次输入：
 
 ```bash
-QM_SERVER_URL=http://127.0.0.1:7410 QM_TOKEN=... pnpm --filter @qingmei/desktop start
+QM_SERVER_URL=https://139.155.78.241:8710 QM_TOKEN=... pnpm --filter @qingmei/desktop start
 ```
 
 令牌优先用 Electron 的 `safeStorage`（Windows DPAPI）加密存到用户数据目录；系统不支持时退化为明文，
