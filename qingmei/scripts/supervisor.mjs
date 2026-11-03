@@ -64,6 +64,7 @@ export async function deployWithRollback({
   health,
   timeoutMs = 60_000,
   historyDir = null,
+  release = false,
   log = () => {},
 }) {
   await copyTree(appDir, backupDir)
@@ -72,6 +73,17 @@ export async function deployWithRollback({
   if (await waitHealthy(health, timeoutMs)) {
     log('新版本健康')
     if (historyDir) await copyTree(backupDir, path.join(historyDir, String(Date.now())))
+    if (release) {
+      try {
+        const script = path.join(appDir, 'scripts', 'releases.mjs')
+        if (existsSync(script)) {
+          execFileSync(process.execPath, [script, 'create', '--app', appDir], { stdio: 'inherit' })
+          log('已创建 release 快照')
+        }
+      } catch (error) {
+        log('release 快照失败（不影响部署）：' + String(error))
+      }
+    }
     return { ok: true, rolledBack: false, healthy: true }
   }
 
@@ -156,6 +168,7 @@ async function main() {
     health,
     timeoutMs,
     historyDir,
+    release: args.releases !== false,
     log: (message) => console.log(`[supervisor] ${message}`),
   })
 
