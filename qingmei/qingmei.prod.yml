@@ -11,6 +11,11 @@
 - name: '@qingmei/service-channel'
 - name: '@qingmei/service-gateway'
 
+# 技能包（M6）
+- name: '@qingmei/qm-skill'
+  config:
+    skillsDir: /opt/qingmei/skills
+
 - name: '@qingmei/provider-store-sqlite'
   config:
     path: './data/qm.db'
@@ -134,11 +139,6 @@
 
 # 主动开场（A6/A7/A8）
 - name: '@qingmei/qm-opener'
-
-# 技能包（M6）
-- name: '@qingmei/qm-skill'
-  config:
-    skillsDir: /opt/qingmei/skills
 
 # 任务督促（W1/W2）：合同 + 进度阶梯
 - name: '@qingmei/qm-nudge'
