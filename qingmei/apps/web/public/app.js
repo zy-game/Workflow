@@ -28,6 +28,12 @@ const ENDPOINTS = {
   incidentResolve: './api/v1/incidents/resolve',
   review: './api/v1/review',
   audit: './api/v1/audit',
+  persona: './api/v1/persona',
+  personaHistory: './api/v1/persona/history',
+  personaApply: './api/v1/persona/apply',
+  personaRollback: './api/v1/persona/rollback',
+  skillsHistory: './api/v1/skills/history',
+  skillsRollback: './api/v1/skills/rollback',
   reviewCards: './api/v1/review/cards',
   reviewCardScore: './api/v1/review/cards/score',
   reviewRun: './api/v1/review/run',
@@ -111,6 +117,18 @@ const el = {
   auditConversation: document.getElementById('audit-conversation'),
   auditRefresh: document.getElementById('audit-refresh'),
   auditClose: document.getElementById('audit-close'),
+  settingsToggle: document.getElementById('settings-toggle'),
+  settings: document.getElementById('settings'),
+  settingsError: document.getElementById('settings-error'),
+  settingsRefresh: document.getElementById('settings-refresh'),
+  settingsClose: document.getElementById('settings-close'),
+  personaVersion: document.getElementById('persona-version'),
+  personaPrompt: document.getElementById('persona-prompt'),
+  personaApply: document.getElementById('persona-apply'),
+  personaHistory: document.getElementById('persona-history'),
+  skillHistoryName: document.getElementById('skill-history-name'),
+  skillHistoryLoad: document.getElementById('skill-history-load'),
+  skillHistory: document.getElementById('skill-history'),
   conversationsEmpty: document.getElementById('conversations-empty'),
   conversationsError: document.getElementById('conversations-error'),
   conversationsRefresh: document.getElementById('conversations-refresh'),
@@ -147,6 +165,8 @@ const state = {
   reviewLoading: false,
   auditOpen: false,
   auditLoading: false,
+  settingsOpen: false,
+  settingsLoading: false,
   reviewId: null,
   autonomyMode: 'A1',
   autonomyLocked: false,
@@ -1844,6 +1864,160 @@ function setAuditOpen(open) {
     void loadAudit()
   }
 }
+function showSettingsError(message) {
+  if (!el.settingsError) return
+  el.settingsError.hidden = !message
+  el.settingsError.textContent = message
+}
+
+function personaHistoryRow(entry, onRollback) {
+  const row = document.createElement('li')
+  row.className = 'schedule-item'
+  const main = document.createElement('div')
+  main.className = 'schedule-main'
+  const title = document.createElement('strong')
+  title.textContent = `${entry.version} · ${entry.kind}`
+  const meta = document.createElement('small')
+  meta.textContent = `${new Date(entry.createdAt).toLocaleString('zh-CN')} · ${entry.note || entry.hash}`
+  main.append(title, meta)
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'ghost'
+  button.textContent = '回滚'
+  button.addEventListener('click', () => void onRollback(entry.id))
+  row.append(main, button)
+  return row
+}
+
+async function loadPersona() {
+  const res = await fetch(ENDPOINTS.persona, { headers: withAuth({ Accept: 'application/json' }) })
+  if (!res.ok) throw new Error(`读取人格失败（HTTP ${res.status}）`)
+  const body = await res.json()
+  if (el.personaVersion) el.personaVersion.textContent = `当前 ${body.persona.version} · ${body.persona.hash}`
+  if (el.personaPrompt) el.personaPrompt.value = body.persona.prompt
+}
+
+async function loadPersonaHistory() {
+  if (!el.personaHistory) return
+  const res = await fetch(ENDPOINTS.personaHistory, { headers: withAuth({ Accept: 'application/json' }) })
+  if (!res.ok) throw new Error(`读取人格历史失败（HTTP ${res.status}）`)
+  const body = await res.json()
+  el.personaHistory.replaceChildren()
+  for (const entry of body.items.slice(0, 12)) {
+    el.personaHistory.append(personaHistoryRow(entry, rollbackPersona))
+  }
+}
+
+async function loadSettings() {
+  if (!state.token || state.settingsLoading) return
+  state.settingsLoading = true
+  showSettingsError('')
+  try {
+    await Promise.all([loadPersona(), loadPersonaHistory()])
+  } catch (error) {
+    showSettingsError(error instanceof Error ? error.message : '加载设置失败')
+  } finally {
+    state.settingsLoading = false
+  }
+}
+
+async function applyPersona() {
+  if (!el.personaPrompt) return
+  const prompt = el.personaPrompt.value.trim()
+  if (!prompt) {
+    showSettingsError('提示词不能为空')
+    return
+  }
+  const res = await fetch(ENDPOINTS.personaApply, {
+    method: 'POST',
+    headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+    body: JSON.stringify({ prompt, note: 'Web 设置页' }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    showSettingsError(body?.error || `应用失败（HTTP ${res.status}）`)
+    return
+  }
+  showSettingsError('')
+  await loadSettings()
+}
+
+async function rollbackPersona(id) {
+  const res = await fetch(ENDPOINTS.personaRollback, {
+    method: 'POST',
+    headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+    body: JSON.stringify({ id }),
+  })
+  if (!res.ok) {
+    showSettingsError(`回滚失败（HTTP ${res.status}）`)
+    return
+  }
+  await loadSettings()
+}
+
+async function loadSkillHistory() {
+  if (!el.skillHistory || !el.skillHistoryName) return
+  const name = el.skillHistoryName.value.trim()
+  if (!name) {
+    showSettingsError('先填技能名')
+    return
+  }
+  const url = new URL(ENDPOINTS.skillsHistory, location.href)
+  url.searchParams.set('name', name)
+  const res = await fetch(url, { headers: withAuth({ Accept: 'application/json' }) })
+  if (!res.ok) {
+    showSettingsError(`读取技能历史失败（HTTP ${res.status}）`)
+    return
+  }
+  const body = await res.json()
+  el.skillHistory.replaceChildren()
+  for (const entry of body.items) {
+    const row = document.createElement('li')
+    row.className = 'schedule-item'
+    const main = document.createElement('div')
+    main.className = 'schedule-main'
+    const title = document.createElement('strong')
+    title.textContent = entry.id
+    const meta = document.createElement('small')
+    meta.textContent = new Date(entry.at).toLocaleString('zh-CN')
+    main.append(title, meta)
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'ghost'
+    button.textContent = '回滚'
+    button.addEventListener('click', () => void rollbackSkill(name, entry.id))
+    row.append(main, button)
+    el.skillHistory.append(row)
+  }
+}
+
+async function rollbackSkill(name, id) {
+  const res = await fetch(ENDPOINTS.skillsRollback, {
+    method: 'POST',
+    headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+    body: JSON.stringify({ name, id }),
+  })
+  if (!res.ok) {
+    showSettingsError(`技能回滚失败（HTTP ${res.status}）`)
+    return
+  }
+  await loadSkillHistory()
+}
+
+function setSettingsOpen(open) {
+  state.settingsOpen = open
+  if (el.settings) el.settings.hidden = !open
+  el.settingsToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    setAuditOpen(false)
+    setSchedulesOpen(false)
+    setTasksOpen(false)
+    setAutonomyOpen(false)
+    setIncidentsOpen(false)
+    setReviewOpen(false)
+    void loadSettings()
+  }
+}
 function bindEvents() {
   el.form.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -1902,6 +2076,11 @@ function bindEvents() {
   el.auditToggle?.addEventListener('click', () => setAuditOpen(!state.auditOpen))
   el.auditRefresh?.addEventListener('click', () => void loadAudit())
   el.auditClose?.addEventListener('click', () => setAuditOpen(false))
+  el.settingsToggle?.addEventListener('click', () => setSettingsOpen(!state.settingsOpen))
+  el.settingsRefresh?.addEventListener('click', () => void loadSettings())
+  el.settingsClose?.addEventListener('click', () => setSettingsOpen(false))
+  el.personaApply?.addEventListener('click', () => void applyPersona())
+  el.skillHistoryLoad?.addEventListener('click', () => void loadSkillHistory())
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.schedulesOpen) setSchedulesOpen(false)
@@ -1911,6 +2090,7 @@ function bindEvents() {
     if (state.incidentsOpen) setIncidentsOpen(false)
     if (state.reviewOpen) setReviewOpen(false)
     if (state.auditOpen) setAuditOpen(false)
+    if (state.settingsOpen) setSettingsOpen(false)
   })
 }
 

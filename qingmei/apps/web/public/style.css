@@ -1083,3 +1083,35 @@ body {
   color: var(--ink);
   font-size: 12px;
 }
+
+.settings-subtitle {
+  margin: 12px 0 6px;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.settings-meta {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.persona-prompt {
+  width: 100%;
+  min-height: 120px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+  align-items: center;
+}

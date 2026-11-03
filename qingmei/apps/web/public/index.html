@@ -69,6 +69,16 @@
             群组
           </button>
           <button
+            id="settings-toggle"
+            class="ghost"
+            type="button"
+            aria-expanded="false"
+            aria-controls="settings"
+            title="人格与技能版本"
+          >
+            设置
+          </button>
+          <button
             id="audit-toggle"
             class="ghost"
             type="button"
@@ -245,6 +255,29 @@
         <p id="audit-empty" class="tasks-empty">没有审计记录。</p>
         <p id="audit-error" class="tasks-error" role="alert" hidden></p>
         <ul id="audit-list" class="tasks-list"></ul>
+      </section>
+      <section id="settings" class="tasks" hidden aria-labelledby="settings-title">
+        <div class="tasks-head">
+          <h2 id="settings-title" class="tasks-title">设置</h2>
+          <div class="tasks-tools">
+            <button id="settings-refresh" class="ghost" type="button">刷新</button>
+            <button id="settings-close" class="ghost" type="button">关闭</button>
+          </div>
+        </div>
+        <p id="settings-error" class="tasks-error" role="alert" hidden></p>
+        <h3 class="settings-subtitle">人格提示词</h3>
+        <p id="persona-version" class="settings-meta"></p>
+        <textarea id="persona-prompt" class="persona-prompt" rows="6"></textarea>
+        <div class="settings-actions">
+          <button id="persona-apply" class="ghost" type="button">应用并快照</button>
+        </div>
+        <ul id="persona-history" class="tasks-list"></ul>
+        <h3 class="settings-subtitle">技能版本</h3>
+        <div class="settings-actions">
+          <input id="skill-history-name" class="audit-filter" placeholder="技能名" />
+          <button id="skill-history-load" class="ghost" type="button">查看历史</button>
+        </div>
+        <ul id="skill-history" class="tasks-list"></ul>
       </section>
       <main id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text" aria-label="对话">
         <p id="empty" class="empty">说点什么吧。P1 先跑通一条最小闭环。</p>
