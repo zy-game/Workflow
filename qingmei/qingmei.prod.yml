@@ -163,6 +163,6 @@
     host: '127.0.0.1'
     port: 7410
     token: { $env: 'QM_TOKEN' }
-    webRoot: './apps/web/public'
+    webRoot: '/opt/qingmei/current/apps/web/public'
 
 

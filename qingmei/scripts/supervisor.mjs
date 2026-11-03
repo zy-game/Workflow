@@ -15,7 +15,7 @@
  */
 import { cp, rm, mkdir, readdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync, readlinkSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
@@ -113,6 +113,24 @@ export async function rollbackTo({ appDir, fromDir, restart, health, timeoutMs =
   return { ok: healthy, healthy, from: fromDir }
 }
 
+function shellRelease(appDir) {
+  const current = path.join(appDir, 'current')
+  if (!existsSync(current)) return null
+  try {
+    if (!lstatSync(current).isSymbolicLink()) return null
+    return path.basename(readlinkSync(current))
+  } catch {
+    return null
+  }
+}
+
+function runAppScript(appDir, name, args) {
+  const output = execFileSync(process.execPath, [path.join(appDir, 'scripts', name), ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  })
+  return String(output).trim()
+}
 function parseArgs(argv) {
   const args = {}
   for (let i = 0; i < argv.length; i += 1) {
@@ -162,6 +180,8 @@ async function main() {
   }
 
   if (!existsSync(tarball)) throw new Error(`tarball 不存在：${tarball}`)
+  const shellPrev = shellRelease(appDir)
+  const shellMode = shellPrev !== null
 
   const result = await deployWithRollback({
     appDir,
@@ -177,7 +197,23 @@ async function main() {
     health,
     timeoutMs,
     historyDir,
-    release: args.releases !== false,
+    release: shellMode ? false : args.releases !== false,
+    beforeRestart: shellMode
+      ? async () => {
+          const output = runAppScript(appDir, 'releases.mjs', ['create', '--app', appDir])
+          const manifest = JSON.parse(output.split('\n').filter(Boolean).pop())
+          const id = String(manifest.id)
+          runAppScript(appDir, 'shell.mjs', ['prepare', id, '--root', appDir])
+          runAppScript(appDir, 'shell.mjs', ['activate', id, '--root', appDir])
+          console.log(`[supervisor] shell activate ${id}`)
+        }
+      : null,
+    rollbackRelease: shellPrev
+      ? async () => {
+          runAppScript(appDir, 'shell.mjs', ['activate', shellPrev, '--root', appDir])
+          console.log(`[supervisor] shell rollback ${shellPrev}`)
+        }
+      : null,
     log: (message) => console.log(`[supervisor] ${message}`),
   })
 
