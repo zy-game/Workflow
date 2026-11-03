@@ -51,3 +51,32 @@ test('人格包：文件缺失/损坏时回退到配置', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('人格包：apply 快照、30 天 3 次熔断、rollback', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qm-persona-'))
+  const file = join(dir, 'persona.json')
+  writeFileSync(file, JSON.stringify({ name: '青梅', version: '1.0.0', prompt: '初始人格' }))
+  const ctx = new Context()
+  const fiber = ctx.plugin(PersonaPlugin, { path: file })
+  await fiber
+  try {
+    const persona = ctx.reflect.get('persona', false) as {
+      apply: (input: { prompt: string; note?: string }) => Promise<{ version: string; prompt: string }>
+      history: () => { id: string; kind: string; prompt: string }[]
+      rollback: (id: string) => Promise<{ prompt: string }>
+    }
+    await persona.apply({ prompt: '第二版人格', note: 'test 1' })
+    await persona.apply({ prompt: '第三版人格', note: 'test 2' })
+    await persona.apply({ prompt: '第四版人格', note: 'test 3' })
+    await assert.rejects(() => persona.apply({ prompt: '第五版' }), /30 天内/)
+    const history = persona.history()
+    assert.equal(history.filter((entry) => entry.kind === 'apply').length, 3)
+    const firstSnapshot = history.find((entry) => entry.prompt === '初始人格')
+    assert.ok(firstSnapshot, '应保留初始人格快照')
+    const rolled = await persona.rollback(firstSnapshot!.id)
+    assert.equal(rolled.prompt, '初始人格')
+  } finally {
+    await fiber.dispose()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
