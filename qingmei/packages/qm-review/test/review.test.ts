@@ -174,3 +174,29 @@ test('评分：低分给改进提醒；重复生成不重复建行', async () =>
     await h.dispose()
   }
 })
+
+test('逐条评分卡：月报生成后抽样成卡，可逐条打分', async () => {
+  const h = await setup()
+  try {
+    const now = Date.now()
+    const messages = h.store.collection('qm_message')
+    for (let i = 0; i < 3; i += 1) {
+      await messages.insert({ id: `c${i}`, role: i % 2 ? 'assistant' : 'user', text: `样本 ${i}`, created_at: now - i })
+    }
+    const run = await h.call({ method: 'POST', path: '/api/v1/review/run', query: {}, headers: {} })
+    assert.equal(run.status, 200)
+    const listed = await h.call({ method: 'GET', path: '/api/v1/review/cards', query: {}, headers: {} })
+    const cards = (listed.body as { items: { id: string; text: string }[] }).items
+    assert.equal(cards.length, 3)
+    const scored = await h.call({
+      method: 'POST',
+      path: '/api/v1/review/cards/score',
+      query: {},
+      headers: {},
+      body: { id: cards[0]!.id, score: 8, note: '这句好' },
+    })
+    assert.equal(scored.status, 200)
+  } finally {
+    await h.dispose()
+  }
+})

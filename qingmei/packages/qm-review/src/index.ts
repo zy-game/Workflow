@@ -40,6 +40,16 @@ interface ProposalRow extends Row {
   created_at: number
 }
 
+interface CardRow extends Row {
+  review_id: string
+  message_id: string
+  role: string
+  text: string
+  score: number | null
+  note: string | null
+  created_at: number
+}
+
 interface ReviewRow extends Row {
   month: string
   at: number
@@ -76,7 +86,7 @@ export interface ReviewMetrics {
   autonomy: { accepted: number; ignored: number; complaints: number } | null
   topErrors: { reason: string; count: number }[]
   /** 最近 12 条消息抽样（给评分卡/复盘看） */
-  samples: { role: string; text: string }[]
+  samples: { id: string; role: string; text: string }[]
 }
 
 export function apply(ctx: Context, config: ReviewConfig = {}): void {
@@ -89,6 +99,7 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
 
   const reviews = store.collection<ReviewRow>(REVIEW_COLLECTION)
   const proposals = store.collection<ProposalRow>('qm_review_proposal')
+  const cards = store.collection<CardRow>('qm_review_card')
   const turns = store.collection<TurnRow>('qm_turn')
   const messages = store.collection<{ id: string; role: string; text: string; created_at: number }>('qm_message')
   const tasks = store.collection<TaskRow>('qm_task_run')
@@ -125,7 +136,7 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
       .filter((row) => inMonth(row.created_at))
       .sort((a, b) => a.created_at - b.created_at)
       .slice(-12)
-      .map((row) => ({ role: row.role, text: String(row.text).slice(0, 200) }))
+      .map((row) => ({ id: row.id, role: row.role, text: String(row.text).slice(0, 200) }))
 
     const latencies = turnRows.map((row) => row.latency_ms).filter((value): value is number => typeof value === 'number')
     return {
@@ -202,6 +213,22 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
     if (existing) await reviews.update(existing.id, row)
     else await reviews.insert(row)
 
+    const seeded = (await cards.find({})).filter((card) => card.review_id === row.id)
+    if (seeded.length === 0) {
+      for (const sample of metrics.samples.slice(0, 20)) {
+        await cards.insert({
+          id: uid('card'),
+          review_id: row.id,
+          message_id: sample.id,
+          role: sample.role,
+          text: sample.text,
+          score: null,
+          note: null,
+          created_at: Date.now(),
+        })
+      }
+    }
+
     await channel
       .send({
         channel: 'web',
@@ -212,7 +239,19 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
     return row
   }
 
-  function schedule(): ReturnType<typeof setTimeout> {
+  function toCard(row: CardRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    reviewId: row.review_id,
+    messageId: row.message_id,
+    role: row.role,
+    text: row.text,
+    score: row.score,
+    note: row.note,
+    createdAt: new Date(row.created_at),
+  }
+}
+function schedule(): ReturnType<typeof setTimeout> {
     const now = new Date()
     const next = new Date(now.getFullYear(), now.getMonth(), dayOfMonth, hour, 0, 0, 0)
     if (next.getTime() <= now.getTime()) next.setMonth(next.getMonth() + 1)
@@ -252,6 +291,43 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
     }),
   )
 
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/review/cards',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const reviewId = (req.query.reviewId ?? '').trim()
+        const rows = (await cards.find({}))
+          .filter((card) => (reviewId ? card.review_id === reviewId : true))
+          .sort((a, b) => a.created_at - b.created_at)
+        res.status(200).send({ ok: true, items: rows.map(toCard) })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/review/cards/score',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        const score = Number(body.score)
+        if (!id || !Number.isFinite(score) || score < 1 || score > 10) {
+          res.status(400).send({ ok: false, error: 'id 必填，score 需在 1..10' })
+          return
+        }
+        const row = await cards.get(id)
+        if (!row) {
+          res.status(404).send({ ok: false, error: '没有这张评分卡' })
+          return
+        }
+        const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : null
+        await cards.update(id, { score: Math.round(score), note })
+        res.status(200).send({ ok: true })
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'POST',

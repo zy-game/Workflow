@@ -27,6 +27,8 @@ const ENDPOINTS = {
   incidentRollback: './api/v1/incidents/rollback',
   incidentResolve: './api/v1/incidents/resolve',
   review: './api/v1/review',
+  reviewCards: './api/v1/review/cards',
+  reviewCardScore: './api/v1/review/cards/score',
   reviewRun: './api/v1/review/run',
   reviewScore: './api/v1/review/score',
 }
@@ -99,6 +101,7 @@ const el = {
   reviewClose: document.getElementById('review-close'),
   reviewScoreInput: document.getElementById('review-score-input'),
   reviewScoreSubmit: document.getElementById('review-score-submit'),
+  reviewCards: document.getElementById('review-cards'),
   conversationsEmpty: document.getElementById('conversations-empty'),
   conversationsError: document.getElementById('conversations-error'),
   conversationsRefresh: document.getElementById('conversations-refresh'),
@@ -1021,6 +1024,52 @@ function setReviewOpen(open) {
   }
 }
 
+async function loadReviewCards() {
+  if (!el.reviewCards) return
+  el.reviewCards.replaceChildren()
+  try {
+    const res = await fetch(ENDPOINTS.reviewCards, { headers: withAuth({ Accept: 'application/json' }) })
+    if (!res.ok) return
+    const body = await res.json()
+    const cards = Array.isArray(body.items) ? body.items.slice(0, 20) : []
+    for (const card of cards) {
+      const node = document.createElement('div')
+      node.className = 'review-card'
+      const text = document.createElement('p')
+      text.textContent = `${card.role === 'user' ? '你' : '青梅'}：${card.text}`
+      const actions = document.createElement('div')
+      actions.className = 'review-card-actions'
+      for (const [score, label] of [[8, '👍 好'], [3, '👎 差']]) {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'ghost'
+        button.textContent = card.score === null ? label : `${label}（已评 ${card.score}）`
+        button.disabled = card.score !== null
+        button.addEventListener('click', () => void scoreReviewCard(card.id, score, button))
+        actions.append(button)
+      }
+      node.append(text, actions)
+      el.reviewCards.append(node)
+    }
+  } catch {
+    // 评分卡是可选增强，失败不挡复盘正文
+  }
+}
+
+async function scoreReviewCard(id, score, button) {
+  button.disabled = true
+  const res = await fetch(ENDPOINTS.reviewCardScore, {
+    method: 'POST',
+    headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+    body: JSON.stringify({ id, score }),
+  })
+  if (!res.ok) {
+    button.disabled = false
+    showReviewError(`评分失败（HTTP ${res.status}）`)
+    return
+  }
+  button.textContent = `${score >= 6 ? '👍 好' : '👎 差'}（已评 ${score}）`
+}
 async function loadReview() {
   if (!state.token || state.reviewLoading) return
   state.reviewLoading = true
@@ -1029,6 +1078,7 @@ async function loadReview() {
     if (!res.ok) throw new Error(`加载复盘失败（HTTP ${res.status}）`)
     const body = await res.json()
     renderReview(Array.isArray(body.items) ? body.items[0] : null)
+    await loadReviewCards()
     showReviewError('')
   } catch (error) {
     showReviewError(error instanceof TypeError ? '无法连接服务' : error.message || '加载复盘失败')
