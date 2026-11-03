@@ -48,6 +48,7 @@ const el = {
   settingsSound: document.getElementById('settings-sound'),
   settingsAutostart: document.getElementById('settings-autostart'),
   settingsNotifyHidden: document.getElementById('settings-notify-hidden'),
+  settingsHideFullscreen: document.getElementById('settings-hide-fullscreen'),
   settingsCharacter: document.getElementById('settings-character'),
   settingsForm: document.getElementById('settings-form'),
   settingsServer: document.getElementById('settings-server'),
@@ -751,6 +752,7 @@ function openSettings() {
   el.settingsSound.checked = settings.sound
   el.settingsAutostart.checked = settings.autoStart
   el.settingsNotifyHidden.checked = settings.notifyHidden
+  el.settingsHideFullscreen.checked = settings.hideOnFullscreen
   el.settingsCharacter.value = settings.character
   showError('')
   el.settingsModal.hidden = false
@@ -801,6 +803,7 @@ async function saveSettings(event) {
     settings.sound = sound
     settings.autoStart = autoStart
     settings.notifyHidden = notifyHidden
+    settings.hideOnFullscreen = hideOnFullscreen
     settings.character = character
     applyCharacter()
     localStorage.setItem('qm.onboarded', '1')

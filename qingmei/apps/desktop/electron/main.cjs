@@ -169,10 +169,9 @@ function boundsVisible(bounds) {
 
 function checkFullscreen() {
   if (!win || win.isDestroyed() || !readSettings().hideOnFullscreen) return
-  const script = path.join(here, 'fullscreen.ps1')
   execFile(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', "& '" + script + "'"],
+    path.join(here, 'fullscreen.exe'),
+    [],
     { timeout: 5000, windowsHide: true },
     (error, stdout) => {
       if (process.env.QM_DESKTOP_DEBUG) {
@@ -321,6 +320,7 @@ if (!gotLock) {
     if (process.platform === 'darwin') app.dock?.hide()
     Menu.setApplicationMenu(null)
     createWindow()
+    setFullscreenWatch(readSettings().hideOnFullscreen)
     applyAutoStart(readSettings().autoStart)
 
     ipcMain.handle('settings:get', () => {
@@ -361,6 +361,7 @@ if (!gotLock) {
       }
       persist(settings)
       applyAutoStart(settings.autoStart)
+      setFullscreenWatch(settings.hideOnFullscreen)
       return { ok: true, scale }
     })
 

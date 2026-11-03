@@ -37,6 +37,7 @@ QM_SERVER_URL=https://139.155.78.241:8710 QM_TOKEN=... pnpm --filter @qingmei/de
 - 互动音效开关
 - 开机自启
 - 隐藏时系统通知
+- 全屏应用时自动隐藏
 - 窗口位置会记住，并在显示器变化后回到可见区域
 
 ## 交互
@@ -90,7 +91,7 @@ preload 最小面、界面元素、缩放/自启/全屏检测/通知契约。
 - **electron/dist 不存在**：`pnpm install` 跳过了 Electron 下载脚本时，执行
   `node apps/desktop/node_modules/electron/install.js`（国内先设
   `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
-- **全屏自动隐藏不生效**：该功能调用 `electron/fullscreen.ps1` 检测前台窗口，只在 Windows 生效；
+- **全屏自动隐藏**：该功能调用 `electron/fullscreen.ps1` 检测前台窗口，只在 Windows 生效；
   首次检测约 0.5 秒，间隔 6 秒。
 
 ## 素材与许可
