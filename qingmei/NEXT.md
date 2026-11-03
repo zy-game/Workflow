@@ -132,6 +132,16 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P5 起步：S1 自愈最小闭环
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/qm-incident`（新） | 失败回合/任务 → incident；指纹去重（24h）、每日提案上限（默认 3）、连续失败熔断（默认 2）；`GET /api/v1/incidents`、`POST dispatch|resolve` |
+| 配置 | dev/prod 各加一项（26 项插件） |
+| 测试 | 324 全绿 |
+
+> 未做：supervisor 原子换版/自动回滚、端上提案卡片、L3 补丁拒绝。
+
 ### P4 收口：标签建议 + 内存幂等
 
 | 文件 | 改了什么 |

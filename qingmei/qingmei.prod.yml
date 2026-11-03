@@ -116,6 +116,9 @@
 # 身份绑定：每渠道第一个私聊自动绑 owner
 - name: '@qingmei/qm-identity'
 
+# 自愈：失败回合/任务 → incident 指纹去重、提案、熔断、派诊断
+- name: '@qingmei/qm-incident'
+
 # 飞书渠道：配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET）才启用
 - name: '@qingmei/channel-feishu'
 

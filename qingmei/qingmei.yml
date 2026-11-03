@@ -73,6 +73,9 @@
 # 身份绑定：每渠道第一个私聊自动绑 owner，之后陌生账号需显式 bind
 - name: '@qingmei/qm-identity'
 
+# 自愈：失败回合/任务 → incident 指纹去重、提案、熔断、派诊断
+- name: '@qingmei/qm-incident'
+
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 

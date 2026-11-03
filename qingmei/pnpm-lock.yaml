@@ -86,6 +86,9 @@ importers:
       '@qingmei/qm-identity':
         specifier: workspace:*
         version: link:../../packages/qm-identity
+      '@qingmei/qm-incident':
+        specifier: workspace:*
+        version: link:../../packages/qm-incident
       '@qingmei/qm-memory-extract':
         specifier: workspace:*
         version: link:../../packages/qm-memory-extract
@@ -459,6 +462,28 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-incident:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/provider-task-sqlite':
+        specifier: workspace:*
+        version: link:../provider-task-sqlite
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway
