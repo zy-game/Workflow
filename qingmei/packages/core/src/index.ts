@@ -548,6 +548,8 @@ export interface HarnessRequest {
   conversationId: string
   text: string
   cwd?: string
+  /** 上次 harness 会话 id；支持时原地续跑 */
+  resumeSessionId?: string
   /** 群聊视口应裁剪工具面：false 时不注入 MCP 工具 */
   allowTools?: boolean
   signal?: AbortSignal

@@ -78,7 +78,13 @@ export class DshHarness extends HarnessService {
 
     let sessionId: string
     try {
-      sessionId = await this.ensureSession(client, req.conversationId, req.cwd, req.allowTools !== false)
+      sessionId = await this.ensureSession(
+        client,
+        req.conversationId,
+        req.cwd,
+        req.allowTools !== false,
+        req.resumeSessionId,
+      )
       req.onSession?.(sessionId)
     } catch (error) {
       yield { type: 'error', message: `建立会话失败：${messageOf(error)}` }
@@ -198,6 +204,7 @@ export class DshHarness extends HarnessService {
     conversationId: string,
     cwd?: string,
     allowTools = true,
+    resumeSessionId?: string,
   ): Promise<string> {
     const existing = this.sessions.get(conversationId)
     if (existing) return existing
@@ -205,7 +212,11 @@ export class DshHarness extends HarnessService {
     // 有 mcp 服务就把青梅自己的工具注入会话；没有则退回纯对话
     const mcp = this.ctx.reflect.get('mcp', false) as { servers(): unknown[] } | undefined
     const mcpServers = allowTools ? (mcp?.servers() ?? []) : []
-    const sessionId = await client.newSession(base, mcpServers)
+    let sessionId: string | undefined
+    if (resumeSessionId) {
+      sessionId = await client.loadSession(resumeSessionId, base, mcpServers).catch(() => undefined)
+    }
+    sessionId ??= await client.newSession(base, mcpServers)
     this.sessions.set(conversationId, sessionId)
     this.conversations.set(sessionId, conversationId)
     return sessionId

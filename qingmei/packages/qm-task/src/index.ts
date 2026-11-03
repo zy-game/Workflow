@@ -284,6 +284,7 @@ export class TaskRunner extends TaskRunnerService {
         conversationId,
         text: taskPrompt(run, cwd),
         cwd,
+        ...(run.sessionId ? { resumeSessionId: run.sessionId } : {}),
         signal: controller.signal,
         // 会话建好后把 harness 侧 id 记进账本（以后 resume 用）
         onSession: (sessionId) => {

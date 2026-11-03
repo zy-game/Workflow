@@ -117,6 +117,14 @@ export class AcpClient {
     return result.sessionId
   }
 
+  async loadSession(sessionId: string, cwd: string, mcpServers: unknown[] = []): Promise<string> {
+    const result = (await this.request('session/load', { sessionId, cwd, mcpServers })) as {
+      sessionId?: string
+    }
+    const loaded = result?.sessionId ?? sessionId
+    this.sessions.set(loaded, path.resolve(cwd))
+    return loaded
+  }
   async prompt(sessionId: string, text: string): Promise<{ stopReason: string; usage?: AcpUsage }> {
     const result = (await this.request('session/prompt', {
       sessionId,
