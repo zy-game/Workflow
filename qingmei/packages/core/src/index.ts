@@ -37,6 +37,8 @@ export interface InboundMessage {
   sender: { platformUserId: string; displayName: string }
   blocks: Block[]
   replyTo?: string
+  /** 端 id（desktop/web/...），用于设备域记忆加成 */
+  deviceId?: string
   receivedAt: Date
   /** 已被某个插件当作控制指令消费（如审批回复），agent 不应再当聊天处理 */
   handledBy?: string
@@ -408,6 +410,8 @@ export interface TurnEnd {
   latencyMs?: number
   /** 本回合用户说了什么：记忆抽取要用，避免再查库 */
   userText?: string
+  /** 产生本回合的端 id */
+  deviceId?: string
   /** 工具循环轮数 */
   steps?: number
   tokensIn?: number
@@ -591,6 +595,8 @@ export interface MemoryRecord {
   sensitivity: 'public' | 'private' | 'secret'
   /** 可见范围：'owner' 只给主人；'group:<id>' 群内可见。缺省 owner */
   audience?: string
+  /** 来源设备域（可选）；召回时同设备加权 */
+  device?: string
   origin: { kind: 'channel' | 'harness' | 'self' | 'doc' | 'manual'; id: string }
   /** 同一上报的幂等键；相同键只应用一次（docs/10 §4） */
   idempotencyKey?: string
@@ -611,6 +617,8 @@ export interface RecallQuery {
   audience?: string
   /** 会话 id：用于工作记忆（上一轮点亮的节点） */
   sessionId?: string
+  /** 当前设备域；匹配的事实召回 +0.1 */
+  device?: string
 }
 
 export interface RecallResult {

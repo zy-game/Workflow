@@ -19,6 +19,7 @@ import {
 interface QueueRow extends Row {
   session_id: string
   text: string
+  device_id?: string
   attempts: number
   last_error: string
   created_at: number
@@ -74,7 +75,7 @@ export function apply(ctx: Context, config: ExtractConfig = {}): void {
     if (!text || text.length < minInputChars) return
     if (text.length > 1000) return
     try {
-      await runExtraction(text, end.sessionId)
+      await runExtraction(text, end.sessionId, end.deviceId)
     } catch (error) {
       const message = messageOf(error)
       ctx.logger.warn(`[qm-memory-extract] 抽取失败，进入补偿队列：${message}`)
@@ -88,6 +89,7 @@ export function apply(ctx: Context, config: ExtractConfig = {}): void {
           id: uid('mx'),
           session_id: end.sessionId,
           text,
+          device_id: end.deviceId,
           attempts: 0,
           last_error: message.slice(0, 300),
           created_at: Date.now(),
@@ -98,14 +100,15 @@ export function apply(ctx: Context, config: ExtractConfig = {}): void {
     }
   }
 
-  async function runExtraction(text: string, sessionId: string): Promise<void> {
+  async function runExtraction(text: string, sessionId: string, deviceId?: string): Promise<void> {
     const { text: raw } = await llm.complete({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: text },
       ],
     })
-    const records = parseFacts(raw, sessionId, minConfidence, maxFacts)
+    const parsed = parseFacts(raw, sessionId, minConfidence, maxFacts)
+    const records = parsed.map((record) => (deviceId ? { ...record, device: deviceId } : record))
     if (records.length === 0) return
     const result = await memory.ingest(records)
     ctx.logger.info(
@@ -126,7 +129,7 @@ export function apply(ctx: Context, config: ExtractConfig = {}): void {
         continue
       }
       try {
-        await runExtraction(row.text, row.session_id)
+        await runExtraction(row.text, row.session_id, row.device_id)
         await queue.delete(row.id)
       } catch (error) {
         await queue

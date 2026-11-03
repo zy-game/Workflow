@@ -1643,7 +1643,7 @@ async function sendMessage(text) {
     const res = await fetch(ENDPOINTS.messages, {
       method: 'POST',
       headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, deviceId: 'web' }),
     })
     if (!res.ok) throw new Error(await describeFailure(res))
     state.sending = false

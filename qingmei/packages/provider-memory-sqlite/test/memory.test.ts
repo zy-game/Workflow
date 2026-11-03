@@ -474,3 +474,18 @@ test('情节巩固：同会话同日多条 episode 合并成一条摘要', async
     await dispose()
   }
 })
+
+test('设备域：同设备事实召回加权', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      { ...fact('主人', '在桌面端说', '今天写代码'), device: 'desktop' },
+      { ...fact('主人', '在网页端说', '今天写代码'), device: 'web' },
+    ])
+    const result = await ctx.memory.recall({ text: '今天写代码', device: 'desktop' })
+    assert.equal(result.facts.length, 2)
+    assert.equal(result.facts[0]?.device, 'desktop')
+  } finally {
+    await dispose()
+  }
+})

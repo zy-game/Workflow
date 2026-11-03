@@ -612,6 +612,7 @@ async function receiveMessage(
   }
   const conversationId =
     rawConversationId !== undefined && rawConversationId.trim() !== '' ? rawConversationId : 'owner'
+  const deviceId = typeof record.deviceId === 'string' ? record.deviceId.trim().slice(0, 40) : undefined
 
   const message: InboundMessage = {
     platformMessageId: uid('msg'),
@@ -619,6 +620,7 @@ async function receiveMessage(
     accountId: 'web',
     conversation: { kind: 'dm', id: conversationId },
     sender: { platformUserId: 'owner', displayName: '我' },
+    ...(deviceId ? { deviceId } : {}),
     blocks: [
       ...images.map((url) => ({ type: 'image' as const, url })),
       { type: 'text' as const, text: text || '[图片]' },

@@ -428,7 +428,7 @@ function endView(end: TurnEnd): Omit<TurnEnd, 'traceId' | 'latencyMs'> {
   assert.equal(typeof end.steps, 'number')
   assert.equal(typeof end.tokensIn, 'number')
   assert.equal(typeof end.tokensOut, 'number')
-  const { traceId: _traceId, latencyMs: _latencyMs, steps: _steps, tokensIn: _in, tokensOut: _out, ...rest } = end
+  const { traceId: _traceId, latencyMs: _latencyMs, steps: _steps, tokensIn: _in, tokensOut: _out, deviceId: _device, ...rest } = end
   return rest
 }
 async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000): Promise<void> {

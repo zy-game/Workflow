@@ -67,6 +67,7 @@ interface FactRow extends Row {
   sensitivity: string
   /** 老记录没有这一列，读取时按 owner 处理 */
   audience?: string
+  device?: string
   origin_kind: string
   origin_id: string
   created_at: number
@@ -191,6 +192,7 @@ export class SqliteMemory extends MemoryService {
       salience: row.salience,
       sensitivity: row.sensitivity as MemoryRecord['sensitivity'],
       audience: row.audience ?? 'owner',
+      ...(row.device ? { device: row.device } : {}),
       origin: { kind: row.origin_kind as MemoryRecord['origin']['kind'], id: row.origin_id },
       createdAt: new Date(row.created_at),
       validTo: null,
@@ -308,6 +310,7 @@ export class SqliteMemory extends MemoryService {
         salience: normalized.salience,
         sensitivity: normalized.sensitivity,
         audience: normalized.audience,
+        device: normalized.device,
         origin_kind: normalized.origin.kind,
         origin_id: normalized.origin.id,
         created_at: now,
@@ -387,7 +390,8 @@ export class SqliteMemory extends MemoryService {
       const vector = row.embedding_json ? cosine(queryVector, parseVector(row.embedding_json)) : 0
       const score = lexical > 0 ? lexical * 0.7 + vector * 0.3 : vector * 0.35
       if (score <= 0.02) continue
-      candidates.set(row.id, scoreOf(row, score, now))
+      const deviceBoost = query.device && row.device === query.device ? 0.1 : 0
+      candidates.set(row.id, scoreOf(row, score + deviceBoost, now))
     }
 
     // ①.5 工作记忆：同一会话上一轮点亮的节点按 2 小时半衰期继承，不依赖关键词
@@ -466,6 +470,7 @@ export class SqliteMemory extends MemoryService {
       confidence: row.confidence,
       sensitivity: row.sensitivity as MemoryRecord['sensitivity'],
       audience: row.audience ?? 'owner',
+      ...(row.device ? { device: row.device } : {}),
       origin: { kind: row.origin_kind as MemoryRecord['origin']['kind'], id: row.origin_id },
       createdAt: new Date(row.created_at),
       validTo: null,
@@ -683,6 +688,7 @@ function normalize(record: MemoryRecord): MemoryRecord | null {
     salience: clamp01(Number(record.salience ?? 0.5)),
     sensitivity: record.sensitivity ?? 'private',
     audience: record.audience?.trim() || 'owner',
+    ...(record.device?.trim() ? { device: record.device.trim() } : {}),
     origin: record.origin ?? { kind: 'manual', id: 'unknown' },
     ...(record.idempotencyKey?.trim() ? { idempotencyKey: record.idempotencyKey.trim() } : {}),
   }

@@ -254,7 +254,12 @@ export function apply(ctx: Context, config: AgentConfig): void {
     let threadText = ''
     if (memory) {
       try {
-        memoryText = (await memory.recall({ text: userText, audience, sessionId })).text
+        memoryText = (await memory.recall({
+        text: userText,
+        audience,
+        sessionId,
+        ...(message.deviceId ? { device: message.deviceId } : {}),
+      })).text
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
       }
@@ -422,6 +427,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       text: reply,
       userText,
       latencyMs: Date.now() - startedAt,
+      deviceId: message.deviceId,
       steps,
       tokensIn,
       tokensOut,
