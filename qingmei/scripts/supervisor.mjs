@@ -13,7 +13,7 @@
  *
  * 注意：它依赖 systemd 与 root 权限；不是“不可变外壳”，也不做版本目录管理。
  */
-import { cp, rm, mkdir } from 'node:fs/promises'
+import { cp, rm, mkdir, readdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -56,6 +56,12 @@ export async function waitHealthy(health, timeoutMs, intervalMs = 1000) {
 /**
  * 部署并回滚。extract/restart/health 都注入，便于测试与换实现。
  */
+export async function pruneHistory(historyDir, keep = 3) {
+  const names = (await readdir(historyDir)).filter((name) => /^\d+$/.test(name)).sort((a, b) => Number(b) - Number(a))
+  for (const name of names.slice(keep)) {
+    await rm(path.join(historyDir, name), { recursive: true, force: true }).catch(() => undefined)
+  }
+}
 export async function deployWithRollback({
   appDir,
   backupDir,
@@ -72,7 +78,10 @@ export async function deployWithRollback({
   await restart()
   if (await waitHealthy(health, timeoutMs)) {
     log('新版本健康')
-    if (historyDir) await copyTree(backupDir, path.join(historyDir, String(Date.now())))
+    if (historyDir) {
+      await copyTree(backupDir, path.join(historyDir, String(Date.now())))
+      await pruneHistory(historyDir, 3)
+    }
     if (release) {
       try {
         const script = path.join(appDir, 'scripts', 'releases.mjs')
