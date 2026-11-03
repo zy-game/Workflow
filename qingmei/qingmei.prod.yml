@@ -119,6 +119,12 @@
 # 自愈：失败回合/任务 → incident 指纹去重、提案、熔断、派诊断
 - name: '@qingmei/qm-incident'
 
+# 月度复盘：每月 1 号生成报告
+- name: '@qingmei/qm-review'
+  config:
+    dayOfMonth: 1
+    hour: 9
+
 # 飞书渠道：配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET）才启用
 - name: '@qingmei/channel-feishu'
 

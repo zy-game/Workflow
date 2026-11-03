@@ -76,6 +76,9 @@
 # 自愈：失败回合/任务 → incident 指纹去重、提案、熔断、派诊断
 - name: '@qingmei/qm-incident'
 
+# 月度复盘：每月 1 号生成报告，支持打分与低分提醒
+- name: '@qingmei/qm-review'
+
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 

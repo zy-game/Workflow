@@ -33,18 +33,36 @@ export interface IncidentConfig {
   maxProposalsPerDay?: number
   /** 连续失败多少次熔断到人工 */
   fuseAfterFailures?: number
+  /** 命中 playbook 时自动派诊断任务（默认开） */
+  autoFix?: boolean
+  /** playbook 被拒多少次后停用 */
+  playbookDisableAfter?: number
 }
 
 export const name = 'qm-incident'
 export const inject = ['store', 'channel', 'gateway']
 
 const COLLECTION = 'qm_incident'
+const PLAYBOOK_COLLECTION = 'qm_incident_playbook'
+
+interface PlaybookRow extends Row {
+  fingerprint: string
+  root_cause: string
+  action: string
+  successes: number
+  failures: number
+  disabled: boolean
+  counterexamples_json: string
+  created_at: number
+  last_used_at: number | null
+}
 
 interface IncidentRow extends Row {
   fingerprint: string
   kind: string
   message: string
   context_json: string
+  run_id?: string | null
   count: number
   day: string
   proposals_today: number
@@ -59,6 +77,7 @@ export interface Incident {
   kind: string
   message: string
   context: Record<string, unknown>
+  runId?: string | null
   count: number
   proposalsToday: number
   firstAt: Date
@@ -77,9 +96,12 @@ export function apply(ctx: Context, config: IncidentConfig = {}): void {
   const task = ctx.reflect.get('task', false) as TaskService | undefined
   const taskRunner = ctx.reflect.get('taskRunner', false) as TaskRunnerService | undefined
   const incidents = store.collection<IncidentRow>(COLLECTION)
+  const playbooks = store.collection<PlaybookRow>(PLAYBOOK_COLLECTION)
   const windowMs = config.windowMs ?? 24 * 60 * 60 * 1000
   const maxProposals = Math.max(1, config.maxProposalsPerDay ?? 3)
   const fuseAfter = Math.max(1, config.fuseAfterFailures ?? 2)
+  const autoFix = config.autoFix !== false
+  const disableAfter = Math.max(1, config.playbookDisableAfter ?? 3)
   let queue: Promise<unknown> = Promise.resolve()
 
   function serialize<T>(fn: () => Promise<T>): Promise<T> {
@@ -101,7 +123,8 @@ export function apply(ctx: Context, config: IncidentConfig = {}): void {
         .sort((a, b) => b.last_at - a.last_at)[0]
       const day = dayKey(new Date(now))
 
-      if (existing && now - existing.last_at <= windowMs) {
+      // resolved 之后再犯，视为新一次故障：走 playbook 命中路径，而不是并进旧行
+      if (existing && existing.status !== 'resolved' && now - existing.last_at <= windowMs) {
         const count = existing.count + 1
         const proposalsToday = existing.day === day ? existing.proposals_today : 0
         const fused = existing.status === 'fused' || count >= fuseAfter
@@ -132,21 +155,44 @@ export function apply(ctx: Context, config: IncidentConfig = {}): void {
         .filter((row) => row.day === day)
         .reduce((sum, row) => sum + row.proposals_today, 0)
       const canPropose = todayProposals < maxProposals
-      const status = canPropose ? 'proposed' : 'fused'
+
+      // 命中 playbook：有已知根因/动作时，低风险路径是“自动派诊断任务”，不直接改代码
+      const playbookRows = await playbooks.find({})
+      const playbook = playbookRows.find((item) => item.fingerprint === fingerprint && !item.disabled)
+      let status = canPropose ? 'proposed' : 'fused'
+      let runId: string | null = null
+      if (playbook && autoFix && canPropose && task && taskRunner) {
+        try {
+          const run = await task.create({
+            prompt: playbookPrompt(playbook, message, context),
+            title: `自愈：${fingerprint}`,
+            priority: 6,
+          })
+          taskRunner.dispatch(run)
+          runId = run.id
+          status = 'acknowledged'
+          await playbooks.update(playbook.id, { last_used_at: now })
+        } catch {
+          status = canPropose ? 'proposed' : 'fused'
+        }
+      }
+
       const inserted = await incidents.insert({
         id: uid('inc'),
         fingerprint,
         kind,
         message,
         context_json: JSON.stringify(context),
+        run_id: runId,
         count: 1,
         day,
-        proposals_today: canPropose ? 1 : 0,
+        proposals_today: canPropose && runId === null ? 1 : 0,
         first_at: now,
         last_at: now,
         status,
       })
-      if (canPropose) {
+
+      if (runId) {
         await channel
           .send({
             channel: 'web',
@@ -154,7 +200,23 @@ export function apply(ctx: Context, config: IncidentConfig = {}): void {
             blocks: [
               {
                 type: 'text',
-                text: `🩺 检测到故障（${fingerprint}）：${message.slice(0, 160)}\n已记录为 ${inserted.id}；可在后台派诊断任务。`,
+                text: `♻️ 命中 playbook（${fingerprint}），已自动派诊断任务 ${runId}\n根因假设：${playbook!.root_cause.slice(0, 120)}`,
+              },
+            ],
+          })
+          .catch(() => undefined)
+      } else if (canPropose) {
+        const suggestion = playbook
+          ? `\n已有 playbook：${playbook.root_cause.slice(0, 100)} → ${playbook.action.slice(0, 100)}（未自动执行）`
+          : ''
+        await channel
+          .send({
+            channel: 'web',
+            conversationId: 'owner',
+            blocks: [
+              {
+                type: 'text',
+                text: `🩺 检测到故障（${fingerprint}）：${message.slice(0, 160)}\n已记录为 ${inserted.id}；可在后台派诊断任务。${suggestion}`,
               },
             ],
           })
@@ -252,11 +314,146 @@ export function apply(ctx: Context, config: IncidentConfig = {}): void {
           res.status(404).send({ ok: false, error: '没有这个 incident' })
           return
         }
+        const rootCause = typeof body.rootCause === 'string' ? body.rootCause.trim() : ''
+        const action = typeof body.action === 'string' ? body.action.trim() : ''
         await incidents.update(id, { status: 'resolved' })
-        res.status(200).send({ ok: true })
+
+        let playbookId: string | null = null
+        if (rootCause && action) {
+          const rows = await playbooks.find({})
+          const existing = rows.find((item) => item.fingerprint === row.fingerprint)
+          if (existing) {
+            await playbooks.update(existing.id, {
+              root_cause: rootCause,
+              action,
+              successes: existing.successes + 1,
+            })
+            playbookId = existing.id
+          } else {
+            const inserted = await playbooks.insert({
+              id: uid('pb'),
+              fingerprint: row.fingerprint,
+              root_cause: rootCause,
+              action,
+              successes: 1,
+              failures: 0,
+              disabled: false,
+              counterexamples_json: '[]',
+              created_at: Date.now(),
+              last_used_at: null,
+            })
+            playbookId = inserted.id
+          }
+        }
+        res.status(200).send({ ok: true, ...(playbookId ? { playbookId } : {}) })
       },
     }),
   )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/incidents/reject',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const row = await incidents.get(id)
+        if (!row) {
+          res.status(404).send({ ok: false, error: '没有这个 incident' })
+          return
+        }
+
+        let disabled = false
+        const rows = await playbooks.find({})
+        const playbook = rows.find((item) => item.fingerprint === row.fingerprint)
+        if (playbook) {
+          const failures = playbook.failures + 1
+          disabled = failures >= disableAfter
+          const counterexamples = parseJson<string[]>(playbook.counterexamples_json, [])
+          if (typeof body.note === 'string' && body.note.trim()) {
+            counterexamples.push(body.note.trim().slice(0, 200))
+          }
+          await playbooks.update(playbook.id, {
+            failures,
+            disabled,
+            counterexamples_json: JSON.stringify(counterexamples.slice(-10)),
+          })
+          if (disabled) {
+            await channel
+              .send({
+                channel: 'web',
+                conversationId: 'owner',
+                blocks: [
+                  {
+                    type: 'text',
+                    text: `⛔ playbook（${row.fingerprint}）被拒 ${failures} 次，已停用；后续只做只读建议。`,
+                  },
+                ],
+              })
+              .catch(() => undefined)
+          }
+        }
+        await incidents.update(id, { status: 'fused' })
+        res.status(200).send({ ok: true, playbookDisabled: disabled })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/incidents/rollback',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const row = await incidents.get(id)
+        if (!row) {
+          res.status(404).send({ ok: false, error: '没有这个 incident' })
+          return
+        }
+        if (!row.run_id) {
+          res.status(400).send({ ok: false, error: '这个 incident 没有可回滚的自动任务' })
+          return
+        }
+        const cancelled = taskRunner ? await taskRunner.cancel(row.run_id, '被主人回滚自愈任务') : false
+        await incidents.update(id, { status: 'resolved' })
+        await channel
+          .send({
+            channel: 'web',
+            conversationId: 'owner',
+            blocks: [
+              {
+                type: 'text',
+                text: `↩️ 已回滚自愈任务 ${row.run_id}${cancelled ? '' : '（任务可能已结束，仅记录回滚）'}`,
+              },
+            ],
+          })
+          .catch(() => undefined)
+        res.status(200).send({ ok: true, cancelled })
+      },
+    }),
+  )
+}
+
+function playbookPrompt(playbook: PlaybookRow, message: string, context: Record<string, unknown>): string {
+  return [
+    '自愈诊断任务（命中历史 playbook）：请先确认根因是否仍成立，再按已知动作修复并验证。',
+    '不要把未经确认的改动推到生产；无法安全修复就给出结论与风险。',
+    '',
+    `故障指纹：${playbook.fingerprint}`,
+    `现象：${message}`,
+    `已知根因：${playbook.root_cause}`,
+    `上次修复动作：${playbook.action}`,
+    `上下文：${JSON.stringify(context).slice(0, 800)}`,
+  ].join('\n')
 }
 
 export function fingerprintOf(kind: string, message: string): string {
@@ -271,6 +468,7 @@ function toIncident(row: IncidentRow): Incident {
     kind: row.kind,
     message: row.message,
     context: parseJson<Record<string, unknown>>(row.context_json, {}),
+    runId: row.run_id ?? null,
     count: row.count,
     proposalsToday: row.proposals_today,
     firstAt: new Date(row.first_at),
