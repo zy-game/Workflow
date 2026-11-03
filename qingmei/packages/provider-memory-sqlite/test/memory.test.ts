@@ -415,3 +415,30 @@ test('本地向量：归一化、相似度，以及无关键词时的向量召�
     await dispose()
   }
 })
+
+test('远端 embedding 服务存在时优先使用其向量', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qm-mem-emb-'))
+  const ctx = new Context()
+  const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'mem.db') })
+  await storeFiber
+  const { EmbeddingService } = await import('@qingmei/core')
+  class FakeEmbedding extends EmbeddingService {
+    async embed(texts: string[]): Promise<number[][]> {
+      return texts.map((text) => (text.includes('coffee') ? [1, 0, 0] : [0, 1, 0]))
+    }
+  }
+  new FakeEmbedding(ctx)
+  const memoryFiber = ctx.plugin(memoryPlugin)
+  await memoryFiber
+  try {
+    await ctx.memory.ingest([fact('主人', 'drinks', 'coffee')])
+    const store = ctx.reflect.get('store', false) as { collection: (name: string) => { find: (q?: object) => Promise<Record<string, unknown>[]> } }
+    const rows = await store.collection('qm_mem_fact').find({})
+    const vector = JSON.parse(String(rows[0]?.embedding_json)) as number[]
+    assert.deepEqual(vector, [1, 0, 0])
+  } finally {
+    await memoryFiber.dispose()
+    await storeFiber.dispose()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

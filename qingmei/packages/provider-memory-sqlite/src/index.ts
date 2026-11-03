@@ -10,6 +10,7 @@
 import type { Context } from 'cordis'
 import {
   MemoryService,
+  type EmbeddingService,
   uid,
   type ConsolidationReport,
   type MemoryRecord,
@@ -128,6 +129,7 @@ export class SqliteMemory extends MemoryService {
   private readonly events
   private readonly episodes
   private readonly workingRows
+  private readonly embedding
   private readonly messages
   /** 会话 → 上一轮点亮的节点（工作记忆；进程内，重启清空） */
   private readonly working = new Map<string, { ids: string[]; at: number }>()
@@ -144,6 +146,7 @@ export class SqliteMemory extends MemoryService {
     this.events = store.collection<EventRow>(EVENT_COLLECTION)
     this.episodes = store.collection<EpisodeRow>(EPISODE_COLLECTION)
     this.workingRows = store.collection<WorkingRow>(WORKING_COLLECTION)
+    this.embedding = ctx.reflect.get('embedding', false) as EmbeddingService | undefined
     this.messages = store.collection<MessageRow>('qm_message')
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
@@ -284,6 +287,17 @@ export class SqliteMemory extends MemoryService {
         await this.collection.update(row.id, { valid_to: now })
       }
 
+      let embeddingJson: string | null = null
+      if (this.embedding) {
+        try {
+          const [vector] = await this.embedding.embed([
+            `${normalized.subject} ${normalized.predicate} ${normalized.object}`,
+          ])
+          if (vector && vector.length > 0) embeddingJson = JSON.stringify(vector)
+        } catch {
+          // 远端 embedding 失败时保留本地兜底
+        }
+      }
       const row: Omit<FactRow, 'id'> = {
         subject: normalized.subject,
         predicate: normalized.predicate,
@@ -295,9 +309,9 @@ export class SqliteMemory extends MemoryService {
         origin_kind: normalized.origin.kind,
         origin_id: normalized.origin.id,
         created_at: now,
-        embedding_json: JSON.stringify(
-          localEmbedding(`${normalized.subject} ${normalized.predicate} ${normalized.object}`),
-        ),
+        embedding_json:
+          embeddingJson ??
+          JSON.stringify(localEmbedding(`${normalized.subject} ${normalized.predicate} ${normalized.object}`)),
         hits: 0,
         valid_to: null,
       }
@@ -353,7 +367,15 @@ export class SqliteMemory extends MemoryService {
     )
     const byId = new Map(visible.map((row) => [row.id, row]))
     const tokens = tokenize(query.text)
-    const queryVector = localEmbedding(query.text)
+    let queryVector = localEmbedding(query.text)
+    if (this.embedding) {
+      try {
+        const [vector] = await this.embedding.embed([query.text])
+        if (vector && vector.length > 0) queryVector = vector
+      } catch {
+        // 远端失败：继续用本地向量
+      }
+    }
     const now = Date.now()
 
     // ① 种子：关键词命中；分数 = 相似度 + 激活 + 置信度 + 时效 + 显著度

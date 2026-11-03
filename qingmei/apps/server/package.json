@@ -46,6 +46,7 @@
     "@qingmei/service-store": "workspace:*",
     "cordis": "4.0.0-rc.12",
     "js-yaml": "^5.5.0",
-    "@qingmei/service-persona": "workspace:*"
+    "@qingmei/service-persona": "workspace:*",
+    "@qingmei/provider-embedding-openai": "workspace:*"
   }
 }
