@@ -169,8 +169,11 @@ function boundsVisible(bounds) {
 
 function checkFullscreen() {
   if (!win || win.isDestroyed() || !readSettings().hideOnFullscreen) return
+  const helper = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'fullscreen.exe')
+    : path.join(here, 'fullscreen.exe')
   execFile(
-    path.join(here, 'fullscreen.exe'),
+    helper,
     [],
     { timeout: 5000, windowsHide: true },
     (error, stdout) => {

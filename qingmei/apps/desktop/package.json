@@ -24,6 +24,9 @@
     "directories": {
       "output": "dist"
     },
+    "asarUnpack": [
+      "electron/fullscreen.exe"
+    ],
     "files": [
       "electron/**/*",
       "renderer/**/*",
