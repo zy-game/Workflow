@@ -10,8 +10,19 @@ import {
   type LlmService,
   type MemoryRecord,
   type MemoryService,
+  type Row,
+  uid,
+  type StoreService,
   type TurnEnd,
 } from '@qingmei/core'
+
+interface QueueRow extends Row {
+  session_id: string
+  text: string
+  attempts: number
+  last_error: string
+  created_at: number
+}
 
 export interface ExtractConfig {
   /** 低于该置信度的事实丢弃 */
@@ -20,10 +31,14 @@ export interface ExtractConfig {
   maxFacts?: number
   /** 太短的输入不抽（「好」「嗯」） */
   minInputChars?: number
+  /** 补偿队列重试间隔，默认 60 秒 */
+  retryMs?: number
+  /** 单条最多重试次数 */
+  maxAttempts?: number
 }
 
 export const name = 'qm-memory-extract'
-export const inject = ['llm', 'memory']
+export const inject = ['llm', 'memory', 'store']
 
 const SYSTEM_PROMPT = [
   '你是一个记忆抽取器。',
@@ -39,11 +54,16 @@ const SYSTEM_PROMPT = [
 export function apply(ctx: Context, config: ExtractConfig = {}): void {
   const llm = ctx.reflect.get('llm', false) as LlmService | undefined
   const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
-  if (!llm || !memory) return
+  const store = ctx.reflect.get('store', false) as StoreService | undefined
+  if (!llm || !memory || !store) return
 
   const minConfidence = config.minConfidence ?? 0.6
   const maxFacts = config.maxFacts ?? 5
   const minInputChars = config.minInputChars ?? 4
+  const retryMs = config.retryMs ?? 60_000
+  const maxAttempts = config.maxAttempts ?? 5
+
+  const queue = store.collection<QueueRow>('qm_memory_extract_queue')
 
   ctx.events.on(EVENTS.turnEnd, (end: TurnEnd) => {
     void extract(end)
@@ -53,24 +73,75 @@ export function apply(ctx: Context, config: ExtractConfig = {}): void {
     const text = end.userText?.trim()
     if (!text || text.length < minInputChars) return
     if (text.length > 1000) return
-
     try {
-      const { text: raw } = await llm.complete({
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: text },
-        ],
-      })
-      const records = parseFacts(raw, end.sessionId, minConfidence, maxFacts)
-      if (records.length === 0) return
-      const result = await memory.ingest(records)
-      ctx.logger.info(
-        `[qm-memory-extract] 新增 ${result.created.length} 条，合并 ${result.merged.length} 条`,
-      )
+      await runExtraction(text, end.sessionId)
     } catch (error) {
-      ctx.logger.warn(`[qm-memory-extract] 抽取失败：${messageOf(error)}`)
+      const message = messageOf(error)
+      ctx.logger.warn(`[qm-memory-extract] 抽取失败，进入补偿队列：${message}`)
+      try {
+        const rows = await queue.find({})
+        if (rows.length >= 100) {
+          const oldest = rows.sort((a, b) => a.created_at - b.created_at).slice(0, rows.length - 99)
+          for (const row of oldest) await queue.delete(row.id)
+        }
+        await queue.insert({
+          id: uid('mx'),
+          session_id: end.sessionId,
+          text,
+          attempts: 0,
+          last_error: message.slice(0, 300),
+          created_at: Date.now(),
+        })
+      } catch (queueError) {
+        ctx.logger.warn(`[qm-memory-extract] 补偿队列写入失败：${messageOf(queueError)}`)
+      }
     }
   }
+
+  async function runExtraction(text: string, sessionId: string): Promise<void> {
+    const { text: raw } = await llm.complete({
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: text },
+      ],
+    })
+    const records = parseFacts(raw, sessionId, minConfidence, maxFacts)
+    if (records.length === 0) return
+    const result = await memory.ingest(records)
+    ctx.logger.info(
+      `[qm-memory-extract] 新增 ${result.created.length} 条，合并 ${result.merged.length} 条`,
+    )
+  }
+
+  async function flush(): Promise<void> {
+    let rows: QueueRow[]
+    try {
+      rows = await queue.find({})
+    } catch {
+      return
+    }
+    for (const row of rows) {
+      if (row.attempts >= maxAttempts) {
+        await queue.delete(row.id).catch(() => undefined)
+        continue
+      }
+      try {
+        await runExtraction(row.text, row.session_id)
+        await queue.delete(row.id)
+      } catch (error) {
+        await queue
+          .update(row.id, { attempts: row.attempts + 1, last_error: messageOf(error).slice(0, 300) })
+          .catch(() => undefined)
+      }
+    }
+  }
+
+  if (retryMs > 0) {
+    const timer = setInterval(() => void flush(), retryMs)
+    timer.unref?.()
+    ctx.effect(() => () => clearInterval(timer))
+  }
+  void flush()
 }
 
 export function parseFacts(

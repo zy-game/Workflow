@@ -57,6 +57,7 @@ async function doctor(options: CliOptions): Promise<number> {
     const problems = diagnose(app)
     const lines = doctorLines(app, configPath)
     lines.push(...(await harnessLines(app)))
+    lines.push(await memoryQueueLine(app))
     lines.push(
       problems.length === 0
         ? '结论：健康'
@@ -74,6 +75,18 @@ async function doctor(options: CliOptions): Promise<number> {
  *
  * 能拉起就报「可拉起」；顺便带最近一次任务的结局，失败时能直接看到原因。
  */
+async function memoryQueueLine(app: App): Promise<string> {
+  const store = app.ctx.reflect.get('store', false) as
+    | { collection: (name: string) => { find: (query: object) => Promise<unknown[]> } }
+    | undefined
+  if (!store) return '  记忆抽取补偿队列  （未加载 store）'
+  try {
+    const rows = await store.collection('qm_memory_extract_queue').find({})
+    return `  记忆抽取补偿队列  ${rows.length} 条`
+  } catch {
+    return '  记忆抽取补偿队列  （读取失败）'
+  }
+}
 async function harnessLines(app: App): Promise<string[]> {
   const harness = app.ctx.reflect.get('harness', false) as HarnessService | undefined
   if (!harness) return ['  harness    none（清单里没有 harness 提供方）']

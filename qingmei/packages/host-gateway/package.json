@@ -13,5 +13,9 @@
     "@qingmei/core": "workspace:*",
     "@qingmei/service-gateway": "workspace:*",
     "@qingmei/channel-web": "workspace:*"
+  },
+  "devDependencies": {
+    "@qingmei/provider-store-sqlite": "workspace:*",
+    "@qingmei/provider-memory-sqlite": "workspace:*"
   }
 }

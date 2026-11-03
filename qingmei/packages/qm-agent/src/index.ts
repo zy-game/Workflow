@@ -35,7 +35,7 @@ import type { LlmService } from '@qingmei/service-llm'
 
 export interface AgentConfig {
   /** 注入 system 消息的人格设定 */
-  persona: string
+  persona?: string
 }
 
 export const name = 'qm-agent'
@@ -136,7 +136,8 @@ interface StoredMessage extends Row {
 }
 
 export function apply(ctx: Context, config: AgentConfig): void {
-  const persona = requirePersona(config)
+  const personaService = ctx.reflect.get('persona', false) as { current: () => { prompt: string } } | undefined
+  const persona = personaService?.current().prompt || requirePersona(config)
   const llm = requireService<LlmService>(ctx, 'llm')
   const store = requireService<StoreService>(ctx, 'store')
   const channel = requireService<ChannelService>(ctx, 'channel')
@@ -241,6 +242,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
 
     /** 召回失败不能影响对话：退化成"这次没有记忆" */
     let memoryText = ''
+    /** 会话摘要：给模型一个短上下文，不替代召回 */
+    let summaryText = ''
     /** 画像只对 owner 开：稳定事实，不依赖这句话的关键词 */
     let profileText = ''
     if (memory) {
@@ -248,6 +251,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
         memoryText = (await memory.recall({ text: userText, audience, sessionId })).text
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
+      }
+      try {
+        summaryText = await memory.summarize(sessionId)
+      } catch (error) {
+        problems.push(`会话摘要失败：${messageOf(error)}`)
       }
       if (audience === 'owner') {
         try {
@@ -293,6 +301,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
 
     const memoryBlock = [
       profileText ? `【关于主人】\n${profileText}` : '',
+      summaryText ? `【会话摘要】\n${summaryText}` : '',
       memoryText ? `【已知记忆】\n${memoryText}` : '',
       groupNote ? `【本群规则】\n${groupNote}` : '',
       skillsText,

@@ -137,6 +137,9 @@ importers:
       '@qingmei/service-memory':
         specifier: workspace:*
         version: link:../../packages/service-memory
+      '@qingmei/service-persona':
+        specifier: workspace:*
+        version: link:../../packages/service-persona
       '@qingmei/service-store':
         specifier: workspace:*
         version: link:../../packages/service-store
@@ -211,6 +214,13 @@ importers:
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-memory-sqlite':
+        specifier: workspace:*
+        version: link:../provider-memory-sqlite
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
 
   packages/host-mcp:
     dependencies:
@@ -701,6 +711,15 @@ importers:
         version: 4.0.0-rc.12
 
   packages/service-memory:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  packages/service-persona:
     dependencies:
       '@qingmei/core':
         specifier: workspace:*

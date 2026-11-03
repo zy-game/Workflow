@@ -45,10 +45,7 @@
     "@qingmei/service-llm": "workspace:*",
     "@qingmei/service-store": "workspace:*",
     "cordis": "4.0.0-rc.12",
-    "js-yaml": "^5.5.0"
+    "js-yaml": "^5.5.0",
+    "@qingmei/service-persona": "workspace:*"
   }
 }
-
-
-
-

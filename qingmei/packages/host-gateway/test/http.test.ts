@@ -21,6 +21,8 @@ import * as GatewayPlugin from '@qingmei/service-gateway'
 import type { GatewayHub } from '@qingmei/service-gateway'
 import * as ChannelPlugin from '@qingmei/service-channel'
 import * as WebChannelPlugin from '@qingmei/channel-web'
+import * as StorePlugin from '@qingmei/provider-store-sqlite'
+import * as MemoryPlugin from '@qingmei/provider-memory-sqlite'
 import HostGateway, { getServerInfo } from '../src/index.ts'
 
 const TOKEN = 'test-token'
@@ -64,6 +66,8 @@ before(async () => {
   await ctx.plugin(GatewayPlugin)
   await ctx.plugin(ChannelPlugin)
   await ctx.plugin(WebChannelPlugin)
+  await ctx.plugin(StorePlugin, { path: path.join(webRoot, 'memory.db') })
+  await ctx.plugin(MemoryPlugin)
 
   host = ctx.plugin(HostGateway, {
     host: '127.0.0.1',
@@ -81,6 +85,10 @@ before(async () => {
 
 after(async () => {
   if (host) await host.dispose()
+  try {
+    const store = ctx.reflect.get('store', false) as { close?: () => void } | undefined
+    store?.close?.()
+  } catch {}
   if (webRoot) await rm(webRoot, { recursive: true, force: true })
 })
 
@@ -620,3 +628,42 @@ class FakeSchedule extends ScheduleService {
     return item
   }
 }
+
+test('记忆页 API：列表 / 修正 / 删除', async () => {
+  type MemoryLike = {
+    ingest: (records: unknown[]) => Promise<{ created: string[] }>
+    listFacts: () => Promise<{ id: string; object: string }[]>
+  }
+  const memory = ctx.reflect.get('memory', false) as MemoryLike
+  assert.ok(memory, '测试环境应加载 memory 服务')
+  await memory.ingest([
+    {
+      kind: 'fact',
+      subject: '主人',
+      predicate: '喜欢',
+      object: '黑咖啡',
+      confidence: 0.9,
+      sensitivity: 'private',
+      origin: { kind: 'manual', id: 'test' },
+    },
+  ])
+  const list = await fetch(`${base}/api/v1/memory/facts`, { headers: auth })
+  assert.equal(list.status, 200)
+  const listed = (await list.json()) as { facts: { id: string; object: string }[] }
+  const fact = listed.facts.find((item) => item.object === '黑咖啡')
+  assert.ok(fact, '应能列出刚写入的事实')
+
+  const patch = await fetch(`${base}/api/v1/memory/facts/${fact.id}`, {
+    method: 'PATCH',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ object: '加奶咖啡' }),
+  })
+  assert.equal(patch.status, 200)
+
+  const del = await fetch(`${base}/api/v1/memory/facts/${fact.id}`, { method: 'DELETE', headers: auth })
+  assert.equal(del.status, 200)
+  const after = (await (await fetch(`${base}/api/v1/memory/facts`, { headers: auth })).json()) as {
+    facts: { object: string }[]
+  }
+  assert.equal(after.facts.some((item) => item.object === '加奶咖啡'), false)
+})

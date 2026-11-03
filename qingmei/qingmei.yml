@@ -44,6 +44,10 @@
 - name: '@qingmei/provider-task-sqlite'
 
 # ── 业务
+- name: '@qingmei/service-persona'
+  config:
+    path: personas/qingmei.json
+
 - name: '@qingmei/qm-agent'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短。'

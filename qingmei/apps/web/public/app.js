@@ -6,6 +6,7 @@ const ENDPOINTS = {
   health: './healthz',
   events: './api/v1/events',
   messages: './api/v1/messages',
+  memoryFacts: './api/v1/memory/facts',
   schedules: './api/v1/schedules',
   tasks: './api/v1/tasks',
   approvals: './api/v1/approvals',
@@ -50,6 +51,13 @@ const el = {
   schedulesError: document.getElementById('schedules-error'),
   schedulesRefresh: document.getElementById('schedules-refresh'),
   schedulesClose: document.getElementById('schedules-close'),
+  memoriesToggle: document.getElementById('memories-toggle'),
+  memories: document.getElementById('memories'),
+  memoriesList: document.getElementById('memories-list'),
+  memoriesEmpty: document.getElementById('memories-empty'),
+  memoriesError: document.getElementById('memories-error'),
+  memoriesRefresh: document.getElementById('memories-refresh'),
+  memoriesClose: document.getElementById('memories-close'),
   tasksToggle: document.getElementById('tasks-toggle'),
   tasks: document.getElementById('tasks'),
   tasksList: document.getElementById('tasks-list'),
@@ -113,6 +121,8 @@ const state = {
   retryTimer: 0,
   schedulesOpen: false,
   schedulesLoading: false,
+  memoriesOpen: false,
+  memoriesLoading: false,
   tasksOpen: false,
   tasksLoading: false,
   autonomyOpen: false,
@@ -1613,6 +1623,109 @@ function resizeInput() {
   el.input.style.height = `${Math.min(el.input.scrollHeight, 160)}px`
 }
 
+async function loadMemories() {
+  if (!state.token || state.memoriesLoading) return
+  state.memoriesLoading = true
+  if (el.memoriesError) {
+    el.memoriesError.hidden = true
+    el.memoriesError.textContent = ''
+  }
+  try {
+    const res = await fetch(ENDPOINTS.memoryFacts, {
+      headers: withAuth({ Accept: 'application/json' }),
+      cache: 'no-store',
+    })
+    if (res.status === 401 || res.status === 403) throw new Error('令牌无效或已过期')
+    if (!res.ok) throw new Error(`读取记忆失败（HTTP ${res.status}）`)
+    const data = await res.json()
+    const facts = Array.isArray(data.facts) ? data.facts : []
+    if (el.memoriesEmpty) el.memoriesEmpty.hidden = facts.length > 0
+    if (el.memoriesList) {
+      el.memoriesList.replaceChildren()
+      for (const fact of facts) {
+        const row = document.createElement('li')
+        row.className = 'memory-item'
+        const text = document.createElement('div')
+        text.className = 'memory-text'
+        text.textContent = `${fact.subject} ${fact.predicate} ${fact.object}`
+        const meta = document.createElement('small')
+        meta.textContent = `置信 ${Math.round(Number(fact.confidence) * 100)}%`
+        const actions = document.createElement('div')
+        actions.className = 'memory-actions'
+        const edit = document.createElement('button')
+        edit.type = 'button'
+        edit.className = 'ghost'
+        edit.textContent = '修正'
+        edit.addEventListener('click', () => void editMemory(fact))
+        const remove = document.createElement('button')
+        remove.type = 'button'
+        remove.className = 'ghost'
+        remove.textContent = '删除'
+        remove.addEventListener('click', () => void deleteMemory(fact))
+        actions.append(edit, remove)
+        row.append(text, meta, actions)
+        el.memoriesList.append(row)
+      }
+    }
+  } catch (error) {
+    if (el.memoriesError) {
+      el.memoriesError.hidden = false
+      el.memoriesError.textContent = error instanceof Error ? error.message : '读取记忆失败'
+    }
+  } finally {
+    state.memoriesLoading = false
+  }
+}
+
+async function editMemory(fact) {
+  const next = window.prompt('修正这条记忆的内容', String(fact.object ?? ''))
+  if (next === null) return
+  const value = next.trim()
+  if (!value) return
+  const res = await fetch(`${ENDPOINTS.memoryFacts}/${encodeURIComponent(fact.id)}`, {
+    method: 'PATCH',
+    headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+    body: JSON.stringify({ object: value }),
+  })
+  if (!res.ok) {
+    if (el.memoriesError) {
+      el.memoriesError.hidden = false
+      el.memoriesError.textContent = `修正失败（HTTP ${res.status}）`
+    }
+    return
+  }
+  await loadMemories()
+}
+
+async function deleteMemory(fact) {
+  if (!window.confirm(`删除「${fact.object}」？`)) return
+  const res = await fetch(`${ENDPOINTS.memoryFacts}/${encodeURIComponent(fact.id)}`, {
+    method: 'DELETE',
+    headers: withAuth({ Accept: 'application/json' }),
+  })
+  if (!res.ok) {
+    if (el.memoriesError) {
+      el.memoriesError.hidden = false
+      el.memoriesError.textContent = `删除失败（HTTP ${res.status}）`
+    }
+    return
+  }
+  await loadMemories()
+}
+
+function setMemoriesOpen(open) {
+  state.memoriesOpen = open
+  if (el.memories) el.memories.hidden = !open
+  el.memoriesToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    setSchedulesOpen(false)
+    setTasksOpen(false)
+    setAutonomyOpen(false)
+    setIncidentsOpen(false)
+    setReviewOpen(false)
+    void loadMemories()
+  }
+}
 function bindEvents() {
   el.form.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -1640,6 +1753,9 @@ function bindEvents() {
   el.schedulesToggle?.addEventListener('click', () => setSchedulesOpen(!state.schedulesOpen))
   el.schedulesRefresh?.addEventListener('click', () => void loadSchedules())
   el.schedulesClose?.addEventListener('click', () => setSchedulesOpen(false))
+  el.memoriesToggle?.addEventListener('click', () => setMemoriesOpen(!state.memoriesOpen))
+  el.memoriesRefresh?.addEventListener('click', () => void loadMemories())
+  el.memoriesClose?.addEventListener('click', () => setMemoriesOpen(false))
   el.tasksToggle?.addEventListener('click', () => setTasksOpen(!state.tasksOpen))
   el.tasksRefresh?.addEventListener('click', () => void loadTasks())
   el.tasksClose?.addEventListener('click', () => setTasksOpen(false))

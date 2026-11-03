@@ -565,7 +565,7 @@ export abstract class HarnessService extends Service {
 // ────────────────────────────────────────────── 记忆
 
 export interface MemoryRecord {
-  kind: 'fact' | 'episode'
+  kind: 'fact' | 'episode' | 'decision' | 'lesson'
   /** fact 用：主体 / 关系 / 客体 */
   subject: string
   predicate: string
@@ -689,9 +689,27 @@ export abstract class MemoryService extends Service {
   abstract ingest(records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }>
   abstract recall(query: RecallQuery): Promise<RecallResult>
   abstract forget(ids: string[]): Promise<number>
+  /** 列出当前有效事实（记忆页/管理用）；默认空，provider 可覆盖 */
+  async listFacts(_query?: { limit?: number; audience?: string }): Promise<RecalledFact[]> {
+    return []
+  }
+
+  /** 人工修正一条事实；返回是否命中。默认不支持，provider 可覆盖 */
+  async updateFact(
+    _id: string,
+    _patch: Partial<Pick<MemoryRecord, 'object' | 'confidence' | 'salience'>>,
+  ): Promise<boolean> {
+    return false
+  }
+
   /** 夜间巩固：压缩同主题低价值事实；默认不做，provider 可覆盖 */
   async consolidate(): Promise<ConsolidationReport> {
     return { at: new Date(), scanned: 0, compressed: [] }
+  }
+
+  /** 会话摘要：给 prompt 用的一句话；默认空，provider 可覆盖 */
+  async summarize(_sessionId: string): Promise<string> {
+    return ''
   }
 
   /** 稳定画像（按 subject 聚合的高置信事实）；默认空，provider 可覆盖 */
@@ -700,6 +718,23 @@ export abstract class MemoryService extends Service {
   }
 }
 
+export interface PersonaSnapshot {
+  name: string
+  version: string
+  prompt: string
+  hash: string
+  updatedAt: Date
+}
+
+// ────────────────────────────────────────────── 人格
+
+export abstract class PersonaService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'persona')
+  }
+  abstract current(): PersonaSnapshot
+  abstract reload(): Promise<PersonaSnapshot>
+}
 // ────────────────────────────────────────────── 任务账本
 
 export type TaskStatus = 'queued' | 'running' | 'needs_approval' | 'done' | 'failed' | 'cancelled'

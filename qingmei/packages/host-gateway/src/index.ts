@@ -23,6 +23,7 @@ import {
   type GatewayService,
   type InboundMessage,
   type MemoryService,
+  type PersonaService,
   type Row,
   type SchedulePatch,
   type ScheduleService,
@@ -319,7 +320,71 @@ async function routeRequest(
       sendJson(res, 200, await readHistory(deps.ctx, conversationId, limit))
       return
     }
-    if (pathname === '/api/v1/memory' && method === 'GET') {
+    if (pathname === '/api/v1/memory/queue' && method === 'GET') {
+      const store = deps.ctx.reflect.get('store', false) as StoreService | undefined
+      if (!store) {
+        sendJson(res, 200, { count: 0, items: [] })
+        return
+      }
+      const rows = await store.collection<Row>('qm_memory_extract_queue').find({})
+      sendJson(res, 200, { count: rows.length, items: rows.map((row) => row as unknown as Record<string, unknown>) })
+      return
+    }    if (pathname === '/api/v1/persona' && (method === 'GET' || method === 'POST')) {
+      const persona = deps.ctx.reflect.get('persona', false) as PersonaService | undefined
+      if (!persona) {
+        sendJson(res, 503, { ok: false, error: 'no persona service' })
+        return
+      }
+      const snapshot = method === 'POST' ? await persona.reload() : persona.current()
+      sendJson(res, 200, { persona: snapshot })
+      return
+    }    if (pathname === '/api/v1/memory/facts' && method === 'GET') {
+      const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      const facts = await memory.listFacts({ limit: parseLimit(url.searchParams.get('limit')) })
+      sendJson(res, 200, { facts })
+      return
+    }
+    if (pathname === '/api/v1/memory/summary' && method === 'GET') {
+      const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      const sessionId = url.searchParams.get('sessionId') ?? ''
+      if (!sessionId) throw new HttpError(400, 'sessionId 必填')
+      sendJson(res, 200, { summary: await memory.summarize(sessionId) })
+      return
+    }
+    if (pathname.startsWith('/api/v1/memory/facts/') && (method === 'PATCH' || method === 'DELETE')) {
+      const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      const id = decodeURIComponent(pathname.slice('/api/v1/memory/facts/'.length))
+      if (!id) throw new HttpError(400, 'id 必填')
+      if (method === 'DELETE') {
+        sendJson(res, 200, { ok: true, deleted: await memory.forget([id]) })
+        return
+      }
+      const body = await readJsonBody(req)
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        throw new HttpError(400, '请求体必须是 JSON 对象')
+      }
+      const record = body as Record<string, unknown>
+      const updated = await memory.updateFact(id, {
+        ...(typeof record.object === 'string' ? { object: record.object } : {}),
+        ...(typeof record.confidence === 'number' ? { confidence: record.confidence } : {}),
+        ...(typeof record.salience === 'number' ? { salience: record.salience } : {}),
+      })
+      if (!updated) throw new HttpError(404, '事实不存在或没有可更新字段')
+      sendJson(res, 200, { ok: true })
+      return
+    }    if (pathname === '/api/v1/memory' && method === 'GET') {
       const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
       if (!memory) {
         sendJson(res, 503, { ok: false, error: 'no memory service' })

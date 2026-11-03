@@ -342,3 +342,58 @@ test('幂等事件：同一 idempotencyKey 只应用一次', async () => {
     await dispose()
   }
 })
+
+test('summarize：从 qm_message 生成会话摘要；episode 单独落库', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    const store = ctx.reflect.get('store', false) as {
+      collection: (name: string) => { insert: (row: Record<string, unknown>) => Promise<unknown>; find: () => Promise<Record<string, unknown>[]> }
+    }
+    const messages = store.collection('qm_message')
+    const now = Date.now()
+    await messages.insert({ id: 'm1', role: 'user', text: '明天去杭州出差', session_id: 's_chat', created_at: now - 3000 })
+    await messages.insert({ id: 'm2', role: 'assistant', text: '好的，我记下了', session_id: 's_chat', created_at: now - 2000 })
+    await messages.insert({ id: 'm3', role: 'user', text: '提醒我带身份证', session_id: 's_chat', created_at: now - 1000 })
+
+    const summary = await ctx.memory.summarize('chat')
+    assert.match(summary, /最近 2 轮/)
+    assert.match(summary, /杭州出差/)
+    assert.match(summary, /带身份证/i)
+
+    const created = await ctx.memory.ingest([
+      {
+        kind: 'episode',
+        subject: 'session:chat',
+        predicate: 'summary',
+        object: '用户要去杭州出差，并提醒带身份证',
+        confidence: 0.9,
+        sensitivity: 'private',
+        origin: ORIGIN,
+      },
+    ])
+    assert.equal(created.created.length, 1)
+    const episodes = await store.collection('qm_mem_episode').find()
+    assert.equal(episodes.length, 1)
+    assert.match(String((episodes[0] as { summary: string }).summary), /杭州/)
+  } finally {
+    await dispose()
+  }
+})
+
+test('记忆页：listFacts / updateFact 支持人工修正', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([fact('主人', '喜欢', '黑咖啡')])
+    const listed = await ctx.memory.listFacts()
+    assert.equal(listed.length, 1)
+    assert.equal(listed[0]?.object, '黑咖啡')
+
+    const updated = await ctx.memory.updateFact(listed[0]!.id, { object: '加奶咖啡', salience: 0.9 })
+    assert.equal(updated, true)
+    const after = await ctx.memory.listFacts()
+    assert.equal(after[0]?.object, '加奶咖啡')
+    assert.equal(after[0]?.salience, 0.9)
+  } finally {
+    await dispose()
+  }
+})

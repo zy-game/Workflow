@@ -1022,3 +1022,29 @@ body {
   align-items: center;
   margin-top: 10px;
 }
+
+.memory-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.memory-item .memory-text {
+  font-size: 0.92rem;
+}
+
+.memory-item .memory-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.memory-item small {
+  color: var(--muted);
+  align-self: center;
+}

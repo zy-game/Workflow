@@ -35,6 +35,7 @@ const COLLECTION = 'qm_mem_fact'
 const SYNAPSE_COLLECTION = 'qm_mem_synapse'
 const PROVENANCE_COLLECTION = 'qm_mem_provenance'
 const EVENT_COLLECTION = 'qm_memory_event'
+const EPISODE_COLLECTION = 'qm_mem_episode'
 const DAY_MS = 24 * 60 * 60 * 1000
 const HALF_LIFE_MS = 30 * DAY_MS
 const SPREAD = 0.6
@@ -82,6 +83,28 @@ interface ProvenanceRow extends Row {
   observed_at: number
 }
 
+interface EpisodeRow extends Row {
+  kind: string
+  session_id: string
+  summary: string
+  subject: string
+  predicate: string
+  audience: string
+  salience: number
+  confidence: number
+  origin_kind: string
+  origin_id: string
+  created_at: number
+}
+
+interface MessageRow extends Row {
+  role?: string
+  text?: string
+  session_id?: string
+  sessionId?: string
+  created_at?: number
+}
+
 interface SynapseRow extends Row {
   from_id: string
   to_id: string
@@ -96,6 +119,8 @@ export class SqliteMemory extends MemoryService {
   private readonly synapses
   private readonly provenance
   private readonly events
+  private readonly episodes
+  private readonly messages
   /** 会话 → 上一轮点亮的节点（工作记忆；进程内，重启清空） */
   private readonly working = new Map<string, { ids: string[]; at: number }>()
   private readonly limit: number
@@ -109,16 +134,107 @@ export class SqliteMemory extends MemoryService {
     this.synapses = store.collection<SynapseRow>(SYNAPSE_COLLECTION)
     this.provenance = store.collection<ProvenanceRow>(PROVENANCE_COLLECTION)
     this.events = store.collection<EventRow>(EVENT_COLLECTION)
+    this.episodes = store.collection<EpisodeRow>(EPISODE_COLLECTION)
+    this.messages = store.collection<MessageRow>('qm_message')
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
   }
 
+  async summarize(sessionId: string): Promise<string> {
+    const wanted = sessionId.startsWith('s_') ? sessionId : `s_${sessionId}`
+    const rows = (await this.messages.find({}))
+      .filter((row) => {
+        const values = [row.session_id, row.sessionId]
+        return values.some((value) => value === sessionId || value === wanted)
+      })
+      .sort((a, b) => (Number(a.created_at) || 0) - (Number(b.created_at) || 0))
+      .slice(-20)
+    if (rows.length === 0) return ''
+    const users = rows.filter((row) => row.role === 'user' && typeof row.text === 'string' && row.text.trim())
+    const assistant = [...rows].reverse().find((row) => row.role === 'assistant' && typeof row.text === 'string')
+    const topics = users
+      .slice(-3)
+      .map((row) => String(row.text).trim().replace(/\s+/g, ' ').slice(0, 60))
+      .filter(Boolean)
+    const parts = [`最近 ${users.length} 轮`]
+    if (topics.length) parts.push(`用户提到：${topics.join('；')}`)
+    if (assistant?.text) parts.push(`最近回复：${String(assistant.text).trim().replace(/\s+/g, ' ').slice(0, 80)}`)
+    return parts.join('；').slice(0, 300)
+  }
+  async listFacts(query: { limit?: number; audience?: string } = {}): Promise<RecalledFact[]> {
+    const audience = query.audience ?? 'owner'
+    const rows = (await this.collection.find({}))
+      .filter((row) => !row.valid_to && (row.audience ?? 'owner') === audience)
+      .sort((a, b) => b.created_at - a.created_at)
+      .slice(0, Math.min(200, Math.max(1, query.limit ?? 100)))
+    return rows.map((row) => ({
+      id: row.id,
+      kind: 'fact',
+      subject: row.subject,
+      predicate: row.predicate,
+      object: row.object,
+      confidence: row.confidence,
+      salience: row.salience,
+      sensitivity: row.sensitivity as MemoryRecord['sensitivity'],
+      audience: row.audience ?? 'owner',
+      origin: { kind: row.origin_kind as MemoryRecord['origin']['kind'], id: row.origin_id },
+      createdAt: new Date(row.created_at),
+      validTo: null,
+    }))
+  }
+
+  async updateFact(
+    id: string,
+    patch: Partial<Pick<MemoryRecord, 'object' | 'confidence' | 'salience'>>,
+  ): Promise<boolean> {
+    const row = await this.collection.get(id)
+    if (!row || row.valid_to) return false
+    const next: Partial<FactRow> = {}
+    if (typeof patch.object === 'string') {
+      const object = patch.object.trim()
+      if (!object || object.length > 200) return false
+      next.object = object
+    }
+    if (patch.confidence !== undefined) {
+      const confidence = Number(patch.confidence)
+      if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return false
+      next.confidence = confidence
+    }
+    if (patch.salience !== undefined) {
+      const salience = Number(patch.salience)
+      if (!Number.isFinite(salience) || salience < 0 || salience > 1) return false
+      next.salience = salience
+    }
+    if (Object.keys(next).length === 0) return false
+    await this.collection.update(id, next)
+    return true
+  }
   async ingest(records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }> {
     const created: string[] = []
     const merged: string[] = []
     for (const record of records) {
       const normalized = normalize(record)
       if (!normalized || normalized.confidence < this.minConfidence) continue
+
+      if (normalized.kind !== 'fact') {
+        const id = uid('ep')
+        await this.episodes.insert({
+          id,
+          kind: normalized.kind,
+          session_id: normalized.subject.startsWith('session:') ? normalized.subject.slice(8) : normalized.subject,
+          summary: normalized.object,
+          subject: normalized.subject,
+          predicate: normalized.predicate,
+          audience: normalized.audience ?? 'owner',
+          salience: normalized.salience ?? 0.5,
+          confidence: normalized.confidence,
+          origin_kind: normalized.origin.kind,
+          origin_id: normalized.origin.id,
+          created_at: Date.now(),
+        })
+        created.push(id)
+        continue
+      }
 
       // 幂等事件：同一上报只应用一次（docs/10 §4）
       const idempotencyKey = normalized.idempotencyKey?.trim()
@@ -458,7 +574,7 @@ function normalize(record: MemoryRecord): MemoryRecord | null {
   if (!subject || !predicate || !object) return null
   if (object.length > 200 || subject.length > 60 || predicate.length > 40) return null
   return {
-    kind: 'fact',
+    kind: record.kind ?? 'fact',
     subject,
     predicate,
     object,
