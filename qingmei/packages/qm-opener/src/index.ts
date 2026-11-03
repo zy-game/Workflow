@@ -19,6 +19,7 @@ import {
   type GatewayService,
   type InboundMessage,
   type LlmService,
+  type MemoryService,
   type Row,
   type StoreService,
   type TaskService,
@@ -90,6 +91,7 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
   const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
   const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
   const llm = ctx.reflect.get('llm', false) as LlmService | undefined
+  const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
   const useLlm = config.useLlm !== false
   if (!store) throw new Error('[qm-opener] 缺少 store 服务')
   if (!channel) throw new Error('[qm-opener] 缺少 channel 服务')
@@ -353,6 +355,24 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
         }
         const at = now()
         await openings.update(id, { status: response, responded_at: at.getTime() })
+        if (response === 'answered' && row.topic === 'commitment' && memory) {
+          const object = row.reason.replace(/^承诺到期：/, '').split('（')[0]?.trim().slice(0, 100)
+          if (object) {
+            await memory
+              .ingest([
+                {
+                  kind: 'fact',
+                  subject: '主人',
+                  predicate: '回应了承诺',
+                  object,
+                  confidence: 0.8,
+                  sensitivity: 'private',
+                  origin: { kind: 'self', id: 'opener' },
+                },
+              ])
+              .catch(() => undefined)
+          }
+        }
         const topic = await topicOf(row.topic)
         if (response === 'answered') {
           topic.answered += 1

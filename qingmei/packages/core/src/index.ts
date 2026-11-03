@@ -536,6 +536,8 @@ export interface HarnessRequest {
   conversationId: string
   text: string
   cwd?: string
+  /** 群聊视口应裁剪工具面：false 时不注入 MCP 工具 */
+  allowTools?: boolean
   signal?: AbortSignal
   /** 会话建好后回调一次，用于把 harness 侧 sessionId 记进账本（resume 要用） */
   onSession?: (sessionId: string) => void
