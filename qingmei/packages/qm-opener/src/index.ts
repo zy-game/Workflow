@@ -18,6 +18,7 @@ import {
   type GatewayResponse,
   type GatewayService,
   type InboundMessage,
+  type LlmService,
   type Row,
   type StoreService,
   type TaskService,
@@ -29,6 +30,8 @@ export interface OpenerConfig {
   clock?: () => Date
   maxDaily?: number
   pauseDays?: number
+  /** 有 llm 时用模型生成开场内容；默认 true */
+  useLlm?: boolean
 }
 
 export const name = 'qm-opener'
@@ -86,6 +89,8 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
   const store = ctx.reflect.get('store', false) as StoreService | undefined
   const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
   const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
+  const llm = ctx.reflect.get('llm', false) as LlmService | undefined
+  const useLlm = config.useLlm !== false
   if (!store) throw new Error('[qm-opener] 缺少 store 服务')
   if (!channel) throw new Error('[qm-opener] 缺少 channel 服务')
   if (!gateway) throw new Error('[qm-opener] 缺少 gateway 服务')
@@ -142,7 +147,7 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
       const minute = at.getHours() * 60 + at.getMinutes()
       if (topic.preferred_minute !== null && minute < topic.preferred_minute) return []
 
-      const text = pickPhrase(topic, reason, at)
+      const text = await composeText(topic, reason, at)
       if (!text) return []
       const row: OpeningRow = {
         id: uid('open'),
@@ -206,6 +211,36 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
     return choosePhrase(phrases, history, at.getTime())
   }
 
+  async function composeText(
+    topic: TopicRow,
+    reason: { topic: string; reason: string; data: Record<string, unknown> },
+    at: Date,
+  ): Promise<string | null> {
+    const fallback = pickPhrase(topic, reason, at)
+    if (!llm || !useLlm) return fallback
+    try {
+      const fact = reason.data.commitment
+        ? `承诺：${String((reason.data.commitment as CommitmentRow).text)}`
+        : `任务：${String((reason.data.run as { title?: string } | undefined)?.title ?? '')}`
+      const { text } = await llm.complete({
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是青梅。根据给出的理由写一句不超过 40 字的中文开场，只使用给定事实，不编造，不解释，不加引号。',
+          },
+          { role: 'user', content: `话题：${reason.topic}\n理由：${reason.reason}\n${fact}` },
+        ],
+      })
+      const clean = text.replace(/\s+/g, ' ').replace(/^["'「」]+|["'「」]+$/g, '').trim()
+      if (!clean || clean.length > 60) return fallback
+      const history = parseTexts(topic.last_texts_json)
+      if (history.some((item) => item.text === clean && at.getTime() - item.at < 7 * DAY)) return fallback
+      return clean
+    } catch {
+      return fallback
+    }
+  }
   function phrasesFor(reason: { topic: string; reason: string; data: Record<string, unknown> }, at: Date): string[] {
     if (reason.topic === 'commitment') {
       const text = (reason.data.commitment as CommitmentRow).text
