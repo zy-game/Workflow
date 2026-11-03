@@ -128,6 +128,9 @@ importers:
       '@qingmei/qm-task':
         specifier: workspace:*
         version: link:../../packages/qm-task
+      '@qingmei/qm-thread':
+        specifier: workspace:*
+        version: link:../../packages/qm-thread
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../../packages/service-channel
@@ -691,6 +694,22 @@ importers:
       '@qingmei/provider-task-sqlite':
         specifier: workspace:*
         version: link:../provider-task-sqlite
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-thread:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway
