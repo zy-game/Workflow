@@ -71,10 +71,13 @@ export async function deployWithRollback({
   timeoutMs = 60_000,
   historyDir = null,
   release = false,
+  beforeRestart = null,
+  rollbackRelease = null,
   log = () => {},
 }) {
   await copyTree(appDir, backupDir)
   await extract()
+  if (beforeRestart) await beforeRestart()
   await restart()
   if (await waitHealthy(health, timeoutMs)) {
     log('新版本健康')
@@ -97,6 +100,7 @@ export async function deployWithRollback({
   }
 
   log('新版本不健康，开始回滚')
+  if (rollbackRelease) await rollbackRelease()
   await mergeTree(backupDir, appDir)
   await restart()
   const healthy = await waitHealthy(health, timeoutMs)
