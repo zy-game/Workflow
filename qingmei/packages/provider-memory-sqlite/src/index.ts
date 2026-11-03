@@ -295,6 +295,9 @@ export class SqliteMemory extends MemoryService {
         origin_kind: normalized.origin.kind,
         origin_id: normalized.origin.id,
         created_at: now,
+        embedding_json: JSON.stringify(
+          localEmbedding(`${normalized.subject} ${normalized.predicate} ${normalized.object}`),
+        ),
         hits: 0,
         valid_to: null,
       }
@@ -350,13 +353,16 @@ export class SqliteMemory extends MemoryService {
     )
     const byId = new Map(visible.map((row) => [row.id, row]))
     const tokens = tokenize(query.text)
+    const queryVector = localEmbedding(query.text)
     const now = Date.now()
 
     // ① 种子：关键词命中；分数 = 相似度 + 激活 + 置信度 + 时效 + 显著度
     const candidates = new Map<string, number>()
     for (const row of visible) {
-      const score = similarity(row, tokens)
-      if (score <= 0) continue
+      const lexical = similarity(row, tokens)
+      const vector = row.embedding_json ? cosine(queryVector, parseVector(row.embedding_json)) : 0
+      const score = lexical > 0 ? lexical * 0.7 + vector * 0.3 : vector * 0.35
+      if (score <= 0.02) continue
       candidates.set(row.id, scoreOf(row, score, now))
     }
 
@@ -657,6 +663,44 @@ function tokenize(text: string): string[] {
   return [...tokens]
 }
 
+const EMBED_DIM = 128
+
+/** 离线兜底向量：字符/词 unigram + bigram 哈希到固定维度，不依赖模型。 */
+export function localEmbedding(text: string): number[] {
+  const vector = new Array<number>(EMBED_DIM).fill(0)
+  const tokens = tokenize(text)
+  const features = [...tokens]
+  for (const token of tokens) {
+    if (token.length < 2) continue
+    for (let i = 0; i < token.length - 1; i += 1) features.push(token.slice(i, i + 2))
+  }
+  for (const feature of features) {
+    let hash = 2166136261
+    for (let i = 0; i < feature.length; i += 1) {
+      hash ^= feature.charCodeAt(i)
+      hash = Math.imul(hash, 16777619)
+    }
+    vector[(hash >>> 0) % EMBED_DIM] += 1
+  }
+  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0))
+  return norm > 0 ? vector.map((value) => value / norm) : vector
+}
+
+export function cosine(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0
+  let dot = 0
+  for (let i = 0; i < a.length; i += 1) dot += (a[i] ?? 0) * (b[i] ?? 0)
+  return dot
+}
+
+function parseVector(raw: string): number[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed) ? parsed.map(Number) : []
+  } catch {
+    return []
+  }
+}
 function similarity(row: FactRow, tokens: string[]): number {
   if (tokens.length === 0) return 0
   const haystack = `${row.subject}${row.predicate}${row.object}`.toLowerCase()

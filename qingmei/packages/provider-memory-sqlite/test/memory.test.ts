@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as memoryPlugin from '../src/index.ts'
+import { cosine, localEmbedding } from '../src/index.ts'
 import type { MemoryRecord } from '@qingmei/core'
 
 const ORIGIN: MemoryRecord['origin'] = { kind: 'channel', id: 's_owner' }
@@ -393,6 +394,23 @@ test('记忆页：listFacts / updateFact 支持人工修正', async () => {
     const after = await ctx.memory.listFacts()
     assert.equal(after[0]?.object, '加奶咖啡')
     assert.equal(after[0]?.salience, 0.9)
+  } finally {
+    await dispose()
+  }
+})
+
+test('本地向量：归一化、相似度，以及无关键词时的向量召回', async () => {
+  const a = localEmbedding('black coffee')
+  const b = localEmbedding('black coffee')
+  const c = localEmbedding('杭州出差')
+  assert.ok(cosine(a, b) > 0.999)
+  assert.ok(cosine(a, c) < 0.5)
+
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([fact('主人', 'drinks', 'coffee')])
+    const result = await ctx.memory.recall({ text: 'coffees', limit: 5 })
+    assert.equal(result.facts.length, 1, 'bigram 向量应在无完整词命中时召回')
   } finally {
     await dispose()
   }
