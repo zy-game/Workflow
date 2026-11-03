@@ -13,6 +13,7 @@ import { Context, FiberState } from 'cordis'
 import type { Fiber } from 'cordis'
 import { getServerInfo } from '@qingmei/host-gateway'
 import type { ServerInfo } from '@qingmei/host-gateway'
+import { ensureSafeConfig } from './config-safety.ts'
 
 /** 仓库根目录（apps/server/src → ../../..） */
 export const REPO_ROOT = path.resolve(import.meta.dirname, '../../..')
@@ -181,6 +182,11 @@ function applyOverrides(entries: PluginEntry[], options: StartOptions): PluginEn
  */
 export async function startApp(options: StartOptions = {}): Promise<App> {
   const configPath = path.resolve(options.configPath ?? DEFAULT_CONFIG)
+  const safety = ensureSafeConfig(configPath)
+  if (safety.repaired) {
+    const detail = safety.broken ? `，损坏文件保留为 ${safety.broken}` : ''
+    console.error(`[qingmei] 配置无效，已回滚到快照 ${safety.snapshot}${detail}`)
+  }
   const entries = applyOverrides(readPluginList(configPath), options)
   const ctx = new Context()
   const plugins: MountedPlugin[] = []
