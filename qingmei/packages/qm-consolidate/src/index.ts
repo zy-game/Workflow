@@ -30,6 +30,8 @@ interface RunRow extends Row {
   at: number
   scanned: number
   compressed: number
+  episodes_merged?: number
+  episode_groups?: number
 }
 
 export function apply(ctx: Context, config: ConsolidateConfig = {}): void {
@@ -47,11 +49,19 @@ export function apply(ctx: Context, config: ConsolidateConfig = {}): void {
 
   async function run(): Promise<ConsolidationReport> {
     const report = await memory.consolidate()
+    const episodes = await memory.consolidateEpisodes()
     await runs
-      .insert({ id: uid('cons'), at: report.at.getTime(), scanned: report.scanned, compressed: report.compressed.length })
+      .insert({
+        id: uid('cons'),
+        at: report.at.getTime(),
+        scanned: report.scanned,
+        compressed: report.compressed.length,
+        episodes_merged: episodes.merged,
+        episode_groups: episodes.groups,
+      })
       .catch(() => undefined)
 
-    if (report.compressed.length > 0) {
+    if (report.compressed.length > 0 || episodes.merged > 0) {
       await channel
         .send({
           channel: 'web',
@@ -59,7 +69,7 @@ export function apply(ctx: Context, config: ConsolidateConfig = {}): void {
           blocks: [
             {
               type: 'text',
-              text: `🧠 记忆巩固：扫描 ${report.scanned} 条，压缩 ${report.compressed.length} 条低价值事实`,
+              text: `🧠 记忆巩固：扫描 ${report.scanned} 条事实、${episodes.scanned} 条情节，压缩 ${report.compressed.length} 条事实，合并 ${episodes.merged} 条情节`,
             },
           ],
         })

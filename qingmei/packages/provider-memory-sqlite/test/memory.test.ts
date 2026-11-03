@@ -442,3 +442,35 @@ test('远端 embedding 服务存在时优先使用其向量', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('情节巩固：同会话同日多条 episode 合并成一条摘要', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    for (const text of ['讨论了杭州行程', '确认了酒店', '需要带身份证']) {
+      await ctx.memory.ingest([
+        {
+          kind: 'episode',
+          subject: 'session:chat',
+          predicate: 'summary',
+          object: text,
+          confidence: 0.9,
+          sensitivity: 'private',
+          origin: ORIGIN,
+        },
+      ])
+    }
+    const report = await ctx.memory.consolidateEpisodes()
+    assert.equal(report.scanned, 3)
+    assert.equal(report.merged, 3)
+    const store = ctx.reflect.get('store', false) as {
+      collection: (name: string) => { find: (q?: object) => Promise<Record<string, unknown>[]> }
+    }
+    const episodes = await store.collection('qm_mem_episode').find({})
+    const merged = episodes.find((row) => row.origin_kind === 'self' && row.origin_id === 'consolidate')
+    assert.ok(merged, '应生成合并后的情节')
+    assert.match(String(merged.summary), /杭州/)
+    assert.equal(episodes.filter((row) => row.archived_at).length, 3)
+  } finally {
+    await dispose()
+  }
+})

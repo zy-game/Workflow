@@ -13,6 +13,7 @@ import {
   type EmbeddingService,
   uid,
   type ConsolidationReport,
+  type EpisodeConsolidationReport,
   type MemoryRecord,
   type ProfileEntry,
   type RecallQuery,
@@ -97,6 +98,7 @@ interface EpisodeRow extends Row {
   origin_kind: string
   origin_id: string
   created_at: number
+  archived_at?: number | null
 }
 
 interface WorkingRow extends Row {
@@ -509,6 +511,47 @@ export class SqliteMemory extends MemoryService {
         }
       }
     }
+  }
+
+  async consolidateEpisodes(): Promise<EpisodeConsolidationReport> {
+    const now = Date.now()
+    const since = now - 7 * 24 * 60 * 60 * 1000
+    const rows = (await this.episodes.find({})).filter(
+      (row) => !row.archived_at && row.created_at >= since && row.kind !== 'fact',
+    )
+    const groups = new Map<string, EpisodeRow[]>()
+    for (const row of rows) {
+      const day = new Date(row.created_at).toISOString().slice(0, 10)
+      const key = `${row.session_id}:${day}`
+      const list = groups.get(key) ?? []
+      list.push(row)
+      groups.set(key, list)
+    }
+    let merged = 0
+    for (const list of groups.values()) {
+      if (list.length < 2) continue
+      const unique = [...new Set(list.map((row) => row.summary.trim()).filter(Boolean))]
+      if (unique.length < 2) continue
+      const first = list[0]!
+      await this.episodes.insert({
+        id: uid('ep'),
+        kind: 'episode',
+        session_id: first.session_id,
+        summary: unique.join('；').slice(0, 500),
+        subject: first.subject,
+        predicate: 'summary',
+        audience: first.audience,
+        salience: Math.max(...list.map((row) => row.salience)),
+        confidence: Math.max(...list.map((row) => row.confidence)),
+        origin_kind: 'self',
+        origin_id: 'consolidate',
+        created_at: now,
+        archived_at: null,
+      })
+      for (const row of list) await this.episodes.update(row.id, { archived_at: now })
+      merged += list.length
+    }
+    return { at: new Date(now), scanned: rows.length, groups: groups.size, merged }
   }
 
   /**

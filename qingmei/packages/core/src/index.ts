@@ -529,6 +529,14 @@ export abstract class LlmService extends Service {
   abstract chat(req: ChatRequest): AsyncIterable<ChatStreamChunk>
 }
 
+// ────────────────────────────────────────────── Embedding
+
+export abstract class EmbeddingService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'embedding')
+  }
+  abstract embed(texts: string[]): Promise<number[][]>
+}
 // ────────────────────────────────────────────── Harness（内嵌 agent runtime）
 
 export interface HarnessRequest {
@@ -673,6 +681,13 @@ export interface ProfileEntry {
   facts: ProfileFact[]
 }
 
+export interface EpisodeConsolidationReport {
+  at: Date
+  scanned: number
+  groups: number
+  merged: number
+}
+
 export interface ConsolidationReport {
   at: Date
   scanned: number
@@ -708,6 +723,11 @@ export abstract class MemoryService extends Service {
     return false
   }
 
+  /** 情节巩固：按会话/日聚类并合并摘要；默认不做，provider 可覆盖 */
+  async consolidateEpisodes(): Promise<EpisodeConsolidationReport> {
+    return { at: new Date(), scanned: 0, groups: 0, merged: 0 }
+  }
+
   /** 夜间巩固：压缩同主题低价值事实；默认不做，provider 可覆盖 */
   async consolidate(): Promise<ConsolidationReport> {
     return { at: new Date(), scanned: 0, compressed: [] }
@@ -740,6 +760,41 @@ export abstract class PersonaService extends Service {
   }
   abstract current(): PersonaSnapshot
   abstract reload(): Promise<PersonaSnapshot>
+}
+// ────────────────────────────────────────────── 跨端缝合
+
+export interface ThreadRecord {
+  id: string
+  title: string
+  status: 'open' | 'closed'
+  conversationIds: string[]
+  taskIds: string[]
+  summary?: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+export abstract class ThreadService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'thread')
+  }
+  abstract create(input: {
+    title: string
+    conversationId?: string
+    taskId?: string
+    summary?: string
+  }): Promise<ThreadRecord>
+  abstract get(id: string): Promise<ThreadRecord | null>
+  abstract list(query?: {
+    status?: 'open' | 'closed'
+    conversationId?: string
+    taskId?: string
+    limit?: number
+  }): Promise<ThreadRecord[]>
+  abstract link(
+    id: string,
+    input: { conversationId?: string; taskId?: string; summary?: string; status?: 'open' | 'closed' },
+  ): Promise<ThreadRecord | null>
 }
 // ────────────────────────────────────────────── 任务账本
 
