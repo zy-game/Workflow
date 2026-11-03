@@ -29,6 +29,7 @@ import {
   type Row,
   type StoreService,
   type TurnChunk,
+  type ThreadService,
   type TurnEnd,
 } from '@qingmei/core'
 import type { LlmService } from '@qingmei/service-llm'
@@ -249,11 +250,26 @@ export function apply(ctx: Context, config: AgentConfig): void {
     let summaryText = ''
     /** 画像只对 owner 开：稳定事实，不依赖这句话的关键词 */
     let profileText = ''
+    /** 跨端缝合：同一会话关联的 thread 摘要 */
+    let threadText = ''
     if (memory) {
       try {
         memoryText = (await memory.recall({ text: userText, audience, sessionId })).text
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
+      }
+      const threadService = ctx.reflect.get('thread', false) as ThreadService | undefined
+      if (threadService) {
+        try {
+          const conversationId = sessionId.replace(/^s_/, '')
+          const threads = await threadService.list({ conversationId, limit: 3 })
+          threadText = threads
+            .filter((thread) => thread.summary)
+            .map((thread) => `- ${thread.title}：${thread.summary}`)
+            .join('\n')
+        } catch {
+          // thread 是增强项，失败不影响对话
+        }
       }
       try {
         summaryText = await memory.summarize(sessionId)
@@ -305,6 +321,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
     const memoryBlock = [
       profileText ? `【关于主人】\n${profileText}` : '',
       summaryText ? `【会话摘要】\n${summaryText}` : '',
+      threadText ? `【跨端进展】\n${threadText}` : '',
       memoryText ? `【已知记忆】\n${memoryText}` : '',
       groupNote ? `【本群规则】\n${groupNote}` : '',
       skillsText,
