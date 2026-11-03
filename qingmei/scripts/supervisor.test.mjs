@@ -102,3 +102,33 @@ test('回滚到指定历史版本', async () => {
     await h.dispose()
   }
 })
+
+test('shell 钩子：先切 release，健康失败切回旧 release', async () => {
+  const h = await setup('old')
+  try {
+    const calls = []
+    const result = await deployWithRollback({
+      appDir: h.appDir,
+      backupDir: h.backupDir,
+      extract: async () => writeFile(join(h.appDir, 'version.txt'), 'new'),
+      beforeRestart: async () => {
+        calls.push('activate')
+      },
+      rollbackRelease: async () => {
+        calls.push('rollback-release')
+      },
+      restart: async () => {
+        calls.push('restart')
+      },
+      health: async () => false,
+      timeoutMs: 150,
+    })
+    assert.equal(result.healthy, false)
+    assert.equal(calls[0], 'activate')
+    assert.ok(calls.indexOf('rollback-release') > calls.indexOf('activate'))
+    assert.equal(await readFile(join(h.appDir, 'version.txt'), 'utf8'), 'old')
+    assert.equal(await readFile(join(h.appDir, 'data', 'keep.txt'), 'utf8'), 'precious')
+  } finally {
+    await h.dispose()
+  }
+})
