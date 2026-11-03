@@ -45,8 +45,6 @@ test('界面元素齐全', () => {
     'chat-input',
     'chat-send',
     'pet',
-    'chat-button',
-    'settings-button',
     'zzz',
     'hearts',
     'settings-modal',

@@ -32,10 +32,8 @@ const el = {
   chatForm: document.getElementById('chat-form'),
   chatInput: document.getElementById('chat-input'),
   chatSend: document.getElementById('chat-send'),
-  chatButton: document.getElementById('chat-button'),
   hearts: document.getElementById('hearts'),
   pet: document.getElementById('pet'),
-  settingsButton: document.getElementById('settings-button'),
   statusDot: document.getElementById('status-dot'),
   hint: document.getElementById('hint'),
   settingsModal: document.getElementById('settings-modal'),
@@ -483,10 +481,6 @@ function bind() {
     else if (action === 'chat') openChat()
     else if (action === 'hide') desktop.hide()
   })
-  el.chatButton.addEventListener('click', () => {
-    markActivity()
-    toggleChat()
-  })
   el.pet.addEventListener('click', () => {
     if (suppressClick) return
     clearTimeout(clickTimer)
@@ -550,7 +544,6 @@ function bind() {
     event.stopPropagation()
     dismissBubble()
   })
-  el.settingsButton.addEventListener('click', openSettings)
   el.chatForm.addEventListener('submit', (event) => void sendMessage(event))
   el.settingsForm.addEventListener('submit', (event) => void saveSettings(event))
   el.settingsTest.addEventListener('click', () => void testConnection())

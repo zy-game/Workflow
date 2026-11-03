@@ -409,27 +409,6 @@ input {
   opacity: 0.82;
 }
 
-.settings-button {
-  position: absolute;
-  right: 12px;
-  bottom: 18px;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: rgba(255, 253, 246, 0.85);
-  color: var(--ink-soft);
-  cursor: pointer;
-  z-index: 12;
-  -webkit-app-region: no-drag;
-  line-height: 1;
-}
-
-.settings-button:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
 .status-dot {
   position: absolute;
   left: 20px;
@@ -641,26 +620,6 @@ input {
 
 [hidden] {
   display: none !important;
-}
-
-.chat-button {
-  position: absolute;
-  left: 12px;
-  bottom: 18px;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: rgba(255, 253, 246, 0.85);
-  cursor: pointer;
-  z-index: 12;
-  -webkit-app-region: no-drag;
-  line-height: 1;
-  font-size: 13px;
-}
-
-.chat-button:hover {
-  border-color: var(--accent);
 }
 
 .zzz {
