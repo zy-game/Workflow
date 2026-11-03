@@ -56,9 +56,9 @@ test('界面元素齐全', () => {
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `缺少 #${id}`)
   }
-  assert.match(html, /<video[^>]*id="pet"/)
-  for (const clip of ['idle-breath', 'idle-look', 'sleep', 'think', 'eat-rice', 'drag', 'click-happy', 'click-wave']) {
-    assert.ok(existsSync(join(root, 'renderer', 'assets', 'anims', clip + '.webm')), '缺少动画 ' + clip + '.webm')
+  assert.match(html, /<img[^>]*id="pet"/)
+  for (const clip of ['idle-breath', 'idle-look', 'sleep', 'think', 'eat-rice', 'drag', 'click-happy', 'click-wave', 'click-shy', 'click-pout', 'click-tickle', 'fun-mirror', 'fun-whale', 'fun-water']) {
+    assert.ok(existsSync(join(root, 'renderer', 'assets', 'gifs', clip + '.gif')), '缺少动画 ' + clip + '.gif')
   }
 })
 
@@ -77,6 +77,11 @@ test('交互：点击/右键/拖动/设置', () => {
   assert.match(app, /popupMenu/)
   assert.match(css, /-webkit-app-region:\s*drag/)
   assert.match(css, /-webkit-app-region:\s*no-drag/)
+  assert.match(main, /摸摸头/);
+  assert.match(main, /喂饭/);
+  assert.match(main, /逗一下/);
+  assert.match(app, /onPetAction/);
+  assert.match(app, /playFun/);
   assert.match(app, /setIgnoreMouseEvents\(true\)/)
   assert.match(app, /elementFromPoint/)
   assert.match(main, /setIgnoreMouseEvents/)

@@ -132,6 +132,14 @@ function createWindow() {
   win.once('ready-to-show', () => {
     boot('ready-to-show')
     win.showInactive()
+    const action = process.env.QM_DESKTOP_ACTION
+    if (action === 'feed') {
+      setTimeout(() => {
+        void win.webContents.executeJavaScript(
+          "document.getElementById('pet').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))",
+        )
+      }, 600)
+    }
     const shot = process.env.QM_DESKTOP_SCREENSHOT
     if (shot) {
       win.webContents.on('console-message', (_event, level, message) => {
@@ -153,8 +161,7 @@ function createWindow() {
                   bubbleHidden: document.getElementById('bubble')?.hidden,
                   bubbleText: document.getElementById('bubble-text')?.textContent,
                   chatHidden: document.getElementById('chat')?.hidden,
-                  videoTime: document.getElementById('pet')?.currentTime,
-                  videoPaused: document.getElementById('pet')?.paused,
+                  petSrc: document.getElementById('pet')?.getAttribute('src'),
                 })
               `)
               writeFileSync(`${shot}.json`, info)
@@ -205,8 +212,14 @@ if (!gotLock) {
 
     ipcMain.handle('menu:popup', () => {
       Menu.buildFromTemplate([
+        { label: '摸摸头', click: () => win?.webContents.send('pet-action', 'pet') },
+        { label: '喂饭', click: () => win?.webContents.send('pet-action', 'feed') },
+        { label: '逗一下', click: () => win?.webContents.send('pet-action', 'play') },
+        { label: '聊聊天', click: () => win?.webContents.send('pet-action', 'chat') },
+        { type: 'separator' },
         { label: '设置…', click: () => win?.webContents.send('open-settings') },
         { label: '重新连接', click: () => win?.webContents.send('reconnect') },
+        { label: '躲起来', click: () => win?.hide() },
         { type: 'separator' },
         { label: '退出青梅', click: () => app.quit() },
       ]).popup({ window: win ?? undefined })

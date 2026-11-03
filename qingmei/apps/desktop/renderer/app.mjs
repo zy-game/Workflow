@@ -13,6 +13,7 @@ const desktop = window.qmDesktop ?? {
   quit: () => undefined,
   onOpenSettings: () => undefined,
   onReconnect: () => undefined,
+  onPetAction: () => undefined,
   setIgnoreMouseEvents: () => undefined,
   moveBy: () => undefined,
   hide: () => undefined,
@@ -67,63 +68,74 @@ const PET_LINES = [
   '辛苦啦。',
 ]
 
-const VIDEOS = {
-  idle: ['./assets/anims/idle-breath.webm', './assets/anims/idle-look.webm'],
-  sleep: './assets/anims/sleep.webm',
-  think: './assets/anims/think.webm',
-  click: ['./assets/anims/click-happy.webm', './assets/anims/click-wave.webm'],
-  eat: './assets/anims/eat-rice.webm',
-  drag: './assets/anims/drag.webm',
+const GIFS = {
+  idle: ['./assets/gifs/idle-breath.gif', './assets/gifs/idle-look.gif'],
+  sleep: './assets/gifs/sleep.gif',
+  think: './assets/gifs/think.gif',
+  eat: './assets/gifs/eat-rice.gif',
+  drag: './assets/gifs/drag.gif',
+  click: [
+    './assets/gifs/click-happy.gif',
+    './assets/gifs/click-wave.gif',
+    './assets/gifs/click-shy.gif',
+    './assets/gifs/click-pout.gif',
+    './assets/gifs/click-tickle.gif',
+  ],
+  fun: ['./assets/gifs/fun-mirror.gif', './assets/gifs/fun-whale.gif', './assets/gifs/fun-water.gif'],
 }
 
 let idleIndex = 0
-let lastVideo = ''
+let clipTimer = 0
 
-function playClip(src, { loop = true } = {}) {
-  const video = el.pet
-  if (!video) return
-  const absolute = new URL(src, location.href).href
-  if (lastVideo === absolute && !video.ended) {
-    if (video.paused) void video.play().catch(() => undefined)
-    return
+function playGif(src, { duration = 0 } = {}) {
+  const img = el.pet
+  if (!img) return
+  img.src = new URL(src, location.href).href + '#' + Date.now()
+  clearTimeout(clipTimer)
+  if (duration > 0) {
+    clipTimer = window.setTimeout(() => {
+      if (!['dragging', 'sleeping', 'thinking'].includes(el.app.dataset.state)) {
+        setPetState(isOnline() ? 'idle' : 'offline')
+      }
+    }, duration)
   }
-  lastVideo = absolute
-  video.loop = loop
-  video.src = src
-  video.load()
-  void video.play().catch(() => undefined)
 }
 
 function idleClip() {
-  playClip(VIDEOS.idle[idleIndex++ % VIDEOS.idle.length], { loop: true })
+  playGif(GIFS.idle[idleIndex++ % GIFS.idle.length])
 }
+
 function setPetState(state) {
   const previous = el.app.dataset.state
   el.app.dataset.state = state
-  clearTimeout(stateResetTimer)
   if (state === 'idle' || state === 'offline') {
     if (previous !== 'idle' && previous !== 'offline') idleClip()
     return
   }
   if (state === 'sleeping') {
-    playClip(VIDEOS.sleep, { loop: true })
+    playGif(GIFS.sleep)
     return
   }
   if (state === 'thinking') {
-    playClip(VIDEOS.think, { loop: true })
+    playGif(GIFS.think)
     return
   }
   if (state === 'happy' || state === 'alert') {
-    const clips = VIDEOS.click
-    playClip(clips[Math.floor(Math.random() * clips.length)], { loop: false })
-    stateResetTimer = window.setTimeout(() => setPetState(isOnline() ? 'idle' : 'offline'), 1600)
+    playGif(GIFS.click[Math.floor(Math.random() * GIFS.click.length)], { duration: 2400 })
     return
   }
   if (state === 'dragging') {
-    playClip(VIDEOS.drag, { loop: true })
+    playGif(GIFS.drag)
   }
 }
 
+function playFun() {
+  if (['dragging', 'sleeping', 'thinking'].includes(el.app.dataset.state)) return
+  el.app.dataset.state = 'happy'
+  playGif(GIFS.fun[Math.floor(Math.random() * GIFS.fun.length)], { duration: 3200 })
+  pushBubble('自己找点乐子～', 'pet')
+  if (Math.random() < 0.4) spawnHearts(3)
+}
 function isOnline() {
   return Boolean(source) && source.readyState === EventSource.OPEN
 }
@@ -174,7 +186,7 @@ function connect() {
   })
   source.addEventListener('error', () => {
     setOnline(false)
-    if (el.app.dataset.state !== 'thinking') setPetState('offline')
+    if (!['thinking', 'happy', 'alert', 'dragging'].includes(el.app.dataset.state)) setPetState('offline')
   })
   for (const type of ['assistant', 'approval-requested', 'task-finished']) {
     source.addEventListener(type, (event) => {
@@ -219,7 +231,7 @@ function safeParse(raw) {
 function pushBubble(text, kind) {
   const item = bubbles.add(text, kind)
   if (!item) return
-  setPetState(kind === 'error' ? 'alert' : 'happy')
+  if (kind !== 'pet') setPetState(kind === 'error' ? 'alert' : 'happy')
   renderBubble()
 }
 
@@ -441,25 +453,27 @@ function interact() {
 function feed() {
   markActivity()
   el.app.dataset.state = 'happy'
-  playClip(VIDEOS.eat, { loop: false })
+  el.app.dataset.state = 'happy'
+  playGif(GIFS.eat, { duration: 3200 })
   pushBubble('好吃！谢谢款待～', 'pet')
   spawnHearts(6)
-  clearTimeout(stateResetTimer)
-  stateResetTimer = window.setTimeout(() => setPetState(isOnline() ? 'idle' : 'offline'), 2600)
 }
 
 function bind() {
   idleClip()
-  el.pet.addEventListener('ended', () => {
-    if (el.app.dataset.state === 'happy' || el.app.dataset.state === 'alert') {
-      setPetState(isOnline() ? 'idle' : 'offline')
-    }
-  })
   window.setInterval(() => {
-    if ((el.app.dataset.state === 'idle' || el.app.dataset.state === 'offline') && el.chat.hidden) {
-      idleClip()
+    if ((el.app.dataset.state === 'idle' || el.app.dataset.state === 'offline') && el.chat.hidden && el.settingsModal.hidden) {
+      if (Math.random() < 0.35) playFun()
+      else idleClip()
     }
-  }, 12000)
+  }, 20000)
+  desktop.onPetAction((action) => {
+    if (action === 'pet') interact()
+    else if (action === 'feed') feed()
+    else if (action === 'play') playFun()
+    else if (action === 'chat') openChat()
+    else if (action === 'hide') desktop.hide()
+  })
   el.chatButton.addEventListener('click', () => {
     markActivity()
     toggleChat()
@@ -545,15 +559,6 @@ function bind() {
     const interactive = Boolean(
       target?.closest('#pet, #bubble, #chat, #drag-handle, #chat-button, #settings-button, #settings-modal'),
     )
-    if (target?.closest('#pet-stage') && el.app.dataset.state !== 'sleeping') {
-      const rect = el.pet.getBoundingClientRect()
-      const dx = event.clientX - (rect.left + rect.width / 2)
-      document.documentElement.style.setProperty('--lean', `${Math.max(-3, Math.min(3, dx / 60))}deg`)
-      document.documentElement.style.setProperty('--lean-x', `${Math.max(-6, Math.min(6, dx / 20))}px`)
-    } else {
-      document.documentElement.style.setProperty('--lean', '0deg')
-      document.documentElement.style.setProperty('--lean-x', '0px')
-    }
     const next = !interactive
     if (next !== ignoringMouse) {
       ignoringMouse = next
