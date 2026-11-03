@@ -132,6 +132,17 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P7 起步：A4 记忆热点 + 周报
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/provider-memory-sqlite` | 事实加 `hits`，召回强化时累计 |
+| `packages/qm-memory-hotspot`（新） | 夜间热点调整（≤0.05/条、≤10% 批量、只改 salience）、可回滚、审计；周一记忆周报 |
+| 配置 | dev/prod 各加一项（30 项插件） |
+| 测试 | 347 全绿 |
+
+> 用模型判断热点、日报、环境自维护未做。
+
 ### P6 起步：W1 任务合同 + W2 督促阶梯 + W5 休息
 
 | 文件 | 改了什么 |

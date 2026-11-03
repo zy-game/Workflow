@@ -79,6 +79,9 @@
 # 月度复盘：每月 1 号生成报告，支持打分与低分提醒
 - name: '@qingmei/qm-review'
 
+# 记忆热点（A4）：夜间小步调整 + 周报；可回滚、有审计
+- name: '@qingmei/qm-memory-hotspot'
+
 # 任务督促（W1/W2）：合同 + 进度阶梯（L1/L2 通知，L3/L4 只记录）
 - name: '@qingmei/qm-nudge'
 

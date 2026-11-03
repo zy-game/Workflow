@@ -58,6 +58,8 @@ interface FactRow extends Row {
   salience?: number
   activation?: number
   last_fired_at?: number | null
+  /** 被召回的累计次数（热点打分用） */
+  hits?: number
   sensitivity: string
   /** 老记录没有这一列，读取时按 owner 处理 */
   audience?: string
@@ -168,6 +170,7 @@ export class SqliteMemory extends MemoryService {
         origin_kind: normalized.origin.kind,
         origin_id: normalized.origin.id,
         created_at: now,
+        hits: 0,
         valid_to: null,
       }
       const inserted = await this.collection.insert(row)
@@ -299,7 +302,12 @@ export class SqliteMemory extends MemoryService {
   private async reinforce(ids: string[]): Promise<void> {
     const now = Date.now()
     for (const id of ids) {
-      await this.collection.update(id, { activation: 1, last_fired_at: now })
+      const row = await this.collection.get(id)
+      await this.collection.update(id, {
+        activation: 1,
+        last_fired_at: now,
+        hits: (row?.hits ?? 0) + 1,
+      })
     }
     for (let i = 0; i < ids.length; i += 1) {
       for (let j = i + 1; j < ids.length; j += 1) {

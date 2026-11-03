@@ -33,6 +33,7 @@
     "@qingmei/qm-identity": "workspace:*",
     "@qingmei/qm-incident": "workspace:*",
     "@qingmei/qm-review": "workspace:*",
+    "@qingmei/qm-memory-hotspot": "workspace:*",
     "@qingmei/qm-nudge": "workspace:*",
     "@qingmei/qm-rest": "workspace:*",
     "@qingmei/qm-audit": "workspace:*",

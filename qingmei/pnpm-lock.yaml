@@ -92,6 +92,9 @@ importers:
       '@qingmei/qm-memory-extract':
         specifier: workspace:*
         version: link:../../packages/qm-memory-extract
+      '@qingmei/qm-memory-hotspot':
+        specifier: workspace:*
+        version: link:../../packages/qm-memory-hotspot
       '@qingmei/qm-nudge':
         specifier: workspace:*
         version: link:../../packages/qm-nudge
@@ -505,6 +508,25 @@ importers:
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
+
+  packages/qm-memory-hotspot:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
 
   packages/qm-nudge:
     dependencies:

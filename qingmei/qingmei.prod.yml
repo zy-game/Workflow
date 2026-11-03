@@ -125,6 +125,13 @@
     dayOfMonth: 1
     hour: 9
 
+# 记忆热点（A4）
+- name: '@qingmei/qm-memory-hotspot'
+  config:
+    hotHour: 3
+    weekDay: 1
+    weekHour: 9
+
 # 任务督促（W1/W2）：合同 + 进度阶梯
 - name: '@qingmei/qm-nudge'
 
