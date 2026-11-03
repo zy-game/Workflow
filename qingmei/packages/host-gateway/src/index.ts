@@ -5,7 +5,9 @@
  * 业务路由与事件广播仍然在 gateway 服务里。
  */
 import { timingSafeEqual } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdirSync } from 'node:fs'
+import { readFile, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import path from 'node:path'
 import { Context } from 'cordis'
@@ -46,6 +48,8 @@ export interface Config {
   token?: string
   /** 前端静态产物目录，默认 ./apps/web/public（相对进程工作目录） */
   webRoot?: string
+  /** 图片上传目录，默认 ./data/uploads（相对进程工作目录） */
+  uploadDir?: string
 }
 
 export interface ServerInfo {
@@ -59,6 +63,7 @@ interface Options {
   port: number
   token: string
   webRoot: string
+  uploadDir: string
 }
 
 interface HandlerDeps {
@@ -121,7 +126,13 @@ function normalizeConfig(config: Config): Options {
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error(`host-gateway: config.port 必须是 0..65535 的整数，收到 ${String(config.port)}`)
   }
-  return { host, port, token, webRoot: path.resolve(config.webRoot ?? 'apps/web/public') }
+  return {
+    host,
+    port,
+    token,
+    webRoot: path.resolve(config.webRoot ?? 'apps/web/public'),
+    uploadDir: path.resolve(config.uploadDir ?? 'data/uploads'),
+  }
 }
 
 function assertGateway(gateway: GatewayHub): void {
@@ -141,6 +152,7 @@ export const apply = (ctx: Context, config: Config = {}): Promise<void> => {
     throw new Error('host-gateway 缺少必需服务 "gateway"：请先加载 @qingmei/service-gateway')
   }
   assertGateway(gateway)
+  mkdirSync(options.uploadDir, { recursive: true })
 
   const startedAt = Date.now()
   const clients = new Set<ServerResponse>()
@@ -271,6 +283,14 @@ async function routeRequest(
       return
     }
 
+    if (pathname === '/api/v1/uploads' && method === 'POST') {
+      await receiveUpload(deps, req, res)
+      return
+    }
+    if (pathname.startsWith('/api/v1/uploads/') && method === 'GET') {
+      await serveUpload(deps, res, pathname)
+      return
+    }
     if (pathname === '/api/v1/events' && method === 'GET') {
       openEventStream(deps, req, res)
       return
@@ -406,7 +426,7 @@ function bearerOf(header: string | undefined): string | undefined {
 function authorized(req: IncomingMessage, url: URL, expected: string): boolean {
   const headerToken = bearerOf(req.headers.authorization)
   if (headerToken !== undefined) return tokenMatches(headerToken, expected)
-  if (req.method === 'GET' && url.pathname === '/api/v1/events') {
+  if (req.method === 'GET' && (url.pathname === '/api/v1/events' || url.pathname.startsWith('/api/v1/uploads/'))) {
     return tokenMatches(url.searchParams.get('token') ?? undefined, expected)
   }
   return false
@@ -440,6 +460,60 @@ function formatEvent(event: GatewayEvent): string {
   return `event: ${type}\ndata: ${data}\n\n`
 }
 
+const IMAGE_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+}
+
+async function receiveUpload(
+  deps: HandlerDeps,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = await readJsonBody(req, 6 * 1024 * 1024)
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new HttpError(400, '请求体必须是 JSON 对象')
+  }
+  const record = body as Record<string, unknown>
+  const mime = String(record.mime ?? '')
+  const ext = IMAGE_MIME[mime]
+  if (!ext) throw new HttpError(400, '只支持 png/jpeg/webp/gif 图片')
+  let data = String(record.data ?? '')
+  if (data.startsWith('data:')) {
+    const comma = data.indexOf(',')
+    if (comma < 0) throw new HttpError(400, 'data URL 格式不合法')
+    data = data.slice(comma + 1)
+  }
+  const buffer = Buffer.from(data, 'base64')
+  if (buffer.length === 0) throw new HttpError(400, '图片内容为空')
+  if (buffer.length > 4 * 1024 * 1024) throw new HttpError(413, '单张图片不能超过 4MB')
+  const filename = `${randomUUID()}.${ext}`
+  await writeFile(path.join(deps.options.uploadDir, filename), buffer)
+  sendJson(res, 200, { ok: true, url: `/api/v1/uploads/${filename}`, mime })
+}
+
+async function serveUpload(deps: HandlerDeps, res: ServerResponse, pathname: string): Promise<void> {
+  const filename = decodeURIComponent(pathname.slice('/api/v1/uploads/'.length))
+  if (!/^[a-f0-9-]+\.(png|jpg|jpeg|webp|gif)$/i.test(filename)) {
+    throw new HttpError(400, '非法文件名')
+  }
+  const target = path.join(deps.options.uploadDir, filename)
+  if (!target.startsWith(deps.options.uploadDir + path.sep)) throw new HttpError(400, '非法路径')
+  const data = await readFile(target).catch((error: unknown) => {
+    if (isNotFound(error)) throw new HttpError(404, 'not found')
+    throw error
+  })
+  const ext = path.extname(filename).toLowerCase()
+  const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : `image/${ext.slice(1)}`
+  res.writeHead(200, {
+    'Content-Type': mime,
+    'Content-Length': data.length,
+    'Cache-Control': 'private, max-age=86400',
+  })
+  res.end(data)
+}
 async function receiveMessage(
   deps: HandlerDeps,
   req: IncomingMessage,
@@ -450,10 +524,14 @@ async function receiveMessage(
     throw new HttpError(400, '请求体必须是 JSON 对象')
   }
   const record = body as Record<string, unknown>
-  const text = record.text
-  if (typeof text !== 'string' || text.trim() === '') {
-    throw new HttpError(400, 'text 必须是非空字符串')
-  }
+  const text = typeof record.text === 'string' ? record.text.trim() : ''
+  const rawImages = Array.isArray(record.images) ? record.images.map(String) : []
+  if (rawImages.length > 4) throw new HttpError(400, '一次最多 4 张图片')
+  const images = rawImages.filter((url) =>
+    /^\/api\/v1\/uploads\/[a-f0-9-]+\.(png|jpe?g|webp|gif)$/i.test(url),
+  )
+  if (images.length !== rawImages.length) throw new HttpError(400, '图片地址不合法')
+  if (!text && images.length === 0) throw new HttpError(400, 'text 和 images 至少有一个')
   const rawConversationId = record.conversationId
   if (rawConversationId !== undefined && typeof rawConversationId !== 'string') {
     throw new HttpError(400, 'conversationId 必须是字符串')
@@ -467,7 +545,10 @@ async function receiveMessage(
     accountId: 'web',
     conversation: { kind: 'dm', id: conversationId },
     sender: { platformUserId: 'owner', displayName: '我' },
-    blocks: [{ type: 'text', text }],
+    blocks: [
+      ...images.map((url) => ({ type: 'image' as const, url })),
+      { type: 'text' as const, text: text || '[图片]' },
+    ],
     receivedAt: new Date(),
   }
 
@@ -690,13 +771,14 @@ function isNotFound(error: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR'
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+async function readJsonBody(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<unknown> {
+  const limit = maxBytes
   const chunks: Uint8Array[] = []
   let size = 0
   for await (const chunk of req) {
     const buffer = chunk as Uint8Array
     size += buffer.byteLength
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, '请求体过大')
+    if (size > limit) throw new HttpError(413, '请求体过大')
     chunks.push(buffer)
   }
   if (size === 0) return undefined

@@ -40,15 +40,33 @@
         </form>
       </section>
 
-      <div id="pet-stage" class="pet-stage">
+      <div id="pet-stage" class="pet-stage" tabindex="0" role="button" aria-label="青梅桌宠">
         <div id="pet-shadow" class="pet-shadow"></div>
         <video id="pet" class="pet" autoplay muted loop playsinline disablepictureinpicture aria-label="青梅桌宠"></video>
+        <div id="pet-orb" class="pet pet-orb" hidden aria-label="小光球"><span class="orb-eye left"></span><span class="orb-eye right"></span><span class="orb-mouth"></span></div>
         <div id="zzz" class="zzz" aria-hidden="true">z z</div>
         <div id="hearts" class="hearts" aria-hidden="true"></div>
         <span id="status-dot" class="status-dot offline" title="未连接"></span>
       </div>
 
       <p id="hint" class="hint">点我摸摸 · 双击喂饭 · 右键菜单</p>
+    </div>
+
+    <div id="onboarding" class="onboarding" hidden>
+      <div class="onboarding-card">
+        <div class="onboarding-pet">🐟</div>
+        <h1>青梅住到你桌面上</h1>
+        <p>我会在右下角待着：服务器消息变成头顶气泡，点我摸摸，双击喂饭，右键聊天和设置。</p>
+        <ul class="onboarding-list">
+          <li>先填服务器地址和 QM_TOKEN</li>
+          <li>透明区域点击穿透，不挡你做事</li>
+          <li>设置里能调大小、音效和开机自启</li>
+        </ul>
+        <div class="onboarding-actions">
+          <button id="onboarding-skip" type="button" class="ghost">稍后设置</button>
+          <button id="onboarding-start" type="button" class="primary">开始连接</button>
+        </div>
+      </div>
     </div>
 
     <div id="settings-modal" class="settings-modal" hidden>
@@ -62,6 +80,13 @@
         <label>
           访问令牌
           <input id="settings-token" type="password" placeholder="QM_TOKEN" autocomplete="off" />
+        </label>
+        <label>
+          形象
+          <select id="settings-character">
+            <option value="qingmei">青梅</option>
+            <option value="orb">小光球</option>
+          </select>
         </label>
         <label class="settings-range">
           桌宠大小

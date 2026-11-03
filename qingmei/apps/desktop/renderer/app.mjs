@@ -35,8 +35,13 @@ const el = {
   chatSend: document.getElementById('chat-send'),
   hearts: document.getElementById('hearts'),
   pet: document.getElementById('pet'),
+  petOrb: document.getElementById('pet-orb'),
+  petStage: document.getElementById('pet-stage'),
   statusDot: document.getElementById('status-dot'),
   hint: document.getElementById('hint'),
+  onboarding: document.getElementById('onboarding'),
+  onboardingStart: document.getElementById('onboarding-start'),
+  onboardingSkip: document.getElementById('onboarding-skip'),
   settingsModal: document.getElementById('settings-modal'),
   settingsScale: document.getElementById('settings-scale'),
   settingsScaleValue: document.getElementById('settings-scale-value'),
@@ -44,6 +49,7 @@ const el = {
   settingsAutostart: document.getElementById('settings-autostart'),
   settingsNotifyHidden: document.getElementById('settings-notify-hidden'),
   settingsHideFullscreen: document.getElementById('settings-hide-fullscreen'),
+  settingsCharacter: document.getElementById('settings-character'),
   settingsForm: document.getElementById('settings-form'),
   settingsServer: document.getElementById('settings-server'),
   settingsToken: document.getElementById('settings-token'),
@@ -60,6 +66,7 @@ const settings = {
   autoStart: false,
   notifyHidden: true,
   hideOnFullscreen: false,
+  character: 'qingmei',
 }
 const bubbles = new BubbleQueue({ ttlMs: 12_000 })
 let source = null
@@ -97,6 +104,13 @@ const VIDEOS = {
   fun: ['./assets/webm/fun-mirror.webm', './assets/webm/fun-whale.webm', './assets/webm/fun-water.webm'],
 }
 
+function applyCharacter() {
+  const orb = settings.character === 'orb'
+  if (el.petOrb) el.petOrb.hidden = !orb
+  if (el.pet) el.pet.hidden = orb
+  if (!orb) idleClip()
+}
+
 let idleIndex = 0
 let clipTimer = 0
 let currentClip = ''
@@ -130,6 +144,14 @@ function idleClip() {
 
 function setPetState(state) {
   const previous = el.app.dataset.state
+  if (settings.character === 'orb') {
+    el.app.dataset.state = state
+    if (state === 'happy' || state === 'alert') {
+      clearTimeout(clipTimer)
+      clipTimer = window.setTimeout(() => setPetState(isOnline() ? 'idle' : 'offline'), 1600)
+    }
+    return
+  }
   el.app.dataset.state = state
   if (state === 'idle' || state === 'offline') {
     if (previous !== 'idle' && previous !== 'offline') idleClip()
@@ -152,10 +174,39 @@ function setPetState(state) {
   }
 }
 
+const ACTION_CLIPS = {
+  mirror: './assets/webm/fun-mirror.webm',
+  whale: './assets/webm/fun-whale.webm',
+  water: './assets/webm/fun-water.webm',
+  eat: './assets/webm/eat-rice.webm',
+  wave: './assets/webm/click-wave.webm',
+}
+
+function playAction(kind) {
+  markActivity()
+  if (kind === 'sleep') {
+    setPetState('sleeping')
+    return
+  }
+  if (settings.character === 'orb') {
+    el.app.dataset.state = 'happy'
+    return
+  }
+  const src = ACTION_CLIPS[kind]
+  if (!src) return
+  el.app.dataset.state = 'happy'
+  playClip(src, { loop: false, duration: 3200 })
+}
+
 function playFun() {
   if (['dragging', 'sleeping', 'thinking'].includes(el.app.dataset.state)) return
   el.app.dataset.state = 'happy'
-  playClip(VIDEOS.fun[Math.floor(Math.random() * VIDEOS.fun.length)], { loop: false, duration: 3200 })
+  if (settings.character === 'orb') {
+    clearTimeout(clipTimer)
+    clipTimer = window.setTimeout(() => setPetState(isOnline() ? 'idle' : 'offline'), 2600)
+  } else {
+    playClip(VIDEOS.fun[Math.floor(Math.random() * VIDEOS.fun.length)], { loop: false, duration: 3200 })
+  }
   pushBubble('自己找点乐子～', 'pet')
   if (Math.random() < 0.4) spawnHearts(3)
 }
@@ -206,8 +257,11 @@ async function init() {
   settings.autoStart = saved.autoStart === true
   settings.notifyHidden = saved.notifyHidden !== false
   settings.hideOnFullscreen = saved.hideOnFullscreen === true
+  settings.character = saved.character === 'orb' ? 'orb' : 'qingmei'
+  applyCharacter()
   if (!settings.token) {
-    openSettings()
+    if (localStorage.getItem('qm.onboarded') === '1') openSettings()
+    else el.onboarding.hidden = false
   } else {
     connect()
   }
@@ -497,6 +551,17 @@ function finishAssistant(text) {
   if (text) appendLine('assistant', text)
 }
 
+function appendImage(role, url) {
+  const line = document.createElement('div')
+  line.className = `chat-line ${role === 'assistant' ? 'assistant' : 'user'}`
+  const image = document.createElement('img')
+  image.alt = '图片'
+  image.src = `${normalizeServerUrl(settings.serverUrl)}${url}?token=${encodeURIComponent(settings.token)}`
+  line.append(image)
+  el.chatLog.append(line)
+  scrollChat()
+}
+
 function appendLine(role, text, scroll = true) {
   const line = document.createElement('div')
   line.className = `chat-line ${role === 'assistant' ? 'assistant' : 'user'}`
@@ -548,7 +613,7 @@ function queueOutbox(text) {
   saveOutbox(items)
 }
 
-async function postText(text) {
+async function postText(text, images = []) {
   const base = normalizeServerUrl(settings.serverUrl)
   if (!base) throw new Error('服务器地址不合法')
   const res = await fetch(`${base}/api/v1/messages`, {
@@ -558,7 +623,7 @@ async function postText(text) {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    body: JSON.stringify({ text, conversationId: 'owner' }),
+    body: JSON.stringify({ text, conversationId: 'owner', ...(images.length ? { images } : {}) }),
   })
   if (!res.ok) {
     const detail = await res.json().catch(() => null)
@@ -581,6 +646,55 @@ async function flushOutbox() {
   saveOutbox(remaining)
   if (items.length !== remaining.length) {
     appendLine('assistant', `📮 已补发 ${items.length - remaining.length} 条离线消息`)
+  }
+}
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function sendImage(file) {
+  if (!settings.token) {
+    openSettings()
+    return
+  }
+  const base = normalizeServerUrl(settings.serverUrl)
+  if (!base) {
+    openSettings()
+    return
+  }
+  if (!file.type.startsWith('image/')) return
+  if (file.size > 4 * 1024 * 1024) {
+    appendLine('assistant', '⚠️ 图片超过 4MB，先压一下再发。')
+    return
+  }
+  openChat()
+  try {
+    const dataUrl = await fileToDataUrl(file)
+    const upload = await fetch(`${base}/api/v1/uploads`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${settings.token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ mime: file.type, data: dataUrl }),
+    })
+    const uploaded = await upload.json().catch(() => null)
+    if (!upload.ok || typeof uploaded?.url !== 'string') {
+      throw new Error(uploaded?.error || `上传失败（HTTP ${upload.status}）`)
+    }
+    appendImage('user', uploaded.url)
+    startThinking()
+    await postText('[图片]', [uploaded.url])
+    finishThinking()
+  } catch (error) {
+    appendLine('assistant', `⚠️ ${error instanceof Error ? error.message : '图片发送失败'}`)
+    finishThinking()
   }
 }
 async function sendMessage(event) {
@@ -613,7 +727,7 @@ async function sendMessage(event) {
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ text, conversationId: 'owner' }),
+      body: JSON.stringify({ text, conversationId: 'owner', ...(images.length ? { images } : {}) }),
     })
     if (!res.ok) {
       const detail = await res.json().catch(() => null)
@@ -639,6 +753,7 @@ function openSettings() {
   el.settingsAutostart.checked = settings.autoStart
   el.settingsNotifyHidden.checked = settings.notifyHidden
   el.settingsHideFullscreen.checked = settings.hideOnFullscreen
+  el.settingsCharacter.value = settings.character
   showError('')
   el.settingsModal.hidden = false
   el.settingsServer.focus()
@@ -681,7 +796,8 @@ async function saveSettings(event) {
     const autoStart = el.settingsAutostart.checked
     const notifyHidden = el.settingsNotifyHidden.checked
     const hideOnFullscreen = el.settingsHideFullscreen.checked
-    await desktop.saveSettings({ serverUrl: base, token, scale, sound, autoStart, notifyHidden, hideOnFullscreen })
+    const character = el.settingsCharacter.value === 'orb' ? 'orb' : 'qingmei'
+    await desktop.saveSettings({ serverUrl: base, token, scale, sound, autoStart, notifyHidden, hideOnFullscreen, character })
     settings.serverUrl = base
     settings.token = token
     settings.scale = scale
@@ -689,6 +805,9 @@ async function saveSettings(event) {
     settings.autoStart = autoStart
     settings.notifyHidden = notifyHidden
     settings.hideOnFullscreen = hideOnFullscreen
+    settings.character = character
+    applyCharacter()
+    localStorage.setItem('qm.onboarded', '1')
     historyLoaded = false
     closeSettings()
     connect()
@@ -732,8 +851,12 @@ function feed() {
   beep(520, 0.08)
   window.setTimeout(() => beep(780, 0.1), 90)
   el.app.dataset.state = 'happy'
-  el.app.dataset.state = 'happy'
-  playClip(VIDEOS.eat, { loop: false, duration: 3200 })
+  if (settings.character === 'orb') {
+    clearTimeout(clipTimer)
+    clipTimer = window.setTimeout(() => setPetState(isOnline() ? 'idle' : 'offline'), 2600)
+  } else {
+    playClip(VIDEOS.eat, { loop: false, duration: 3200 })
+  }
   pushBubble('好吃！谢谢款待～', 'pet')
   spawnHearts(6)
 }
@@ -749,29 +872,30 @@ function bind() {
     if (action === 'pet') interact()
     else if (action === 'feed') feed()
     else if (action === 'play') playFun()
+    else if (action.startsWith('play:')) playAction(action.slice(5))
     else if (action === 'chat') openChat()
     else if (action === 'hide') desktop.hide()
   })
-  el.pet.addEventListener('click', () => {
+  el.petStage.addEventListener('click', () => {
     if (suppressClick) return
     clearTimeout(clickTimer)
     clickTimer = window.setTimeout(interact, 220)
   })
-  el.pet.addEventListener('dblclick', () => {
+  el.petStage.addEventListener('dblclick', () => {
     clearTimeout(clickTimer)
     feed()
   })
-  el.pet.addEventListener('pointerdown', (event) => {
+  el.petStage.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return
     markActivity()
     dragState = { x: event.screenX, y: event.screenY, moved: false }
     try {
-      el.pet.setPointerCapture(event.pointerId)
+      el.petStage.setPointerCapture(event.pointerId)
     } catch {
       // 某些输入设备不支持捕获
     }
   })
-  el.pet.addEventListener('pointermove', (event) => {
+  el.petStage.addEventListener('pointermove', (event) => {
     if (!dragState) return
     const dx = event.screenX - dragState.x
     const dy = event.screenY - dragState.y
@@ -795,9 +919,9 @@ function bind() {
       window.setTimeout(() => { suppressClick = false }, 250)
     }
   }
-  el.pet.addEventListener('pointerup', endDrag)
-  el.pet.addEventListener('pointercancel', endDrag)
-  el.pet.addEventListener('keydown', (event) => {
+  el.petStage.addEventListener('pointerup', endDrag)
+  el.petStage.addEventListener('pointercancel', endDrag)
+  el.petStage.addEventListener('keydown', (event) => {
     if (event.key === ' ') {
       event.preventDefault()
       interact()
@@ -806,7 +930,7 @@ function bind() {
       toggleChat()
     }
   })
-  el.pet.addEventListener('contextmenu', (event) => {
+  el.petStage.addEventListener('contextmenu', (event) => {
     event.preventDefault()
     void desktop.popupMenu()
   })
@@ -816,7 +940,30 @@ function bind() {
     dismissBubble()
   })
   el.chatForm.addEventListener('submit', (event) => void sendMessage(event))
+  window.addEventListener('paste', (event) => {
+    const item = [...(event.clipboardData?.items ?? [])].find((entry) => entry.type.startsWith('image/'))
+    if (!item) return
+    event.preventDefault()
+    const file = item.getAsFile()
+    if (file) void sendImage(file)
+  })
+  window.addEventListener('dragover', (event) => event.preventDefault())
+  window.addEventListener('drop', (event) => {
+    const file = [...(event.dataTransfer?.files ?? [])].find((entry) => entry.type.startsWith('image/'))
+    if (!file) return
+    event.preventDefault()
+    void sendImage(file)
+  })
   el.settingsForm.addEventListener('submit', (event) => void saveSettings(event))
+  el.onboardingStart.addEventListener('click', () => {
+    el.onboarding.hidden = true
+    localStorage.setItem('qm.onboarded', '1')
+    openSettings()
+  })
+  el.onboardingSkip.addEventListener('click', () => {
+    el.onboarding.hidden = true
+    localStorage.setItem('qm.onboarded', '1')
+  })
   el.settingsTest.addEventListener('click', () => void testConnection())
   el.settingsScale.addEventListener('input', () => {
     el.settingsScaleValue.textContent = `${Math.round(Number(el.settingsScale.value) * 100)}%`

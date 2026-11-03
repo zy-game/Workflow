@@ -64,6 +64,7 @@ function readSettings() {
     autoStart: stored.autoStart === true,
     notifyHidden: stored.notifyHidden !== false,
     hideOnFullscreen: stored.hideOnFullscreen === true,
+    character: stored.character === 'orb' ? 'orb' : 'qingmei',
   }
   return settingsCache
 }
@@ -96,6 +97,7 @@ function persist(settings) {
     autoStart: settings.autoStart === true,
     notifyHidden: settings.notifyHidden !== false,
     hideOnFullscreen: settings.hideOnFullscreen === true,
+    character: settings.character === 'orb' ? 'orb' : 'qingmei',
   }
   if (settings.token) {
     if (safeStorage.isEncryptionAvailable()) payload.tokenEnc = safeStorage.encryptString(settings.token).toString('base64')
@@ -328,6 +330,7 @@ if (!gotLock) {
         autoStart: settings.autoStart,
         notifyHidden: settings.notifyHidden,
         hideOnFullscreen: settings.hideOnFullscreen,
+        character: settings.character,
       }
     })
 
@@ -346,6 +349,7 @@ if (!gotLock) {
         autoStart: incoming?.autoStart === true,
         notifyHidden: incoming?.notifyHidden !== false,
         hideOnFullscreen: incoming?.hideOnFullscreen === true,
+        character: incoming?.character === 'orb' ? 'orb' : 'qingmei',
       }
       if (scale !== current.scale) {
         resizeForScale(scale)
@@ -362,6 +366,17 @@ if (!gotLock) {
         { label: '摸摸头', click: () => win?.webContents.send('pet-action', 'pet') },
         { label: '喂饭', click: () => win?.webContents.send('pet-action', 'feed') },
         { label: '逗一下', click: () => win?.webContents.send('pet-action', 'play') },
+        {
+          label: '选个动作…',
+          submenu: [
+            { label: '照镜子', click: () => win?.webContents.send('pet-action', 'play:mirror') },
+            { label: '蓝鲸现世', click: () => win?.webContents.send('pet-action', 'play:whale') },
+            { label: '玩水枪', click: () => win?.webContents.send('pet-action', 'play:water') },
+            { label: '吃白饭', click: () => win?.webContents.send('pet-action', 'play:eat') },
+            { label: '元气挥手', click: () => win?.webContents.send('pet-action', 'play:wave') },
+            { label: '打盹', click: () => win?.webContents.send('pet-action', 'play:sleep') },
+          ],
+        },
         { label: '聊聊天', click: () => win?.webContents.send('pet-action', 'chat') },
         { type: 'separator' },
         { label: '设置…', click: () => win?.webContents.send('open-settings') },

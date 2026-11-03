@@ -70,6 +70,7 @@ before(async () => {
     port: 0,
     token: TOKEN,
     webRoot,
+    uploadDir: path.join(webRoot, 'uploads'),
   })
   await host
 
@@ -145,6 +146,37 @@ test('/api/v1/* 错误 token 401，正确 token 200', async () => {
   const good = await fetch(`${base}/api/v1/messages?conversationId=c1&limit=10`, { headers: auth })
   assert.equal(good.status, 200)
   assert.deepEqual(await good.json(), [], 'store 不可用时应返回空数组')
+})
+
+test('图片上传与消息图片块', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const upload = await fetch(`${base}/api/v1/uploads`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ mime: 'image/png', data: png }),
+  })
+  assert.equal(upload.status, 200)
+  const uploaded = (await upload.json()) as { ok: boolean; url: string }
+  assert.match(uploaded.url, /^\/api\/v1\/uploads\/[a-f0-9-]+\.png$/)
+
+  const anonymous = await fetch(`${base}${uploaded.url}`)
+  assert.equal(anonymous.status, 401, '图片读取也要 token')
+  const image = await fetch(`${base}${uploaded.url}?token=${TOKEN}`)
+  assert.equal(image.status, 200)
+  assert.equal(image.headers.get('content-type'), 'image/png')
+  assert.ok((await image.arrayBuffer()).byteLength > 0)
+
+  const before = inbound.length
+  const message = await fetch(`${base}/api/v1/messages`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ images: [uploaded.url], text: '' }),
+  })
+  assert.equal(message.status, 200)
+  assert.equal(inbound.length, before + 1)
+  const blocks = inbound.at(-1)!.blocks
+  assert.deepEqual(blocks[0], { type: 'image', url: uploaded.url })
+  assert.equal((blocks[1] as { text: string }).text, '[图片]')
 })
 
 test('POST /api/v1/messages 构造 InboundMessage 并触发 qm/inbound', async () => {
