@@ -271,3 +271,29 @@ test('dependsOn：去重、非字符串剔除、持久化', async () => {
     await h.dispose()
   }
 })
+
+test('合同：截止/强度/进展信号/期望曲线持久化', async () => {
+  const h = await setup()
+  try {
+    const deadline = new Date('2026-12-01T00:00:00.000Z')
+    const run = await h.task.create({
+      prompt: '合同任务',
+      contract: {
+        deadline,
+        enforcement: 'strict',
+        progressSignal: 'self-report',
+        expected: [{ at: deadline, percent: 80 }],
+        escape: { perDay: 2, hours: 3 },
+      },
+    })
+    assert.equal(run.contract?.enforcement, 'strict')
+    assert.equal(run.contract?.progressSignal, 'self-report')
+    assert.equal(run.contract?.deadline?.toISOString(), deadline.toISOString())
+
+    const reread = await h.task.get(run.id)
+    assert.equal(reread?.contract?.escape?.perDay, 2)
+    assert.equal(reread?.contract?.expected?.[0]?.percent, 80)
+  } finally {
+    await h.dispose()
+  }
+})

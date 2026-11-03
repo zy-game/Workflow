@@ -132,6 +132,18 @@ sudo journalctl -u qingmei -n 50 --no-pager
 
 ## 5. 本次改动的落点
 
+### P6 起步：W1 任务合同 + W2 督促阶梯 + W5 休息
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` / `provider-task-sqlite` | `TaskContract`（截止/进展信号/期望曲线/强度/逃生）；HTTP/MCP 透传并持久化 |
+| `packages/qm-nudge`（新） | 期望 vs 实际进度、事实清单、L1/L2 私聊、忽略累计、逃生暂停；L3/L4 只记录 |
+| `packages/qm-rest`（新） | 90 分钟休息提醒、23:30 收工、连续 6 天降强度；`GET /api/v1/rest`、`POST tick` |
+| 配置 | dev/prod 各加两项（29 项插件） |
+| 测试 | 343 全绿 |
+
+> W3/W4（摩擦/强制）需要设备执行器，未做。
+
 ### P5 收口：S1 supervisor + S2 playbook + R 复盘
 
 | 文件 | 改了什么 |

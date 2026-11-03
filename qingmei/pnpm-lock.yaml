@@ -92,9 +92,15 @@ importers:
       '@qingmei/qm-memory-extract':
         specifier: workspace:*
         version: link:../../packages/qm-memory-extract
+      '@qingmei/qm-nudge':
+        specifier: workspace:*
+        version: link:../../packages/qm-nudge
       '@qingmei/qm-reminder':
         specifier: workspace:*
         version: link:../../packages/qm-reminder
+      '@qingmei/qm-rest':
+        specifier: workspace:*
+        version: link:../../packages/qm-rest
       '@qingmei/qm-review':
         specifier: workspace:*
         version: link:../../packages/qm-review
@@ -500,6 +506,28 @@ importers:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
 
+  packages/qm-nudge:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/provider-task-sqlite':
+        specifier: workspace:*
+        version: link:../provider-task-sqlite
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
   packages/qm-reminder:
     dependencies:
       '@qingmei/core':
@@ -518,6 +546,25 @@ importers:
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../service-channel
+
+  packages/qm-rest:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
 
   packages/qm-review:
     dependencies:

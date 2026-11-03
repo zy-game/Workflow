@@ -17,6 +17,7 @@ import {
   type Row,
   type StoreService,
   type TaskArtifact,
+  type TaskContract,
   type TaskProgress,
   type TaskRun,
   type TaskStatus,
@@ -52,6 +53,8 @@ interface TaskRow extends Row {
   /** 0-9，老数据没有这一列 */
   priority?: number
   depends_on_json?: string | null
+  /** W1 任务合同；老数据没有 */
+  contract_json?: string | null
   harness_id: string
   session_id: string | null
   cwd: string
@@ -100,6 +103,7 @@ export class SqliteTask extends TaskService {
       kind: input.kind === 'inventory' ? 'inventory' : 'task',
       priority: clampPriority(input.priority),
       depends_on_json: JSON.stringify(normalizeDependsOn(input.dependsOn)),
+      contract_json: input.contract ? JSON.stringify(serializeContract(input.contract)) : null,
       harness_id: input.harnessId ?? this.harnessId,
       session_id: null,
       cwd: input.cwd ?? `${this.workspaceRoot}/${id}`,
@@ -278,6 +282,7 @@ function toRun(row: TaskRow): TaskRun {
     kind: row.kind === 'inventory' ? 'inventory' : 'task',
     priority: clampPriority(row.priority),
     dependsOn: parseDependsOn(row.depends_on_json),
+    contract: parseContract(row.contract_json),
     harnessId: row.harness_id,
     sessionId: row.session_id,
     cwd: row.cwd,
@@ -294,6 +299,46 @@ function toRun(row: TaskRow): TaskRun {
 }
 
 /** 缺省 5，夹在 0..9；老数据按 5 处理 */
+function serializeContract(contract: TaskContract): Record<string, unknown> {
+  return {
+    ...contract,
+    ...(contract.deadline ? { deadline: contract.deadline.toISOString() } : {}),
+    ...(contract.expected
+      ? { expected: contract.expected.map((item) => ({ at: item.at.toISOString(), percent: item.percent })) }
+      : {}),
+  }
+}
+
+function parseContract(raw: string | null | undefined): TaskContract | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return {
+      ...(typeof parsed.deadline === 'string' ? { deadline: new Date(parsed.deadline) } : {}),
+      ...(typeof parsed.progressSignal === 'string' ? { progressSignal: parsed.progressSignal as TaskContract['progressSignal'] } : {}),
+      ...(Array.isArray(parsed.expected)
+        ? {
+            expected: parsed.expected.map((item) => ({
+              at: new Date((item as { at: string }).at),
+              percent: Number((item as { percent: number }).percent) || 0,
+            })),
+          }
+        : {}),
+      enforcement: (parsed.enforcement as TaskContract['enforcement']) ?? 'firm',
+      ...(Array.isArray(parsed.allowedActions) ? { allowedActions: parsed.allowedActions.map(String) } : {}),
+      ...(parsed.escape && typeof parsed.escape === 'object'
+        ? {
+            escape: {
+              perDay: Number((parsed.escape as { perDay?: number }).perDay ?? 1),
+              hours: Number((parsed.escape as { hours?: number }).hours ?? 2),
+            },
+          }
+        : {}),
+    }
+  } catch {
+    return null
+  }
+}
 function normalizeDependsOn(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))]

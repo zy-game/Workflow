@@ -342,6 +342,17 @@ export function createTools(deps: ToolDeps): HostTool[] {
             items: { type: 'string' },
             description: '前置 runId 列表；前置未完成时排队等待，前置失败则本任务失败',
           },
+          deadline: { type: 'string', description: '可选截止时间（ISO 8601）' },
+          enforcement: {
+            type: 'string',
+            enum: ['nudge', 'firm', 'strict', 'contract'],
+            description: '授权强度，默认 firm',
+          },
+          progressSignal: {
+            type: 'string',
+            enum: ['harness-run', 'self-report', 'artifact', 'milestone'],
+            description: '什么算有进展，默认 harness-run',
+          },
         },
         required: ['prompt'],
       },
@@ -358,6 +369,21 @@ export function createTools(deps: ToolDeps): HostTool[] {
             : {}),
           ...(Array.isArray(args.dependsOn)
             ? { dependsOn: args.dependsOn.map((item) => String(item)).filter(Boolean) }
+            : {}),
+          ...(typeof args.deadline === 'string' || typeof args.enforcement === 'string' || typeof args.progressSignal === 'string'
+            ? {
+                contract: {
+                  enforcement: ['nudge', 'firm', 'strict', 'contract'].includes(String(args.enforcement))
+                    ? (String(args.enforcement) as 'nudge' | 'firm' | 'strict' | 'contract')
+                    : 'firm',
+                  ...(typeof args.deadline === 'string' && !Number.isNaN(new Date(args.deadline).getTime())
+                    ? { deadline: new Date(args.deadline) }
+                    : {}),
+                  ...(['harness-run', 'self-report', 'artifact', 'milestone'].includes(String(args.progressSignal))
+                    ? { progressSignal: String(args.progressSignal) as 'harness-run' | 'self-report' | 'artifact' | 'milestone' }
+                    : {}),
+                },
+              }
             : {}),
         })
         deps.runner.dispatch(run)

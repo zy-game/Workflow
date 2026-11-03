@@ -533,3 +533,30 @@ test('抢占：紧急任务取消一个已落 checkpoint 的低优 run', async (
     await h.dispose()
   }
 })
+
+test('POST /api/v1/tasks 透传任务合同', async () => {
+  const h = await setup({ chunks: ['ok'] })
+  try {
+    const created = await h.call(
+      request('POST', '/api/v1/tasks', {
+        prompt: '合同任务',
+        contract: {
+          deadline: '2026-12-01T00:00:00.000Z',
+          enforcement: 'strict',
+          progressSignal: 'artifact',
+        },
+      }),
+    )
+    assert.equal(created.status, 202)
+    const run = (created.body as { run: TaskRun }).run
+    assert.equal(run.contract?.enforcement, 'strict')
+    assert.equal(run.contract?.progressSignal, 'artifact')
+    assert.ok(run.contract?.deadline)
+    await waitFor(async () => {
+      const current = await h.task.get(run.id)
+      return current?.finishedAt ? current : null
+    }, '任务收尾')
+  } finally {
+    await h.dispose()
+  }
+})

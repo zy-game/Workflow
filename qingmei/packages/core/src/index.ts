@@ -734,6 +734,22 @@ export interface TaskUsage {
  * `taskId` 是长期任务，`TaskRun` 是一次执行；两次重试/换 harness 是两个 run。
  * P1 一任务一 run，`taskId === id`。
  */
+export type EnforcementLevel = 'nudge' | 'firm' | 'strict' | 'contract'
+export type ProgressSignal = 'harness-run' | 'self-report' | 'artifact' | 'milestone'
+
+export interface TaskContract {
+  deadline?: Date
+  /** 什么算有进展；缺省 harness-run */
+  progressSignal?: ProgressSignal
+  /** 期望进度曲线；缺省按截止时间线性 */
+  expected?: { at: Date; percent: number }[]
+  /** 授权强度；缺省 firm */
+  enforcement: EnforcementLevel
+  /** strict 及以上才允许的强制手段 */
+  allowedActions?: string[]
+  /** 逃生条款：每日可无理由暂停次数/小时 */
+  escape?: { perDay: number; hours: number }
+}
 export interface TaskRun {
   id: string
   taskId: string
@@ -746,6 +762,8 @@ export interface TaskRun {
   priority: number
   /** 前置 run id；未完成时排队等待，前置失败则本任务失败 */
   dependsOn: string[]
+  /** 任务合同；老数据为 null */
+  contract: TaskContract | null
   harnessId: string
   /** harness 侧会话 id，用于 resume */
   sessionId: string | null
@@ -773,6 +791,8 @@ export interface CreateTaskInput {
   priority?: number
   /** 前置 run id 列表 */
   dependsOn?: string[]
+  /** 任务合同（W1）：截止/进展信号/强度 */
+  contract?: TaskContract
   /** 不传则用 provider 的 workspaceRoot/<id> */
   cwd?: string
   harnessId?: string

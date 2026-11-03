@@ -20,6 +20,7 @@ import {
   type GatewayResponse,
   type GatewayService,
   type HarnessService,
+  type TaskContract,
   type TaskRun,
   type TaskService,
 } from '@qingmei/core'
@@ -317,6 +318,43 @@ export class TaskRunner extends TaskRunnerService {
   }
 }
 
+function normalizeContract(raw: unknown): TaskContract | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const body = raw as Record<string, unknown>
+  const levels: TaskContract['enforcement'][] = ['nudge', 'firm', 'strict', 'contract']
+  const signals: TaskContract['progressSignal'][] = ['harness-run', 'self-report', 'artifact', 'milestone']
+  const enforcement = levels.includes(body.enforcement as TaskContract['enforcement'])
+    ? (body.enforcement as TaskContract['enforcement'])
+    : 'firm'
+  const deadline = typeof body.deadline === 'string' ? new Date(body.deadline) : undefined
+  const expected = Array.isArray(body.expected)
+    ? body.expected
+        .map((item) => {
+          const entry = item as { at?: unknown; percent?: unknown }
+          const at = typeof entry.at === 'string' ? new Date(entry.at) : null
+          if (!at || Number.isNaN(at.getTime())) return null
+          return { at, percent: Math.min(100, Math.max(0, Number(entry.percent) || 0)) }
+        })
+        .filter((item): item is { at: Date; percent: number } => item !== null)
+    : undefined
+  return {
+    enforcement,
+    ...(deadline && !Number.isNaN(deadline.getTime()) ? { deadline } : {}),
+    ...(signals.includes(body.progressSignal as TaskContract['progressSignal'])
+      ? { progressSignal: body.progressSignal as TaskContract['progressSignal'] }
+      : {}),
+    ...(expected && expected.length > 0 ? { expected } : {}),
+    ...(Array.isArray(body.allowedActions) ? { allowedActions: body.allowedActions.map(String) } : {}),
+    ...(body.escape && typeof body.escape === 'object'
+      ? {
+          escape: {
+            perDay: Number((body.escape as { perDay?: number }).perDay ?? 1),
+            hours: Number((body.escape as { hours?: number }).hours ?? 2),
+          },
+        }
+      : {}),
+  }
+}
 export function apply(ctx: Context, config: TaskConfig = {}): void {
   const task = ctx.reflect.get('task', false) as TaskService | undefined
   if (!task) throw new Error('[qm-task] 缺少 task 服务')
@@ -399,6 +437,7 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           ...(Array.isArray(body.dependsOn)
             ? { dependsOn: body.dependsOn.map((item) => String(item)).filter(Boolean) }
             : {}),
+          ...(normalizeContract(body.contract) ? { contract: normalizeContract(body.contract)! } : {}),
           harnessId,
         })
         res.status(202).send({ ok: true, run })

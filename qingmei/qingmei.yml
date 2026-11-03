@@ -79,6 +79,12 @@
 # 月度复盘：每月 1 号生成报告，支持打分与低分提醒
 - name: '@qingmei/qm-review'
 
+# 任务督促（W1/W2）：合同 + 进度阶梯（L1/L2 通知，L3/L4 只记录）
+- name: '@qingmei/qm-nudge'
+
+# 休息侧（W5）：90 分钟提醒、23:30 收工、连续 6 天降强度
+- name: '@qingmei/qm-rest'
+
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 
