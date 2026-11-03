@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { activate, currentRelease, listReleaseIds } from './shell.mjs'
+import { activate, currentRelease, linkDependencies, listReleaseIds } from './shell.mjs'
 
 function makeRoot() {
   const root = mkdtempSync(join(tmpdir(), 'qm-shell-'))
@@ -25,6 +25,21 @@ test('current 外壳：原子切换到指定 release', async () => {
     await activate(root, 'r2')
     assert.equal((await currentRelease(root))?.release, 'r2')
     await assert.rejects(() => activate(root, 'nope'), /release 不存在/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('prepare：为 release 链接依赖目录', async () => {
+  const root = makeRoot()
+  try {
+    mkdirSync(join(root, 'node_modules'), { recursive: true })
+    mkdirSync(join(root, 'apps', 'server', 'node_modules'), { recursive: true })
+    mkdirSync(join(root, 'packages', 'core', 'node_modules'), { recursive: true })
+    const linked = await linkDependencies(root, 'r1')
+    assert.ok(linked >= 2, 'linked=' + linked)
+    assert.ok(existsSync(join(root, 'releases', 'r1', 'apps', 'server', 'node_modules')))
+    assert.ok(existsSync(join(root, 'releases', 'r1', 'node_modules')))
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

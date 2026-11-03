@@ -12,7 +12,7 @@
  * 当前生产 unit 尚未切换到该模式，因此这是可选外壳，不是已启用的运行路径。
  */
 import { existsSync } from 'node:fs'
-import { lstat, readdir, readlink, rename, rm, symlink } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readlink, rename, rm, symlink } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -34,6 +34,33 @@ export async function activate(rootDir, id) {
   return { current, release }
 }
 
+export async function linkDependencies(rootDir, id) {
+  const root = path.resolve(rootDir)
+  const release = path.join(root, 'releases', id)
+  if (!existsSync(path.join(release, 'apps'))) throw new Error(`release 不存在：${id}`)
+  const type = process.platform === 'win32' ? 'junction' : 'dir'
+  let linked = 0
+  const link = async (source, target) => {
+    if (!existsSync(source)) return
+    await rm(target, { recursive: true, force: true })
+    await mkdir(path.dirname(target), { recursive: true })
+    await symlink(source, target, type)
+    linked += 1
+  }
+  await link(path.join(root, 'node_modules'), path.join(release, 'node_modules'))
+  for (const group of ['apps', 'packages']) {
+    const parent = path.join(root, group)
+    if (!existsSync(parent)) continue
+    for (const entry of await readdir(parent, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      await link(
+        path.join(parent, entry.name, 'node_modules'),
+        path.join(release, group, entry.name, 'node_modules'),
+      )
+    }
+  }
+  return linked
+}
 export async function currentRelease(rootDir) {
   const current = path.join(path.resolve(rootDir), 'current')
   if (!existsSync(current)) return null
@@ -61,6 +88,13 @@ async function main() {
     const id = args[1]
     if (!id) throw new Error('用法：shell.mjs activate <release-id> [--root <dir>]')
     console.log(JSON.stringify(await activate(root, id)))
+    return
+  }
+  if (command === 'prepare') {
+    const id = args[1]
+    if (!id) throw new Error('用法：shell.mjs prepare <release-id> [--root <dir>]')
+    console.log(JSON.stringify({ id, linked: await linkDependencies(root, id) }))
+    return
     return
   }
   if (command === 'current') {
