@@ -1,0 +1,9 @@
+[Unit]
+Description=Qingmei crash watchdog (rollback to previous code after 5 failed health checks)
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/qingmei
+ExecStart=/opt/node24/bin/node /opt/qingmei/scripts/watchdog.mjs --app /opt/qingmei --backup /opt/qingmei.prev --health http://127.0.0.1:7410/healthz --threshold 5
