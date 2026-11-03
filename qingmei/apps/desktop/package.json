@@ -20,6 +20,7 @@
   "build": {
     "appId": "com.qingmei.desktop",
     "productName": "青梅",
+    "compression": "store",
     "directories": {
       "output": "dist"
     },

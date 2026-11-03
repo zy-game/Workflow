@@ -1,3 +1,16 @@
+### 桌宠宿主：设置/流式/打包
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `apps/desktop` | 设置：大小缩放/音效/开机自启/隐藏通知/全屏自动隐藏；系统通知；显示器回位 |
+| `apps/desktop/renderer` | SSE `chunk` 流式聊天、Markdown 渲染、气泡去 Markdown、离线待发补发 |
+| `apps/desktop/electron/fullscreen.ps1` | 前台全屏检测（6 秒轮询，Windows） |
+| `apps/desktop/build/icon.ico` | 应用图标；版本 0.1.0 |
+| `apps/desktop/dist` | portable exe 构建成功（约 100MB）；NSIS 生成卸载器被杀软/权限拦截，未稳定 |
+| 测试 | 368 全绿 |
+
+> 未做：sidecar 拉起内核、首次启动向导、移动端、三端一致、代码签名。
+
 ### M4 桌面宿主（桌宠）
 
 | 文件 | 改了什么 |

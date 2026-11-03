@@ -17,10 +17,14 @@ const rendererDir = path.join(here, '..', 'renderer')
 // Windows 上中文 userData 路径会让打包版 Electron 启动崩溃；统一用 ASCII 目录。
 // 显式 --user-data-dir 仍优先（测试/多实例用）。
 if (!process.argv.some((arg) => arg.startsWith('--user-data-dir'))) {
-  const candidates = [
+  const candidates = []
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    candidates.push(path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'qingmei-data'))
+  }
+  candidates.push(
     path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'qingmei-desktop'),
     path.join(app.getPath('home'), '.qingmei-desktop'),
-  ]
+  )
   for (const candidate of candidates) {
     try {
       mkdirSync(candidate, { recursive: true })
