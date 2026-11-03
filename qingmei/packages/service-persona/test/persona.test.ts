@@ -80,3 +80,4 @@ test('人格包：apply 快照、30 天 3 次熔断、rollback', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+

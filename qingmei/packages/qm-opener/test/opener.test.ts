@@ -150,8 +150,9 @@ test('A6/A7：承诺到期 → 窗口内有理由开场，回应后记账', asyn
     assert.equal(responded.status, 200)
 
     const topics = await h.call({ method: 'GET', path: '/api/v1/openings/topics', query: {}, headers: {} })
-    const topic = (topics.body as { items: { id: string; answered: number }[] }).items.find((item) => item.id === 'commitment')
+    const topic = (topics.body as { items: { id: string; answered: number; tone: string }[] }).items.find((item) => item.id === 'commitment')
     assert.equal(topic?.answered, 1)
+    assert.equal(topic?.tone, 'warm')
   } finally {
     await h.dispose()
   }

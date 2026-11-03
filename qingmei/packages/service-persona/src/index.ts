@@ -140,7 +140,7 @@ export class Persona extends PersonaService {
     mkdirSync(this.historyDir, { recursive: true })
     const createdAt = new Date().toISOString()
     const hash = createHash('sha256').update(`${version}\n${prompt}`).digest('hex').slice(0, 12)
-    const id = `${Date.now()}-${hash}`
+    const id = `${Date.now()}-${hash}-${Math.random().toString(36).slice(2, 8)}`
     const entry: HistoryEntry = { id, hash, version, prompt, note, kind, createdAt }
     writeFileSync(path.join(this.historyDir, `${id}.json`), JSON.stringify(entry, null, 2), 'utf8')
   }

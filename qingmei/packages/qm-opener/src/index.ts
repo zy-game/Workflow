@@ -66,6 +66,7 @@ interface TopicRow extends Row {
   paused_until: number
   last_texts_json: string
   preferred_minute: number | null
+  tone?: 'neutral' | 'warm' | 'direct'
 }
 
 interface Window {
@@ -118,6 +119,7 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
       paused_until: 0,
       last_texts_json: '[]',
       preferred_minute: null,
+      tone: 'neutral',
     }
   }
 
@@ -229,7 +231,9 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
           {
             role: 'system',
             content:
-              '你是青梅。根据给出的理由写一句不超过 40 字的中文开场，只使用给定事实，不编造，不解释，不加引号。',
+              '你是青梅。根据给出的理由写一句不超过 40 字的中文开场，只使用给定事实，不编造，不解释，不加引号。语气：' +
+              (topic.tone === 'direct' ? '直接、短，不寒暄' : '温和、自然') +
+              '。',
           },
           { role: 'user', content: `话题：${reason.topic}\n理由：${reason.reason}\n${fact}` },
         ],
@@ -376,12 +380,15 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
         const topic = await topicOf(row.topic)
         if (response === 'answered') {
           topic.answered += 1
+          topic.tone = 'warm'
           topic.preferred_minute = at.getHours() * 60 + at.getMinutes()
         } else if (response === 'declined') {
           topic.declined += 1
+          topic.tone = 'direct'
           topic.paused_until = at.getTime() + pauseDays * DAY
         } else if (response === 'ignored') {
           topic.ignored += 1
+          topic.tone = 'direct'
           if (topic.ignored >= 2) topic.paused_until = at.getTime() + pauseDays * DAY
         }
         await saveTopic(topic)
@@ -403,6 +410,7 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
           declined: row.declined,
           pausedUntil: row.paused_until ? new Date(row.paused_until) : null,
           preferredMinute: row.preferred_minute,
+          tone: row.tone ?? 'neutral',
         }))
         res.status(200).send({ ok: true, items })
       },
