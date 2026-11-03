@@ -31,11 +31,15 @@ README 与设置页都明确写了这一点。
 
 | 操作 | 效果 |
 | --- | --- |
-| 单击桌宠 | 开/关聊天面板，桌宠开心跳一下 |
-| 右键桌宠 | 设置 / 重新连接 / 退出 |
-| 顶部小横条拖动 | 移动窗口，位置会记住 |
+| 单击桌宠 | 随机播一个点击回应 GIF，冒一句台词，偶尔掉爱心 |
+| 双击桌宠 | 喂饭：吃白饭 GIF + 爱心 + 台词 |
+| 右键桌宠 | 摸摸头 / 喂饭 / 逗一下 / 聊聊天 / 设置 / 重新连接 / 躲起来 / 退出 |
+| 💬 按钮 | 开/关聊天面板 |
+| 顶部小横条拖动 | 移动窗口，位置会记住；拖整只也可以 |
 | 头顶气泡 | 显示服务器通知；点击气泡直接打开聊天；× 关闭，+N 表示排队条数 |
 | 聊天输入 | 回车发送，消息走 `POST /api/v1/messages`，回复走 SSE 实时显示 |
+| 闲置 20 秒 | 35% 概率自己找个乐子（照镜子 / 蓝鲸 / 玩水枪），否则换待机动作 |
+| 闲置 90 秒 | 打盹，动一下或点它醒来 |
 | 透明区域 | 点击穿透到桌面；只有桌宠/气泡/聊天/设置区域接收鼠标 |
 
 ## 通知来源
@@ -74,7 +78,7 @@ ode apps/desktop/node_modules/electron/install.js（国内可先设 ELECTRON_MIR
 ## 素材与许可
 
 桌宠动画取自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT），经 [shenliuyu18/dafeiyu-pet](https://github.com/shenliuyu18/dafeiyu-pet) 使用；
-以透明 GIF 播放（220×124，等比例放大）。许可全文见 enderer/assets/THIRD-PARTY-dsh-pet-LICENSE.txt。
+以官方透明 GIF 播放（220×124）；为避免抖动不再叠加 CSS 缩放/倾斜动画。许可全文见 enderer/assets/THIRD-PARTY-dsh-pet-LICENSE.txt。
 
 ## 已知限制
 
