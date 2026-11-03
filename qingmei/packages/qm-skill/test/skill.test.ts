@@ -106,3 +106,46 @@ test('reload：不重启加载新技能', async () => {
     await h.dispose()
   }
 })
+
+test('安装器：写入新技能；覆盖已有技能后可回读新版', async () => {
+  const h = await setup()
+  try {
+    const created = await h.call({
+      method: 'POST',
+      path: '/api/v1/skills/install',
+      query: {},
+      headers: {},
+      body: { name: 'daily-standup', description: '每日站会', body: '# 站会\n三句话。' },
+    })
+    assert.equal(created.status, 200)
+    const listed = await h.call({ method: 'GET', path: '/api/v1/skills', query: {}, headers: {} })
+    assert.ok((listed.body as { items: { name: string }[] }).items.some((item) => item.name === 'daily-standup'))
+
+    const replaced = await h.call({
+      method: 'POST',
+      path: '/api/v1/skills/install',
+      query: {},
+      headers: {},
+      body: { name: 'weekly-report', description: '写周报 v2', body: '# 周报 v2\n按项目汇总。' },
+    })
+    assert.equal(replaced.status, 200)
+    const read = await h.call({
+      method: 'GET',
+      path: '/api/v1/skills/read',
+      query: { name: 'weekly-report' },
+      headers: {},
+    })
+    assert.match((read.body as { skill: { body: string } }).skill.body, /周报 v2/)
+
+    const bad = await h.call({
+      method: 'POST',
+      path: '/api/v1/skills/install',
+      query: {},
+      headers: {},
+      body: { name: '../evil', body: 'x' },
+    })
+    assert.equal(bad.status, 400)
+  } finally {
+    await h.dispose()
+  }
+})

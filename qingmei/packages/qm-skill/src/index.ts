@@ -8,7 +8,7 @@
  * 不改代码：放进目录 → `POST /api/v1/skills/reload` 或重启即生效。
  * 工具白名单随定义返回，由执行器/宿主决定是否裁剪。
  */
-import { readFile, readdir } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { Context } from 'cordis'
@@ -85,6 +85,54 @@ class FileSkills extends SkillService {
     return this.definitions.find((definition) => definition.name === skillName) ?? null
   }
 
+  async install(input: {
+    name: string
+    body: string
+    description?: string
+    tools?: string[]
+  }): Promise<SkillDefinition> {
+    const skillName = String(input.name ?? '').trim()
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(skillName)) throw new Error('技能名只允许小写字母/数字/短横线（≤40）')
+    const body = String(input.body ?? '')
+    if (!body.trim()) throw new Error('SKILL.md 不能为空')
+    const folder = path.join(this.dir, skillName)
+    const backup = path.join(this.dir, '.backup', `${skillName}-${Date.now()}`)
+    let hadExisting = false
+    if (existsSync(folder)) {
+      await mkdir(path.dirname(backup), { recursive: true })
+      await rename(folder, backup)
+      hadExisting = true
+    }
+    try {
+      await mkdir(folder, { recursive: true })
+      await writeFile(path.join(folder, 'SKILL.md'), body.slice(0, 200_000), 'utf8')
+      await writeFile(
+        path.join(folder, 'skill.json'),
+        JSON.stringify(
+          {
+            name: skillName,
+            description: String(input.description ?? '').slice(0, 300),
+            tools: Array.isArray(input.tools) ? input.tools.map(String).slice(0, 20) : [],
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      )
+      await this.load()
+      const installed = this.definitions.find((definition) => definition.name === skillName)
+      if (!installed) throw new Error('安装后校验失败：技能没有被加载')
+      return installed
+    } catch (error) {
+      await rm(folder, { recursive: true, force: true }).catch(() => undefined)
+      if (hadExisting) {
+        await mkdir(path.dirname(folder), { recursive: true })
+        await cp(backup, folder, { recursive: true }).catch(() => undefined)
+      }
+      await this.load()
+      throw error
+    }
+  }
   async reload(): Promise<SkillDefinition[]> {
     await this.load()
     return this.list()
@@ -124,6 +172,33 @@ export function apply(ctx: Context, config: SkillConfig = {}): void {
     }),
   )
 
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/skills/install',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const skills = ctx.reflect.get('skills', false) as SkillService & {
+          install?: (input: { name: string; body: string; description?: string; tools?: string[] }) => Promise<SkillDefinition>
+        }
+        if (!skills?.install) {
+          res.status(501).send({ ok: false, error: '当前技能实现不支持安装' })
+          return
+        }
+        try {
+          const skill = await skills.install({
+            name: String(body.name ?? ''),
+            body: String(body.body ?? ''),
+            description: typeof body.description === 'string' ? body.description : '',
+            tools: Array.isArray(body.tools) ? body.tools.map(String) : [],
+          })
+          res.status(200).send({ ok: true, skill })
+        } catch (error) {
+          res.status(400).send({ ok: false, error: error instanceof Error ? error.message : '安装失败' })
+        }
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'POST',
