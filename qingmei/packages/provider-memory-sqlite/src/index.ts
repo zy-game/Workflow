@@ -524,6 +524,20 @@ export class SqliteMemory extends MemoryService {
     const rows = (await this.episodes.find({})).filter(
       (row) => !row.archived_at && row.created_at >= since && row.kind !== 'fact',
     )
+    const vectors = new Map<string, number[]>()
+    if (this.embedding && rows.length > 0) {
+      try {
+        const embedded = await this.embedding.embed(rows.map((row) => row.summary))
+        if (embedded.length === rows.length) {
+          rows.forEach((row, index) => {
+            if (embedded[index]?.length) vectors.set(row.id, embedded[index]!)
+          })
+        }
+      } catch {
+        // 远端失败：逐条回退本地向量
+      }
+    }
+
     // 先按会话/日形成原子组（同日默认视为同一事件）
     const dayGroups = new Map<string, EpisodeRow[]>()
     for (const row of rows) {
@@ -538,13 +552,13 @@ export class SqliteMemory extends MemoryService {
     const clusters: { sessionId: string; rows: EpisodeRow[]; vector: number[] }[] = []
     for (const list of dayGroups.values()) {
       const sessionId = list[0]!.session_id
-      const vector = centroid(list)
+      const vector = centroid(list, vectors)
       const target = clusters.find(
         (cluster) => cluster.sessionId === sessionId && cosine(cluster.vector, vector) >= 0.55,
       )
       if (target) {
         target.rows.push(...list)
-        target.vector = centroid(target.rows)
+        target.vector = centroid(target.rows, vectors)
       } else {
         clusters.push({ sessionId, rows: [...list], vector })
       }
@@ -791,12 +805,13 @@ function parseVector(raw: string): number[] {
     return []
   }
 }
-function centroid(rows: EpisodeRow[]): number[] {
+function centroid(rows: EpisodeRow[], provided: Map<string, number[]> = new Map()): number[] {
   if (rows.length === 0) return []
-  const sum = new Array(128).fill(0)
-  for (const row of rows) {
-    const vector = localEmbedding(row.summary)
-    for (let i = 0; i < sum.length; i += 1) sum[i] += vector[i] ?? 0
+  const vectors = rows.map((row) => provided.get(row.id) ?? localEmbedding(row.summary))
+  const dim = vectors[0]?.length ?? 128
+  const sum = new Array(dim).fill(0)
+  for (const vector of vectors) {
+    for (let i = 0; i < dim; i += 1) sum[i] += vector[i] ?? 0
   }
   const norm = Math.sqrt(sum.reduce((total, value) => total + value * value, 0))
   return norm > 0 ? sum.map((value) => value / norm) : sum
