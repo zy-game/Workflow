@@ -27,6 +27,7 @@ const ENDPOINTS = {
   incidentRollback: './api/v1/incidents/rollback',
   incidentResolve: './api/v1/incidents/resolve',
   review: './api/v1/review',
+  audit: './api/v1/audit',
   reviewCards: './api/v1/review/cards',
   reviewCardScore: './api/v1/review/cards/score',
   reviewRun: './api/v1/review/run',
@@ -102,6 +103,14 @@ const el = {
   reviewScoreInput: document.getElementById('review-score-input'),
   reviewScoreSubmit: document.getElementById('review-score-submit'),
   reviewCards: document.getElementById('review-cards'),
+  auditToggle: document.getElementById('audit-toggle'),
+  audit: document.getElementById('audit'),
+  auditList: document.getElementById('audit-list'),
+  auditEmpty: document.getElementById('audit-empty'),
+  auditError: document.getElementById('audit-error'),
+  auditConversation: document.getElementById('audit-conversation'),
+  auditRefresh: document.getElementById('audit-refresh'),
+  auditClose: document.getElementById('audit-close'),
   conversationsEmpty: document.getElementById('conversations-empty'),
   conversationsError: document.getElementById('conversations-error'),
   conversationsRefresh: document.getElementById('conversations-refresh'),
@@ -136,6 +145,8 @@ const state = {
   incidentsLoading: false,
   reviewOpen: false,
   reviewLoading: false,
+  auditOpen: false,
+  auditLoading: false,
   reviewId: null,
   autonomyMode: 'A1',
   autonomyLocked: false,
@@ -1776,6 +1787,63 @@ function setMemoriesOpen(open) {
     void loadMemories()
   }
 }
+async function loadAudit() {
+  if (!state.token || state.auditLoading) return
+  state.auditLoading = true
+  if (el.auditError) {
+    el.auditError.hidden = true
+    el.auditError.textContent = ''
+  }
+  try {
+    const conversationId = el.auditConversation?.value.trim() ?? ''
+    const url = new URL(ENDPOINTS.audit, location.href)
+    url.searchParams.set('limit', '50')
+    if (conversationId) url.searchParams.set('conversationId', conversationId)
+    const res = await fetch(url, { headers: withAuth({ Accept: 'application/json' }), cache: 'no-store' })
+    if (!res.ok) throw new Error(`读取审计失败（HTTP ${res.status}）`)
+    const body = await res.json()
+    const items = Array.isArray(body.items) ? body.items : []
+    if (el.auditEmpty) el.auditEmpty.hidden = items.length > 0
+    if (el.auditList) {
+      el.auditList.replaceChildren()
+      for (const item of items) {
+        const row = document.createElement('li')
+        row.className = 'schedule-item'
+        const main = document.createElement('div')
+        main.className = 'schedule-main'
+        const title = document.createElement('strong')
+        title.textContent = `${item.action} · ${item.decision ?? '记录'}`
+        const meta = document.createElement('small')
+        const at = item.at ? new Date(item.at).toLocaleString('zh-CN') : ''
+        meta.textContent = `${item.actorId ?? ''} ${item.conversationId ? `· ${item.conversationId}` : ''} · ${at}`
+        main.append(title, meta)
+        row.append(main)
+        el.auditList.append(row)
+      }
+    }
+  } catch (error) {
+    if (el.auditError) {
+      el.auditError.hidden = false
+      el.auditError.textContent = error instanceof Error ? error.message : '读取审计失败'
+    }
+  } finally {
+    state.auditLoading = false
+  }
+}
+
+function setAuditOpen(open) {
+  state.auditOpen = open
+  if (el.audit) el.audit.hidden = !open
+  el.auditToggle?.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    setSchedulesOpen(false)
+    setTasksOpen(false)
+    setAutonomyOpen(false)
+    setIncidentsOpen(false)
+    setReviewOpen(false)
+    void loadAudit()
+  }
+}
 function bindEvents() {
   el.form.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -1831,6 +1899,9 @@ function bindEvents() {
   el.reviewRefresh?.addEventListener('click', () => void loadReview())
   el.reviewClose?.addEventListener('click', () => setReviewOpen(false))
   el.reviewScoreSubmit?.addEventListener('click', () => void submitReviewScore())
+  el.auditToggle?.addEventListener('click', () => setAuditOpen(!state.auditOpen))
+  el.auditRefresh?.addEventListener('click', () => void loadAudit())
+  el.auditClose?.addEventListener('click', () => setAuditOpen(false))
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.schedulesOpen) setSchedulesOpen(false)
@@ -1839,6 +1910,7 @@ function bindEvents() {
     if (state.conversationsOpen) setConversationsOpen(false)
     if (state.incidentsOpen) setIncidentsOpen(false)
     if (state.reviewOpen) setReviewOpen(false)
+    if (state.auditOpen) setAuditOpen(false)
   })
 }
 

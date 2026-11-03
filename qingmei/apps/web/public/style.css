@@ -1072,3 +1072,14 @@ body {
   display: flex;
   gap: 6px;
 }
+
+.audit-filter {
+  width: 150px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font-size: 12px;
+}

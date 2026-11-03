@@ -69,6 +69,16 @@
             群组
           </button>
           <button
+            id="audit-toggle"
+            class="ghost"
+            type="button"
+            aria-expanded="false"
+            aria-controls="audit"
+            title="查看工具审计"
+          >
+            审计
+          </button>
+          <button
             id="review-toggle"
             class="ghost"
             type="button"
@@ -222,6 +232,19 @@
         <p id="memories-empty" class="tasks-empty">还没有记住什么。聊几句，青梅会自己记。</p>
         <p id="memories-error" class="tasks-error" role="alert" hidden></p>
         <ul id="memories-list" class="tasks-list"></ul>
+      </section>
+      <section id="audit" class="tasks" hidden aria-labelledby="audit-title">
+        <div class="tasks-head">
+          <h2 id="audit-title" class="tasks-title">审计</h2>
+          <div class="tasks-tools">
+            <input id="audit-conversation" class="audit-filter" placeholder="群/会话 id（可空）" />
+            <button id="audit-refresh" class="ghost" type="button">刷新</button>
+            <button id="audit-close" class="ghost" type="button">关闭</button>
+          </div>
+        </div>
+        <p id="audit-empty" class="tasks-empty">没有审计记录。</p>
+        <p id="audit-error" class="tasks-error" role="alert" hidden></p>
+        <ul id="audit-list" class="tasks-list"></ul>
       </section>
       <main id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions text" aria-label="对话">
         <p id="empty" class="empty">说点什么吧。P1 先跑通一条最小闭环。</p>

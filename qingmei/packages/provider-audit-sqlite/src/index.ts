@@ -17,7 +17,8 @@ const MAX_LIMIT = 500
 interface AuditRow extends Row {
   at: number
   actor_id: string | null
-  channel: string | null
+  channel: string
+  conversation_id?: string | null
   action: string
   target: string | null
   decision: string | null
@@ -41,6 +42,7 @@ export class SqliteAudit extends AuditService {
       at: entry.at.getTime(),
       actor_id: entry.actorId ?? null,
       channel: entry.channel ?? null,
+      conversation_id: entry.conversationId ?? null,
       action: entry.action,
       target: entry.target ?? null,
       decision: entry.decision ?? null,
@@ -52,6 +54,7 @@ export class SqliteAudit extends AuditService {
   async query(q: {
     since?: Date
     actorId?: string
+    conversationId?: string
     action?: string
     decision?: 'allow' | 'deny'
     limit?: number
@@ -61,6 +64,7 @@ export class SqliteAudit extends AuditService {
     const filtered = rows
       .filter((row) => (since === undefined ? true : row.at >= since))
       .filter((row) => (q.actorId === undefined ? true : row.actor_id === q.actorId))
+      .filter((row) => (q.conversationId === undefined ? true : row.conversation_id === q.conversationId))
       .filter((row) => (q.action === undefined ? true : row.action === q.action))
       .filter((row) => (q.decision === undefined ? true : row.decision === q.decision))
       .sort((a, b) => b.at - a.at)
@@ -75,6 +79,7 @@ function toEntry(row: AuditRow): AuditEntry {
     at: new Date(row.at),
     actorId: row.actor_id ?? '',
     channel: (row.channel ?? 'web') as ChannelId,
+    ...(row.conversation_id ? { conversationId: row.conversation_id } : {}),
     action: row.action,
     ...(row.target ? { target: row.target } : {}),
     ...(row.decision === 'allow' || row.decision === 'deny' ? { decision: row.decision } : {}),

@@ -140,3 +140,20 @@ test('数据落在 qm_audit 集合，字段按 docs/04 的列名', async () => {
     await h.dispose()
   }
 })
+
+test('query 按 conversationId 过滤群审计', async () => {
+  const h = await setup()
+  try {
+    await h.audit.append(entry({ conversationId: 'group:qq:g1', traceId: 'group' }))
+    await h.audit.append(entry({ conversationId: 'owner', traceId: 'owner' }))
+    await h.audit.append(entry({ traceId: 'old-no-conversation' }))
+    const rows = await h.audit.query({ conversationId: 'group:qq:g1' })
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0]?.conversationId, 'group:qq:g1')
+    const all = await h.audit.query({})
+    assert.equal(all.length, 3)
+    assert.equal(all.some((row) => row.conversationId === undefined), true)
+  } finally {
+    await h.dispose()
+  }
+})

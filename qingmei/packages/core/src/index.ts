@@ -959,6 +959,8 @@ export interface AuditEntry {
   at: Date
   actorId: string
   channel: ChannelId
+  /** 发生会话；群审计按它过滤，旧行没有 */
+  conversationId?: string
   action: string
   target?: string
   decision?: 'allow' | 'deny'
@@ -994,6 +996,7 @@ export abstract class AuditService extends Service {
   abstract query(q: {
     since?: Date
     actorId?: string
+    conversationId?: string
     action?: string
     decision?: 'allow' | 'deny'
     limit?: number

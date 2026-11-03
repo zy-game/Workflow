@@ -81,6 +81,7 @@ export async function guardToolCall(guard: ToolGuard, toolName: string): Promise
     await guard.audit.append({
       at: new Date(),
       actorId: guard.actor.id,
+      conversationId: guard.conversation.id,
       channel: guard.channel,
       action,
       target: toolName,
@@ -95,6 +96,7 @@ export async function guardToolCall(guard: ToolGuard, toolName: string): Promise
     await guard.audit.append({
       at: new Date(),
       actorId: guard.actor.id,
+      conversationId: guard.conversation.id,
       channel: guard.channel,
       action,
       target: toolName,
@@ -118,6 +120,7 @@ export async function guardToolCall(guard: ToolGuard, toolName: string): Promise
     await guard.audit.append({
       at: new Date(),
       actorId: guard.actor.id,
+      conversationId: guard.conversation.id,
       channel: guard.channel,
       action,
       target: toolName,
@@ -135,6 +138,7 @@ export async function guardToolCall(guard: ToolGuard, toolName: string): Promise
   await guard.audit.append({
     at: new Date(),
     actorId: guard.actor.id,
+    conversationId: guard.conversation.id,
     channel: guard.channel,
     action,
     target: toolName,

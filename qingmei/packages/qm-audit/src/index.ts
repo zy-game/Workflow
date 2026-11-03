@@ -54,6 +54,7 @@ export function apply(ctx: Context): void {
           ...(since ? { since } : {}),
           ...(req.query.action ? { action: req.query.action.trim() } : {}),
           ...(req.query.actor ? { actorId: req.query.actor.trim() } : {}),
+          ...(req.query.conversationId ? { conversationId: req.query.conversationId.trim() } : {}),
           ...(rawDecision === 'allow' || rawDecision === 'deny' ? { decision: rawDecision } : {}),
         })
         res.status(200).send({ ok: true, items })
