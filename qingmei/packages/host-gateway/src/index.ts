@@ -253,6 +253,15 @@ async function routeRequest(
   const url = new URL(req.url ?? '/', 'http://localhost')
   const pathname = url.pathname
 
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  if (method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return
+  }
+
   if (pathname === '/healthz') {
     if (method !== 'GET' && method !== 'HEAD') throw new HttpError(405, 'method not allowed')
     const consumers = listenerCount(deps.ctx, EVENTS.inbound)

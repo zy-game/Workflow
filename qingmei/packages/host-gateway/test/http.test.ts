@@ -148,6 +148,19 @@ test('/api/v1/* 错误 token 401，正确 token 200', async () => {
   assert.deepEqual(await good.json(), [], 'store 不可用时应返回空数组')
 })
 
+test('CORS 预检：桌面跨域请求可带 Authorization', async () => {
+  const preflight = await fetch(`${base}/api/v1/messages`, {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'file://',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'authorization,content-type',
+    },
+  })
+  assert.equal(preflight.status, 204)
+  assert.equal(preflight.headers.get('access-control-allow-origin'), '*')
+  assert.match(preflight.headers.get('access-control-allow-headers') ?? '', /authorization/i)
+})
 test('图片上传与消息图片块', async () => {
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
   const upload = await fetch(`${base}/api/v1/uploads`, {
