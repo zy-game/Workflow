@@ -109,3 +109,14 @@ test('历史消息映射', () => {
     ],
   )
 })
+
+test('图片历史：blocks_json 里的 image 保留给渲染层', () => {
+  const lines = mapHistory([
+    {
+      role: 'user',
+      text: '[图片]',
+      blocks_json: JSON.stringify([{ type: 'image', url: '/api/v1/uploads/a.png' }]),
+    },
+  ])
+  assert.deepEqual(lines, [{ role: 'user', text: '[图片]', images: ['/api/v1/uploads/a.png'] }])
+})

@@ -991,3 +991,13 @@ video.pet {
   border-radius: 8px;
   margin: 2px 0;
 }
+
+:root {
+  --font-scale: 1;
+}
+
+#bubble,
+#chat,
+.settings-card {
+  zoom: var(--font-scale);
+}

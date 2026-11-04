@@ -51,6 +51,7 @@ test('界面元素齐全', () => {
     'settings-server',
     'settings-token',
     'settings-scale',
+    'settings-font-scale',
     'settings-sound',
     'settings-autostart',
     'settings-notify-hidden',

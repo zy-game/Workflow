@@ -164,7 +164,21 @@ export function mapHistory(rows) {
     .map((row) => {
       const role = row?.role === 'assistant' ? 'assistant' : row?.role === 'user' ? 'user' : ''
       const text = typeof row?.text === 'string' ? row.text.trim() : ''
-      return role && text ? { role, text } : null
+      const images = []
+      if (typeof row?.blocks_json === 'string') {
+        try {
+          const blocks = JSON.parse(row.blocks_json)
+          if (Array.isArray(blocks)) {
+            for (const block of blocks) {
+              if (block?.type === 'image' && typeof block.url === 'string' && block.url) images.push(block.url)
+            }
+          }
+        } catch {
+          // 坏 blocks_json 当纯文本
+        }
+      }
+      if (!role || (!text && images.length === 0)) return null
+      return images.length > 0 ? { role, text, images } : { role, text }
     })
     .filter(Boolean)
 }

@@ -60,6 +60,7 @@ function readSettings() {
     token: decryptToken(stored),
     bounds: stored.bounds && typeof stored.bounds === 'object' ? stored.bounds : null,
     scale: clampScale(stored.scale),
+    fontScale: clampFontScale(stored.fontScale),
     sound: stored.sound !== false,
     autoStart: stored.autoStart === true,
     notifyHidden: stored.notifyHidden !== false,
@@ -72,6 +73,11 @@ function readSettings() {
 function clampScale(value) {
   const number = Number(value)
   return Number.isFinite(number) ? Math.min(1.5, Math.max(0.7, number)) : 1
+}
+
+function clampFontScale(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(1.3, Math.max(0.85, number)) : 1
 }
 
 function decryptToken(stored) {
@@ -93,6 +99,7 @@ function persist(settings) {
     serverUrl: settings.serverUrl,
     bounds: settings.bounds ?? null,
     scale: clampScale(settings.scale),
+    fontScale: clampFontScale(settings.fontScale),
     sound: settings.sound !== false,
     autoStart: settings.autoStart === true,
     notifyHidden: settings.notifyHidden !== false,
@@ -251,18 +258,12 @@ function createWindow() {
   win.once('ready-to-show', () => {
     win.webContents.setZoomFactor(scale)
     win.showInactive()
+    if (!app.isPackaged) {
     const action = process.env.QM_DESKTOP_ACTION
     if (action === 'feed') {
       setTimeout(() => {
         void win.webContents.executeJavaScript(
           "document.getElementById('pet').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))",
-        )
-      }, 600)
-    }
-    if (action === 'image') {
-      setTimeout(() => {
-        void win.webContents.executeJavaScript(
-          "(async () => { const bin = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='); const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0)); const f = new File([bytes], 'test.png', { type: 'image/png' }); await window.__qmSendImage(f); })()",
         )
       }, 600)
     }
@@ -306,6 +307,7 @@ function createWindow() {
           .finally(() => app.quit())
       }, delay)
     }
+    }
   })
   win.on('moved', () => {
     if (!win || win.isDestroyed()) return
@@ -340,6 +342,7 @@ if (!gotLock) {
         token: settings.token,
         hasToken: Boolean(settings.token),
         scale: settings.scale,
+        fontScale: settings.fontScale,
         sound: settings.sound,
         autoStart: settings.autoStart,
         notifyHidden: settings.notifyHidden,
@@ -354,11 +357,13 @@ if (!gotLock) {
       if (!/^https?:\/\/\S+$/i.test(serverUrl)) throw new Error('服务器地址必须是 http(s) URL')
       const current = readSettings()
       const scale = clampScale(incoming?.scale ?? current.scale)
+      const fontScale = clampFontScale(incoming?.fontScale ?? current.fontScale)
       const settings = {
         ...current,
         serverUrl,
         token,
         scale,
+        fontScale,
         sound: incoming?.sound !== false,
         autoStart: incoming?.autoStart === true,
         notifyHidden: incoming?.notifyHidden !== false,

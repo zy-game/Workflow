@@ -44,6 +44,8 @@ const el = {
   onboardingSkip: document.getElementById('onboarding-skip'),
   settingsModal: document.getElementById('settings-modal'),
   settingsScale: document.getElementById('settings-scale'),
+  settingsFontScale: document.getElementById('settings-font-scale'),
+  settingsFontScaleValue: document.getElementById('settings-font-scale-value'),
   settingsScaleValue: document.getElementById('settings-scale-value'),
   settingsSound: document.getElementById('settings-sound'),
   settingsAutostart: document.getElementById('settings-autostart'),
@@ -66,6 +68,7 @@ const settings = {
   autoStart: false,
   notifyHidden: true,
   hideOnFullscreen: false,
+  fontScale: 1,
   character: 'qingmei',
 }
 const bubbles = new BubbleQueue({ ttlMs: 12_000 })
@@ -102,6 +105,10 @@ const VIDEOS = {
     './assets/webm/click-tickle.webm',
   ],
   fun: ['./assets/webm/fun-mirror.webm', './assets/webm/fun-whale.webm', './assets/webm/fun-water.webm'],
+}
+
+function applyFontScale() {
+  document.documentElement.style.setProperty('--font-scale', String(settings.fontScale || 1))
 }
 
 function applyCharacter() {
@@ -253,12 +260,14 @@ async function init() {
   settings.serverUrl = saved.serverUrl || 'http://127.0.0.1:7410'
   settings.token = saved.token || ''
   settings.scale = Number(saved.scale) || 1
+  settings.fontScale = Number(saved.fontScale) || 1
   settings.sound = saved.sound !== false
   settings.autoStart = saved.autoStart === true
   settings.notifyHidden = saved.notifyHidden !== false
   settings.hideOnFullscreen = saved.hideOnFullscreen === true
   settings.character = saved.character === 'orb' ? 'orb' : 'qingmei'
   applyCharacter()
+  applyFontScale()
   if (!settings.token) {
     if (localStorage.getItem('qm.onboarded') === '1') openSettings()
     else el.onboarding.hidden = false
@@ -413,7 +422,10 @@ async function loadHistory() {
     const lines = mapHistory(rows)
     if (lines.length === 0) return
     el.chatLog.replaceChildren()
-    for (const line of lines) appendLine(line.role, line.text, false)
+    for (const line of lines) {
+      for (const url of line.images ?? []) appendImage(line.role, url)
+      if (line.text && line.text !== '[图片]') appendLine(line.role, line.text, false)
+    }
     scrollChat()
   } catch {
     // 历史加载失败不影响实时消息
@@ -748,6 +760,8 @@ function openSettings() {
   el.settingsServer.value = settings.serverUrl
   el.settingsToken.value = settings.token
   el.settingsScale.value = String(settings.scale)
+  if (el.settingsFontScale) el.settingsFontScale.value = String(settings.fontScale)
+  if (el.settingsFontScaleValue) el.settingsFontScaleValue.textContent = Math.round(settings.fontScale * 100) + '%'
   el.settingsScaleValue.textContent = `${Math.round(settings.scale * 100)}%`
   el.settingsSound.checked = settings.sound
   el.settingsAutostart.checked = settings.autoStart
@@ -792,20 +806,23 @@ async function saveSettings(event) {
   }
   try {
     const scale = Number(el.settingsScale.value) || 1
+    const fontScale = Number(el.settingsFontScale?.value) || 1
     const sound = el.settingsSound.checked
     const autoStart = el.settingsAutostart.checked
     const notifyHidden = el.settingsNotifyHidden.checked
     const character = el.settingsCharacter.value === 'orb' ? 'orb' : 'qingmei'
-    await desktop.saveSettings({ serverUrl: base, token, scale, sound, autoStart, notifyHidden, hideOnFullscreen, character })
+    await desktop.saveSettings({ serverUrl: base, token, scale, fontScale, sound, autoStart, notifyHidden, hideOnFullscreen, character })
     settings.serverUrl = base
     settings.token = token
     settings.scale = scale
+    settings.fontScale = fontScale
     settings.sound = sound
     settings.autoStart = autoStart
     settings.notifyHidden = notifyHidden
     settings.hideOnFullscreen = hideOnFullscreen
     settings.character = character
     applyCharacter()
+    applyFontScale()
     localStorage.setItem('qm.onboarded', '1')
     historyLoaded = false
     closeSettings()
@@ -1006,8 +1023,6 @@ function bind() {
     }
   })
 }
-
-window.__qmSendImage = sendImage
 
 bind()
 void init()
