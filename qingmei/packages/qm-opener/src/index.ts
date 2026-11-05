@@ -140,13 +140,17 @@ export function apply(ctx: Context, config: OpenerConfig = {}): void {
 
       const today = dayKey(at)
       const todays = (await openings.find({})).filter((row) => dayKey(new Date(row.sent_at)) === today)
-      if (todays.length >= maxDaily) return []
       if (todays.some((row) => row.window === window.id)) return []
 
       const reason = await pickReason(nowMs)
       if (!reason) return []
 
       const topic = await topicOf(reason.topic)
+      // 频率学习：回应率低的话题降为每天 1 次，回应率高才允许比默认多 1 次
+      const responseRate = topic.sent >= 4 ? topic.answered / topic.sent : 1
+      const dailyLimit =
+        responseRate < 0.3 ? Math.min(1, maxDaily) : responseRate > 0.7 ? maxDaily + 1 : maxDaily
+      if (todays.length >= dailyLimit) return []
       if (topic.paused_until > nowMs) return []
       const minute = at.getHours() * 60 + at.getMinutes()
       if (topic.preferred_minute !== null && minute < topic.preferred_minute) return []
