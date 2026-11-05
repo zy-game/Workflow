@@ -34,6 +34,7 @@ QM_SERVER_URL=https://139.155.78.241:8710 QM_TOKEN=... pnpm --filter @qingmei/de
 - 服务器地址 / 访问令牌 / 测试连接
 - 形象：青梅 / 小光球
 - 桌宠大小 70%–150%
+- 文字大小 85%–130%（只缩放气泡/聊天/设置，不动桌宠）
 - 互动音效开关
 - 开机自启
 - 隐藏时系统通知
@@ -50,7 +51,7 @@ QM_SERVER_URL=https://139.155.78.241:8710 QM_TOKEN=... pnpm --filter @qingmei/de
 | 托盘 | 显示 / 隐藏 / 设置 / 退出 |
 | 顶部小横条 | 移动窗口，位置会记住；拖整只也可以 |
 | 头顶气泡 | 显示服务器通知；点击气泡打开聊天；× 关闭，+N 表示排队条数 |
-| 聊天输入 | 回车发送；回复按 SSE `chunk` 流式显示，最终消息渲染 Markdown |
+| 聊天输入 | 回车发送；回复按 SSE `chunk` 流式显示，最终消息渲染 Markdown；历史图片从 `blocks_json` 回显 |
 | 离线 | 发送失败自动排队，联网后自动补发 |
 | 闲置 20 秒 | 35% 概率自己找个乐子（照镜子 / 蓝鲸 / 玩水枪），否则继续待机 |
 | 闲置 90 秒 | 打盹，动一下或点它醒来 |
@@ -71,7 +72,7 @@ QM_SERVER_URL=https://139.155.78.241:8710 QM_TOKEN=... pnpm --filter @qingmei/de
 
 ```bash
 pnpm --filter @qingmei/desktop dist        # 免安装 portable exe
-pnpm --filter @qingmei/desktop dist:nsis   # NSIS 安装包（部分机器会被杀软拦截卸载器生成）
+pnpm --filter @qingmei/desktop dist:nsis   # NSIS 安装包；当前环境需把 TEMP 指到可写目录
 ```
 
 产物在 `apps/desktop/dist/`。应用图标在 `apps/desktop/build/icon.ico`（由桌宠预览图生成）。
@@ -91,8 +92,8 @@ preload 最小面、界面元素、缩放/自启/全屏检测/通知契约。
 - **electron/dist 不存在**：`pnpm install` 跳过了 Electron 下载脚本时，执行
   `node apps/desktop/node_modules/electron/install.js`（国内先设
   `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
-- **全屏自动隐藏**：该功能调用 `electron/fullscreen.ps1` 检测前台窗口，只在 Windows 生效；
-  首次检测约 0.5 秒，间隔 6 秒。
+- **全屏自动隐藏**：使用 `electron/fullscreen.exe` 检测前台窗口，只在 Windows 生效；
+  每 6 秒检测一次。
 
 ## 素材与许可
 
@@ -107,4 +108,5 @@ preload 最小面、界面元素、缩放/自启/全屏检测/通知契约。
 - 系统通知只在窗口隐藏时发送，标题固定为「青梅」。
 - 透明窗口在部分远程桌面/无交互会话下可能无法显示。
 - 点击穿透依赖 `setIgnoreMouseEvents(..., { forward: true })`，Windows 支持最好。
-- 番茄钟/喂饭账本、图片历史回显还没做。
+- 番茄钟/喂饭账本还没做。
+- QM_DESKTOP_SCREENSHOT / QM_DESKTOP_ACTION 只在未打包的开发模式生效，打包版已关闭。
