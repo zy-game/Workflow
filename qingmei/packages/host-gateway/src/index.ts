@@ -300,10 +300,14 @@ async function routeRequest(
 
   if (pathname === '/api/v1/login' && method === 'POST') {
     const body = await readJsonBody(req).catch(() => ({}))
-    const user = typeof body.user === 'string' ? body.user.trim() : ''
-    const password = typeof body.password === 'string' ? body.password : ''
-    const expectedPassword = deps.options.adminPassword || deps.options.token
-    if (user !== deps.options.adminUser || !safeEqual(password, expectedPassword)) {
+    const user = (typeof body.user === 'string' ? body.user.trim() : '').toLowerCase()
+    const password = (typeof body.password === 'string' ? body.password : '').trim()
+    const expectedUser = deps.options.adminUser.trim().toLowerCase()
+    const passwords = [deps.options.adminPassword, deps.options.token]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+    const passwordOk = passwords.some((expected) => safeEqual(password, expected))
+    if (user !== expectedUser || !passwordOk) {
       sendJson(res, 401, { ok: false, error: '账号或密码不对' })
       return
     }

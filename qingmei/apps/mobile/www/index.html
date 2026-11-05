@@ -83,9 +83,9 @@
       <form id="form">
         <div class="server-note">服务器：139.155.78.241:8710</div>
         <label for="user">管理员账号</label>
-        <input id="user" type="text" autocomplete="username" spellcheck="false" value="admin" required />
+        <input id="user" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" value="admin" required />
         <label for="token">密码（或 QM_TOKEN）</label>
-        <input id="token" type="password" autocomplete="current-password" spellcheck="false" placeholder="密码" required />
+        <input id="token" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="密码" required />
         <button id="submit" type="submit">连接</button>
         <div class="error" id="error"></div>
       </form>
