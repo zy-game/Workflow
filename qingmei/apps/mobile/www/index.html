@@ -84,8 +84,10 @@
         <label for="server">服务器地址</label>
         <input id="server" type="url" inputmode="url" autocomplete="url" spellcheck="false"
           placeholder="https://139.155.78.241:8710" required />
-        <label for="token">访问令牌（QM_TOKEN）</label>
-        <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴令牌" required />
+        <label for="user">管理员账号</label>
+        <input id="user" type="text" autocomplete="username" spellcheck="false" value="admin" required />
+        <label for="token">密码（或 QM_TOKEN）</label>
+        <input id="token" type="password" autocomplete="current-password" spellcheck="false" placeholder="密码" required />
         <button id="submit" type="submit">连接</button>
         <div class="error" id="error"></div>
       </form>
@@ -172,13 +174,19 @@
         submit.disabled = true
         try {
           const server = normalize(document.getElementById('server').value)
-          const token = document.getElementById('token').value.trim()
-          if (!token) throw new Error('令牌不能为空')
-          const res = await fetch(server + '/api/v1/messages?limit=1', {
-            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+          const user = document.getElementById('user').value.trim() || 'admin'
+          const password = document.getElementById('token').value
+          if (!password) throw new Error('密码不能为空')
+          const res = await fetch(server + '/api/v1/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-QM-Client': 'mobile' },
+            body: JSON.stringify({ user, password }),
           })
-          if (res.status === 401) throw new Error('令牌不对')
+          if (res.status === 401) throw new Error('账号或密码不对')
           if (!res.ok) throw new Error('服务器返回 ' + res.status)
+          const login = await res.json().catch(() => ({}))
+          const token = typeof login.token === 'string' ? login.token : ''
+          if (!token) throw new Error('登录响应缺少 token')
           localStorage.setItem(SERVER_KEY, server)
           await saveToken(token)
           const notifications = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications

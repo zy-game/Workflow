@@ -667,3 +667,28 @@ test('记忆页 API：列表 / 修正 / 删除', async () => {
   }
   assert.equal(after.facts.some((item) => item.object === '加奶咖啡'), false)
 })
+
+test('admin 登录：返回 token + HttpOnly 会话，Cookie 可访问 API', async () => {
+  const login = await fetch(`${base}/api/v1/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-QM-Client': 'mobile' },
+    body: JSON.stringify({ user: 'admin', password: TOKEN }),
+  })
+  assert.equal(login.status, 200)
+  const body = (await login.json()) as { ok: boolean; token: string }
+  assert.equal(body.ok, true)
+  assert.equal(body.token, TOKEN)
+  const cookie = login.headers.get('set-cookie') || ''
+  assert.match(cookie, /qm_session=/)
+  assert.match(cookie, /HttpOnly/)
+
+  const session = await fetch(`${base}/api/v1/session`, {
+    headers: { Cookie: cookie.split(';')[0] },
+  })
+  assert.equal(session.status, 200)
+
+  const history = await fetch(`${base}/api/v1/messages?limit=1`, {
+    headers: { Cookie: cookie.split(';')[0] },
+  })
+  assert.equal(history.status, 200)
+})

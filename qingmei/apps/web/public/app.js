@@ -2159,20 +2159,83 @@ function bindEvents() {
   })
 }
 
+async function loginWithPassword() {
+  const user = (window.prompt('管理员账号', 'admin') || '').trim()
+  if (!user) return false
+  const password = window.prompt('密码（QM_TOKEN）') || ''
+  if (!password) return false
+  try {
+    const res = await fetch(API_BASE + '/api/v1/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user, password }),
+    })
+    if (!res.ok) {
+      appendNotice('账号或密码不对')
+      return false
+    }
+    const body = await res.json().catch(() => ({}))
+    if (body && typeof body.token === 'string') {
+      state.token = body.token
+      saveToken(body.token)
+    }
+    return true
+  } catch {
+    appendNotice('登录失败，请检查网络')
+    return false
+  }
+}
+
 async function start() {
   state.token = readUrlToken() || loadToken()
+  if (!state.token) {
+    try {
+      const session = await fetch(API_BASE + '/api/v1/session', { credentials: 'include' })
+      if (!session.ok) {
+        const loggedIn = await loginWithPassword()
+        if (!loggedIn) {
+          setStatus('offline', '需要登录')
+          appendNotice('请刷新页面，用 admin 账号登录。')
+          return
+        }
+      }
+    } catch {
+      setStatus('offline', '需要登录')
+      appendNotice('无法连接服务器登录。')
+      return
+    }
+  }
+  if (!state.token && window.Capacitor?.Plugins?.SecureStore) {
+    try {
+      const result = await window.Capacitor.Plugins.SecureStore.get({ key: 'qm.token' })
+      if (result && result.value) {
+        state.token = result.value
+        sessionStorage.setItem(TOKEN_KEY, result.value)
+      }
+    } catch {
+      // 继续走页面内输入
+    }
+  }
+  if (!state.token) {
+    const entered = window.prompt('请输入访问令牌（QM_TOKEN）')
+    if (entered && entered.trim()) {
+      state.token = entered.trim()
+      saveToken(state.token)
+    }
+  }
   bindEvents()
   resizeInput()
 
   if (!state.token) {
     setStatus('offline', '缺少令牌')
     el.input.disabled = true
-    el.input.placeholder = '请用带 ?token= 的链接打开'
+    el.input.placeholder = '缺少令牌，刷新页面重新输入'
     if (el.schedulesToggle) el.schedulesToggle.disabled = true
     if (el.tasksToggle) el.tasksToggle.disabled = true
     if (el.autonomyToggle) el.autonomyToggle.disabled = true
     updateSendButton()
-    appendNotice('地址里缺少 token，请用网关生成的带 ?token= 的链接重新打开。')
+    appendNotice('缺少访问令牌，请刷新页面输入 QM_TOKEN。')
     return
   }
 

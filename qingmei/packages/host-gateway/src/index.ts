@@ -4,7 +4,7 @@
  * 职责边界：只做传输（静态文件、鉴权、SSE、JSON），
  * 业务路由与事件广播仍然在 gateway 服务里。
  */
-import { timingSafeEqual } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -51,6 +51,12 @@ export interface Config {
   webRoot?: string
   /** 图片上传目录，默认 ./data/uploads（相对进程工作目录） */
   uploadDir?: string
+  /** 管理员账号；默认 admin */
+  adminUser?: string
+  /** 管理员密码；为空时退回 token */
+  adminPassword?: string
+  /** 会话签名密钥；默认用 token */
+  sessionSecret?: string
 }
 
 export interface ServerInfo {
@@ -65,6 +71,9 @@ interface Options {
   token: string
   webRoot: string
   uploadDir: string
+  adminUser: string
+  adminPassword: string
+  sessionSecret: string
 }
 
 interface HandlerDeps {
@@ -133,6 +142,9 @@ function normalizeConfig(config: Config): Options {
     token,
     webRoot: path.resolve(config.webRoot ?? 'apps/web/public'),
     uploadDir: path.resolve(config.uploadDir ?? 'data/uploads'),
+    adminUser: config.adminUser?.trim() || 'admin',
+    adminPassword: config.adminPassword ?? '',
+    sessionSecret: config.sessionSecret ?? token,
   }
 }
 
@@ -286,8 +298,36 @@ async function routeRequest(
     return
   }
 
+  if (pathname === '/api/v1/login' && method === 'POST') {
+    const body = await readJsonBody(req).catch(() => ({}))
+    const user = typeof body.user === 'string' ? body.user.trim() : ''
+    const password = typeof body.password === 'string' ? body.password : ''
+    const expectedPassword = deps.options.adminPassword || deps.options.token
+    if (user !== deps.options.adminUser || !safeEqual(password, expectedPassword)) {
+      sendJson(res, 401, { ok: false, error: '账号或密码不对' })
+      return
+    }
+    const cookie = sessionCookie(deps.options, user, req)
+    res.setHeader('Set-Cookie', cookie)
+    const wantsToken = req.headers['x-qm-client'] === 'mobile'
+    sendJson(res, 200, { ok: true, user, ...(wantsToken ? { token: deps.options.token } : {}) })
+    return
+  }
+
+  if (pathname === '/api/v1/logout' && method === 'POST') {
+    res.setHeader('Set-Cookie', 'qm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0')
+    sendJson(res, 200, { ok: true })
+    return
+  }
+
+  if (pathname === '/api/v1/session' && method === 'GET') {
+    const user = sessionUser(req, deps.options)
+    sendJson(res, user ? 200 : 401, user ? { ok: true, user } : { ok: false, error: 'unauthorized' })
+    return
+  }
+
   if (pathname === '/api/v1' || pathname.startsWith('/api/v1/')) {
-    if (!authorized(req, url, deps.options.token)) {
+    if (!authorized(req, url, deps.options)) {
       res.setHeader('WWW-Authenticate', 'Bearer')
       sendJson(res, 401, { ok: false, error: 'unauthorized' })
       return
@@ -497,13 +537,54 @@ function bearerOf(header: string | undefined): string | undefined {
  * 常规接口走 Authorization: Bearer；SSE 例外：
  * 浏览器的 EventSource 不能设置自定义 header，只能把令牌放在 query 里。
  */
-function authorized(req: IncomingMessage, url: URL, expected: string): boolean {
+function authorized(req: IncomingMessage, url: URL, options: Options): boolean {
   const headerToken = bearerOf(req.headers.authorization)
-  if (headerToken !== undefined) return tokenMatches(headerToken, expected)
+  if (headerToken !== undefined) return tokenMatches(headerToken, options.token)
+  if (sessionUser(req, options)) return true
   if (req.method === 'GET' && (url.pathname === '/api/v1/events' || url.pathname.startsWith('/api/v1/uploads/'))) {
-    return tokenMatches(url.searchParams.get('token') ?? undefined, expected)
+    return tokenMatches(url.searchParams.get('token') ?? undefined, options.token)
   }
   return false
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a)
+  const right = Buffer.from(b)
+  return left.length === right.length && timingSafeEqual(left, right)
+}
+
+function signSession(options: Options, user: string, expires: number): string {
+  const payload = `${user}.${expires}`
+  const signature = createHmac('sha256', options.sessionSecret).update(payload).digest('base64url')
+  return `${Buffer.from(payload).toString('base64url')}.${signature}`
+}
+
+function sessionUser(req: IncomingMessage, options: Options): string | null {
+  const cookie = req.headers.cookie ?? ''
+  const match = /(?:^|;\s*)qm_session=([^;]+)/.exec(cookie)
+  if (!match) return null
+  const [encoded, signature] = match[1].split('.')
+  if (!encoded || !signature) return null
+  let payload: string
+  try {
+    payload = Buffer.from(encoded, 'base64url').toString('utf8')
+  } catch {
+    return null
+  }
+  const expected = createHmac('sha256', options.sessionSecret).update(payload).digest('base64url')
+  if (!safeEqual(signature, expected)) return null
+  const [user, expiresText] = payload.split('.')
+  if (!user || !expiresText) return null
+  if (Number(expiresText) < Date.now()) return null
+  return user
+}
+
+function sessionCookie(options: Options, user: string, req: IncomingMessage): string {
+  const expires = Date.now() + 30 * 24 * 60 * 60 * 1000
+  const secure =
+    Boolean((req.socket as { encrypted?: boolean }).encrypted) ||
+    String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() === 'https'
+  return `qm_session=${signSession(options, user, expires)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? '; Secure' : ''}`
 }
 
 function tokenMatches(supplied: string | undefined, expected: string): boolean {
