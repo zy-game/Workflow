@@ -8,6 +8,7 @@ const { app, BrowserWindow, Notification, ipcMain, Menu, safeStorage, screen, sh
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
 const { execFile, execFileSync } = require('node:child_process')
+const { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed } = require('./layout.cjs')
 
 
 const here = __dirname
@@ -144,7 +145,7 @@ function windowsLoginCommand() {
 
 function setupUpdates() {
   if (!app.isPackaged) return
-  const feed = process.env.QM_UPDATE_URL || 'https://139.155.78.241:8710/updates'
+  const feed = updateFeed(process.env)
   if (!feed) return
   try {
     const { autoUpdater } = require('electron-updater')
@@ -192,25 +193,16 @@ function resizeForScale(scale) {
   const width = Math.round(380 * scale)
   const height = Math.round(560 * scale)
   win.webContents.setZoomFactor(scale)
-  win.setBounds({
-    x: previous.x + previous.width - width,
-    y: previous.y + previous.height - height,
-    width,
-    height,
-  })
+  win.setBounds(
+    clampToDisplays(
+      { x: previous.x + previous.width - width, y: previous.y + previous.height - height, width, height },
+      screen.getAllDisplays(),
+    ),
+  )
 }
 
 function boundsVisible(bounds) {
-  if (!bounds) return false
-  return screen.getAllDisplays().some((display) => {
-    const area = display.workArea
-    return (
-      bounds.x < area.x + area.width &&
-      bounds.x + bounds.width > area.x &&
-      bounds.y < area.y + area.height &&
-      bounds.y + bounds.height > area.y
-    )
-  })
+  return isVisibleInDisplays(bounds, screen.getAllDisplays())
 }
 
 function checkFullscreen() {
@@ -250,15 +242,7 @@ function setFullscreenWatch(enabled) {
 }
 
 function defaultBounds(scale = 1) {
-  const area = screen.getPrimaryDisplay().workArea
-  const width = Math.round(380 * scale)
-  const height = Math.round(560 * scale)
-  return {
-    width,
-    height,
-    x: Math.round(area.x + area.width - width - 24),
-    y: Math.round(area.y + area.height - height - 12),
-  }
+  return defaultBoundsIn(screen.getPrimaryDisplay().workArea, scale)
 }
 
 function createWindow() {
@@ -478,7 +462,8 @@ if (!gotLock) {
       const dy = Math.round(Number(delta?.dy) || 0)
       if (!dx && !dy) return
       const bounds = win.getBounds()
-      win.setPosition(bounds.x + dx, bounds.y + dy)
+      const next = clampToDisplays({ ...bounds, x: bounds.x + dx, y: bounds.y + dy }, screen.getAllDisplays())
+      win.setPosition(next.x, next.y)
     })
 
     ipcMain.on('window:hide', () => win?.hide())
