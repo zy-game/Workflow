@@ -1,0 +1,10 @@
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/capacitor-cordova-android-plugins/build/
+www/app/
+build-debug.log
+build-release.log
+dist/
+.chrome-tmp*/`nsetup*.png

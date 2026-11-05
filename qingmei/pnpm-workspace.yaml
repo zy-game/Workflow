@@ -2,6 +2,7 @@ packages:
   - 'packages/*'
   - 'apps/server'
   - 'apps/desktop'
+  - 'apps/mobile'
 
 onlyBuiltDependencies:
   - electron

@@ -39,6 +39,13 @@ const ENDPOINTS = {
   reviewRun: './api/v1/review/run',
   reviewScore: './api/v1/review/score',
 }
+const API_BASE = String(window.__QM_SERVER_URL || '').replace(/\/+$/, '')
+if (API_BASE) {
+  for (const key of Object.keys(ENDPOINTS)) {
+    if (ENDPOINTS[key].startsWith('./')) ENDPOINTS[key] = API_BASE + ENDPOINTS[key].slice(1)
+  }
+}
+
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 10000
 const SEND_RETRY_MS = 2000
@@ -176,7 +183,11 @@ const state = {
 
 function loadToken() {
   try {
-    return sessionStorage.getItem(TOKEN_KEY) || ''
+    return (
+      sessionStorage.getItem(TOKEN_KEY) ||
+      (window.__QM_PERSIST_TOKEN__ ? localStorage.getItem(TOKEN_KEY) : '') ||
+      ''
+    )
   } catch {
     return ''
   }
@@ -185,6 +196,7 @@ function loadToken() {
 function saveToken(token) {
   try {
     sessionStorage.setItem(TOKEN_KEY, token)
+    if (window.__QM_PERSIST_TOKEN__) localStorage.setItem(TOKEN_KEY, token)
   } catch {
     // 隐私模式禁用存储时，令牌只在本次页面生命周期内有效
   }

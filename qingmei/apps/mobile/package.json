@@ -1,0 +1,19 @@
+{
+  "name": "@qingmei/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync-web": "node scripts/sync-web.mjs",
+    "cap:sync": "pnpm sync-web && cap sync android",
+    "build:debug": "pnpm cap:sync && cd android && gradlew.bat assembleDebug",
+    "build:release": "pnpm cap:sync && cd android && gradlew.bat assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.0",
+    "@capacitor/core": "^7.4.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.0"
+  }
+}

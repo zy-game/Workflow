@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light" />
+    <title>青梅 · 连接</title>
+    <style>
+      :root {
+        --paper: #f7f5ef;
+        --ink: #22302b;
+        --muted: #6f7d76;
+        --green: #3f7f63;
+        --line: #dfe5df;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at 50% 0%, #e9f4ed, var(--paper) 55%);
+        color: var(--ink);
+        font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        padding: 16px;
+      }
+      .card {
+        width: 100%;
+        max-width: min(360px, calc(100vw - 32px));
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 26px 22px 22px;
+        box-shadow: 0 18px 50px rgb(35 60 48 / 12%);
+      }
+      .orb {
+        width: 54px;
+        height: 54px;
+        border-radius: 50%;
+        margin: 0 auto 10px;
+        display: grid;
+        place-items: center;
+        font-size: 26px;
+        background: #e8f5ee;
+      }
+      h1 { font-size: 21px; text-align: center; margin: 0 0 4px; }
+      p { color: var(--muted); text-align: center; margin: 0 0 18px; }
+      label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+      input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 13px;
+        font: inherit;
+        color: var(--ink);
+        background: #fbfcfa;
+        outline: none;
+      }
+      input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgb(63 127 99 / 12%); }
+      button {
+        width: 100%;
+        margin-top: 20px;
+        border: 0;
+        border-radius: 12px;
+        padding: 13px;
+        font: inherit;
+        font-weight: 600;
+        color: #fff;
+        background: var(--green);
+      }
+      button:disabled { opacity: .6; }
+      .error { margin-top: 12px; color: #b34a3a; font-size: 13px; text-align: center; min-height: 18px; }
+      .reset { display: block; margin: 14px auto 0; border: 0; background: none; color: var(--muted); font-size: 12px; width: auto; }
+      .hint { font-size: 12px; color: var(--muted); text-align: center; margin-top: 14px; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="orb">🐳</div>
+      <h1>连接青梅</h1>
+      <p>手机和服务器在同一个网关下</p>
+
+      <form id="form">
+        <label for="server">服务器地址</label>
+        <input id="server" type="url" inputmode="url" autocomplete="url" spellcheck="false"
+          placeholder="https://139.155.78.241:8710" required />
+        <label for="token">访问令牌（QM_TOKEN）</label>
+        <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴令牌" required />
+        <button id="submit" type="submit">连接</button>
+        <div class="error" id="error"></div>
+      </form>
+
+      <button class="reset" id="reset" type="button">清除已保存的连接</button>
+      <div class="hint">令牌只保存在本机应用数据里，不上传。</div>
+    </main>
+
+    <script>
+      const SERVER_KEY = 'qm.server'
+      const TOKEN_KEY = 'qm.token'
+      const reset = new URLSearchParams(location.search).has('reset')
+      const errorEl = document.getElementById('error')
+      const form = document.getElementById('form')
+      const submit = document.getElementById('submit')
+
+      function normalize(value) {
+        const text = String(value || '').trim().replace(/\/+$/, '')
+        if (!/^https?:\/\/\S+$/i.test(text)) throw new Error('地址要以 http:// 或 https:// 开头')
+        return text
+      }
+
+      const savedServer = localStorage.getItem(SERVER_KEY) || ''
+      const savedToken = localStorage.getItem(TOKEN_KEY) || ''
+      if (!reset && savedServer && savedToken) {
+        location.replace('./app/index.html')
+      } else {
+        document.getElementById('server').value = savedServer
+      }
+
+      document.getElementById('reset').addEventListener('click', () => {
+        localStorage.removeItem(SERVER_KEY)
+        localStorage.removeItem(TOKEN_KEY)
+        sessionStorage.removeItem(TOKEN_KEY)
+        errorEl.textContent = ''
+      })
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault()
+        errorEl.textContent = ''
+        submit.disabled = true
+        try {
+          const server = normalize(document.getElementById('server').value)
+          const token = document.getElementById('token').value.trim()
+          if (!token) throw new Error('令牌不能为空')
+          const res = await fetch(server + '/api/v1/messages?limit=1', {
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+          })
+          if (res.status === 401) throw new Error('令牌不对')
+          if (!res.ok) throw new Error('服务器返回 ' + res.status)
+          localStorage.setItem(SERVER_KEY, server)
+          localStorage.setItem(TOKEN_KEY, token)
+          sessionStorage.setItem(TOKEN_KEY, token)
+          location.replace('./app/index.html')
+        } catch (error) {
+          errorEl.textContent = error && error.message ? error.message : '连接失败'
+        } finally {
+          submit.disabled = false
+        }
+      })
+    </script>
+  </body>
+</html>
