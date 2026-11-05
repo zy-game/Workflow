@@ -461,10 +461,31 @@ function handleAssistant(payload) {
   turn.text = finalText
   turn.body.textContent = finalText
   turn.node.classList.remove('is-streaming')
+  addQuickReplies(turn.node, finalText)
   state.current = null
   if (stick) el.messages.scrollTop = el.messages.scrollHeight
   // 回合结束后刷新日程面板：用户可能刚在对话里加了提醒
   if (state.schedulesOpen) void loadSchedules()
+}
+
+function addQuickReplies(node, text) {
+  if (!/请选一个：|选项：/.test(text)) return
+  const labels = text.includes('请选一个：')
+    ? ['重排期', '降范围', '现在做 30 分钟']
+    : ['现在做 30 分钟', '重排期', '降范围']
+  const wrap = document.createElement('div')
+  wrap.className = 'quick-replies'
+  for (const label of labels) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = label
+    button.addEventListener('click', () => {
+      wrap.remove()
+      void sendMessage(label)
+    })
+    wrap.append(button)
+  }
+  node.append(wrap)
 }
 
 function appendNotice(message) {
