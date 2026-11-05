@@ -70,7 +70,7 @@ Header: Authorization: Bearer <QM_MCP_TOKEN>
 ```
 
 ZCode 用户配置：`~/.zcode/cli/config.json` 的 `mcp.servers`。
-DSH 用户配置：`~/.dsh/mcp.servers.yml`（需要对应 MCP 客户端插件）。
+DSH 用户配置：项目根 `.agents/mcp.json`，并安装 MCP 客户端插件：`dsh plugin --profile web add dsh-mcp-autoload`（`acp` profile 同理）。
 桌面设置页的“配置 ZCode / 配置 DSH”按钮会写入这两份配置，并同步 `~/.agents/mcp.json`。
 
 ## 5. 边界

@@ -10,6 +10,8 @@ const desktop = window.qmDesktop ?? {
   getSettings: async () => ({ serverUrl: 'http://127.0.0.1:7410', token: '' }),
   saveSettings: async () => ({ ok: true }),
   setupAgent: async () => ({ ok: false, error: '仅桌面端支持' }),
+  installDshMcp: async () => ({ ok: false, error: '仅桌面端支持' }),
+  startWorker: async () => ({ ok: false, error: '仅桌面端支持' }),
   popupMenu: async () => undefined,
   quit: () => undefined,
   onOpenSettings: () => undefined,
@@ -59,6 +61,8 @@ const el = {
   settingsMcpToken: document.getElementById('settings-mcp-token'),
   settingsSetupZcode: document.getElementById('settings-setup-zcode'),
   settingsSetupDsh: document.getElementById('settings-setup-dsh'),
+  settingsInstallDsh: document.getElementById('settings-install-dsh'),
+  settingsStartWorker: document.getElementById('settings-start-worker'),
   settingsSetupWorker: document.getElementById('settings-setup-worker'),
   settingsAgentStatus: document.getElementById('settings-agent-status'),
   settingsError: document.getElementById('settings-error'),
@@ -823,6 +827,30 @@ async function testConnection() {
   }
 }
 
+async function installDshMcp() {
+  if (!el.settingsAgentStatus) return
+  el.settingsAgentStatus.hidden = false
+  el.settingsAgentStatus.textContent = '正在安装 DSH MCP 插件…'
+  try {
+    const result = await desktop.installDshMcp()
+    el.settingsAgentStatus.textContent = result?.ok ? result.message : result?.error || '安装失败'
+  } catch (error) {
+    el.settingsAgentStatus.textContent = error instanceof Error ? error.message : '安装失败'
+  }
+}
+
+async function startWorker() {
+  if (!el.settingsAgentStatus) return
+  el.settingsAgentStatus.hidden = false
+  el.settingsAgentStatus.textContent = '正在启动 Worker…'
+  try {
+    const result = await desktop.startWorker()
+    el.settingsAgentStatus.textContent = result?.ok ? result.message : result?.error || '启动失败'
+  } catch (error) {
+    el.settingsAgentStatus.textContent = error instanceof Error ? error.message : '启动失败'
+  }
+}
+
 async function setupAgent(target) {
   if (!el.settingsAgentStatus) return
   el.settingsAgentStatus.hidden = false
@@ -1019,6 +1047,8 @@ function bind() {
   el.settingsForm.addEventListener('submit', (event) => void saveSettings(event))
   el.settingsSetupZcode?.addEventListener('click', () => void setupAgent('zcode'))
   el.settingsSetupDsh?.addEventListener('click', () => void setupAgent('dsh'))
+  el.settingsInstallDsh?.addEventListener('click', () => void installDshMcp())
+  el.settingsStartWorker?.addEventListener('click', () => void startWorker())
   el.settingsSetupWorker?.addEventListener('click', () => void setupAgent('worker'))
   el.onboardingStart.addEventListener('click', () => {
     el.onboarding.hidden = true

@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('qmDesktop', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   setupAgent: (target) => ipcRenderer.invoke('agent:setup', target),
+  installDshMcp: () => ipcRenderer.invoke('agent:install-dsh'),
+  startWorker: () => ipcRenderer.invoke('agent:worker-start'),
   popupMenu: () => ipcRenderer.invoke('menu:popup'),
   quit: () => ipcRenderer.send('app:quit'),
   setIgnoreMouseEvents: (ignore) => ipcRenderer.send('window:ignore-mouse', Boolean(ignore)),

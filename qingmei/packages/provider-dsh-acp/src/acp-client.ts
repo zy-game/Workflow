@@ -39,6 +39,8 @@ export interface AcpClientOptions {
   /** 追加/覆盖的环境变量（父进程环境仍会继承） */
   env?: Record<string, string | undefined>
   timeoutMs?: number
+  /** Windows .cmd 命令需要 shell；默认关闭，避免路径/参数被拼接 */
+  shell?: boolean
   onUpdate?: (update: AcpUpdate) => void
   onStderr?: (text: string) => void
   onExit?: (code: number | null) => void
@@ -164,6 +166,7 @@ export class AcpClient {
       cwd: this.options.cwd,
       env: { ...process.env, ...this.options.env },
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: this.options.shell === true,
     })
     this.child = child
     this.buffer = ''

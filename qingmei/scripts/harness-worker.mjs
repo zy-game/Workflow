@@ -107,6 +107,7 @@ async function runDsh(config, task) {
         if (content && typeof content === 'object' && content.type === 'text') output += content.text ?? ''
       }
     },
+    shell: process.platform === 'win32',
     onPermissionRequest: async (event) => {
       const option = event.options?.find((item) => item.kind === 'allow_once' || item.kind === 'allow_always')
       return option?.optionId ?? null

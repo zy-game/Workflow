@@ -9,7 +9,7 @@ const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs'
 const path = require('node:path')
 const os = require('node:os')
 const { setupAgent: setupAgentConfig } = require('./agent-config.cjs')
-const { execFile, execFileSync } = require('node:child_process')
+const { execFile, execFileSync, spawn } = require('node:child_process')
 const { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed, loginCommand } = require('./layout.cjs')
 
 
@@ -205,6 +205,30 @@ function setupAgent(target) {
   }
   const names = { zcode: 'ZCode', dsh: 'DSH', both: 'ZCode + DSH', worker: '本机 Worker' }
   return { ok: true, message: `已配置 ${names[target] || target} 的 MCP；地址 ${url}` }
+}
+function startWorker() {
+  const script = path.join(here, '..', '..', 'scripts', 'harness-worker.mjs')
+  if (!existsSync(script)) return { ok: false, error: '找不到 scripts/harness-worker.mjs' }
+  const child = spawn(process.execPath, [script], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    cwd: path.join(here, '..', '..'),
+  })
+  child.unref()
+  return { ok: true, message: 'Worker 已启动；配置来自 ~/.qingmei/worker.json' }
+}
+function installDshMcp() {
+  const command = process.platform === 'win32' ? 'dsh plugin --profile web add dsh-mcp-autoload && dsh plugin --profile acp add dsh-mcp-autoload' : 'dsh plugin --profile web add dsh-mcp-autoload && dsh plugin --profile acp add dsh-mcp-autoload'
+  try {
+    execFileSync(process.platform === 'win32' ? 'cmd.exe' : 'sh', process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command], {
+      encoding: 'utf8',
+      timeout: 120000,
+    })
+    return { ok: true, message: '已安装 dsh-mcp-autoload 到 web/acp；重启 DSH 生效' }
+  } catch (error) {
+    return { ok: false, error: `安装 DSH MCP 插件失败：${error instanceof Error ? error.message : String(error)}` }
+  }
 }
 function createTray() {
   try {
@@ -496,6 +520,9 @@ if (!gotLock) {
       setFullscreenWatch(settings.hideOnFullscreen)
       return { ok: true, scale }
     })
+
+    ipcMain.handle('agent:install-dsh', () => installDshMcp())
+    ipcMain.handle('agent:worker-start', () => startWorker())
 
     ipcMain.handle('agent:setup', (_event, target) =>
       setupAgentConfig({
