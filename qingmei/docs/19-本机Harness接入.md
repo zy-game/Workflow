@@ -57,7 +57,7 @@ pnpm worker -- `
 - 需要 ZCode ACP 时，把 `--zcode-acp-command` 指向可用的 ACP bridge；
   未验证的 GUI ZCode 不能被 ACP 直接控制。
 - 配置默认保存到 `~/.qingmei/worker.json`。
-- 本机没有 `dsh` CLI 时，worker 会明确报“没有检测到可用的 dsh/zcode”，不会假装执行。
+- 本机没有 `dsh` CLI 时，worker 会明确报“没有检测到可用的 dsh/zcode”，不会假装执行。`dsh` CLI 还需要 `DEEPSEEK_API_KEY`（或 DSH 已登录的凭据）；worker 从启动环境继承。
 
 ## 4. MCP
 
