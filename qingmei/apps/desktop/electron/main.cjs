@@ -142,6 +142,21 @@ function windowsLoginCommand() {
   return `"${executable}" "${app.getAppPath()}"`
 }
 
+function setupUpdates() {
+  if (!app.isPackaged) return
+  const feed = process.env.QM_UPDATE_URL
+  if (!feed) return
+  try {
+    const { autoUpdater } = require('electron-updater')
+    autoUpdater.setFeedURL({ provider: 'generic', url: feed })
+    autoUpdater
+      .checkForUpdatesAndNotify()
+      .catch((error) => console.error('[qingmei] 检查更新失败', error))
+  } catch (error) {
+    console.error('[qingmei] 初始化自动更新失败', error)
+  }
+}
+
 function applyAutoStart(enabled) {
   if (process.platform === 'win32') {
     const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
@@ -358,6 +373,7 @@ if (!gotLock) {
     createWindow()
     setFullscreenWatch(readSettings().hideOnFullscreen)
     applyAutoStart(readSettings().autoStart)
+    setupUpdates()
 
     ipcMain.handle('settings:get', () => {
       const settings = readSettings()

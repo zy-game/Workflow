@@ -75,7 +75,7 @@ pnpm --filter @qingmei/desktop dist        # 免安装 portable exe
 pnpm --filter @qingmei/desktop dist:nsis   # NSIS 安装包；当前环境需把 TEMP 指到可写目录
 ```
 
-产物在 `apps/desktop/dist/`。应用图标在 `apps/desktop/build/icon.ico`（由桌宠预览图生成）。
+产物在 `apps/desktop/dist/`。应用图标在 `apps/desktop/build/icon.ico`（由桌宠预览图生成）。`n`n签名与自动更新的环境变量见 [SIGNING.md](SIGNING.md)。
 
 ## 测试
 
