@@ -1,7 +1,5 @@
 package com.qingmei.mobile;
 
-import android.animation.ObjectAnimator;
-import android.animation.PropertyValuesHolder;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -19,7 +17,6 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -33,23 +30,27 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
+import pl.droidsonroids.gif.GifImageView;
+
 public class PetOverlayService extends Service {
     public static boolean running = false;
     private static final String SERVER = "https://139.155.78.241:8710";
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable hideBubbleTask = this::hideBubble;
     private WindowManager windowManager;
     private LinearLayout root;
-    private ImageView petView;
+    private GifImageView petView;
     private TextView bubbleView;
+    private LinearLayout menuView;
     private WindowManager.LayoutParams params;
-    private ObjectAnimator breath;
-    private final Runnable hideBubbleTask = this::hideBubble;
     private volatile boolean stopped = false;
+    private boolean quiet = false;
     private String lastMessage = "";
     private float downX;
     private float downY;
     private int startX;
     private int startY;
+    private long downAt;
     private boolean moved;
 
     @Override
@@ -90,14 +91,38 @@ public class PetOverlayService extends Service {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        petView = new ImageView(this);
-        petView.setImageResource(R.drawable.pet_alpha);
+        petView = new GifImageView(this);
+        petView.setImageResource(R.raw.idle_breath);
         petView.setBackgroundColor(Color.TRANSPARENT);
-        petView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         root.addView(petView, new LinearLayout.LayoutParams(petSize, petSize));
 
+        menuView = new LinearLayout(this);
+        menuView.setOrientation(LinearLayout.VERTICAL);
+        menuView.setBackgroundResource(R.drawable.pet_bubble);
+        menuView.setPadding(dp(8), dp(8), dp(8), dp(8));
+        menuView.addView(menuButton("摸摸头", () -> {
+            playOnce(R.raw.click_happy);
+            showBubble("摸摸头～");
+        }));
+        menuView.addView(menuButton("喂饭", () -> {
+            playOnce(R.raw.eat_rice);
+            showBubble("吃饱啦。");
+        }));
+        menuView.addView(menuButton("聊天", this::openChat));
+        menuView.addView(menuButton("安静一会", () -> {
+            quiet = true;
+            hideBubble();
+            toggleMenu();
+        }));
+        menuView.addView(menuButton("关闭悬浮", () -> stopSelf()));
+        menuView.setVisibility(View.GONE);
+        root.addView(menuView, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
         params = new WindowManager.LayoutParams(
-            Math.round(250 * getResources().getDisplayMetrics().density),
+            Math.round(260 * getResources().getDisplayMetrics().density),
             WindowManager.LayoutParams.WRAP_CONTENT,
             Build.VERSION.SDK_INT >= 26
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -118,6 +143,7 @@ public class PetOverlayService extends Service {
                     downY = event.getRawY();
                     startX = params.x;
                     startY = params.y;
+                    downAt = System.currentTimeMillis();
                     moved = false;
                     return true;
                 case MotionEvent.ACTION_MOVE:
@@ -129,7 +155,11 @@ public class PetOverlayService extends Service {
                     windowManager.updateViewLayout(root, params);
                     return true;
                 case MotionEvent.ACTION_UP:
-                    if (!moved) openChat();
+                    if (!moved && System.currentTimeMillis() - downAt >= 450) {
+                        toggleMenu();
+                    } else if (!moved) {
+                        openChat();
+                    }
                     return true;
                 default:
                     return false;
@@ -137,25 +167,44 @@ public class PetOverlayService extends Service {
         });
 
         windowManager.addView(root, params);
-
-        breath = ObjectAnimator.ofPropertyValuesHolder(
-            petView,
-            PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.045f),
-            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.045f),
-            PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, 0f, -5f)
-        );
-        breath.setDuration(1800);
-        breath.setRepeatCount(ObjectAnimator.INFINITE);
-        breath.setRepeatMode(ObjectAnimator.REVERSE);
-        breath.start();
-
         new Thread(this::pollLoop, "qm-pet-bubble").start();
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private TextView menuButton(String label, Runnable action) {
+        TextView button = new TextView(this);
+        button.setText(label);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        button.setTextColor(Color.parseColor("#22302B"));
+        button.setPadding(dp(14), dp(9), dp(14), dp(9));
+        button.setOnClickListener((view) -> {
+            toggleMenu();
+            action.run();
+        });
+        return button;
+    }
+
+    private void toggleMenu() {
+        if (menuView == null) return;
+        menuView.setVisibility(menuView.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+        if (windowManager != null && root != null) windowManager.updateViewLayout(root, params);
+    }
+
+    private void playOnce(int res) {
+        petView.setImageResource(res);
+        handler.postDelayed(() -> {
+            if (!stopped) petView.setImageResource(R.raw.idle_breath);
+        }, 1800);
     }
 
     private void pollLoop() {
         while (!stopped) {
             try {
                 Thread.sleep(8000);
+                if (quiet) continue;
                 String text = fetchLatest();
                 if (text != null && !text.isEmpty() && !text.equals(lastMessage)) {
                     lastMessage = text;
@@ -207,9 +256,9 @@ public class PetOverlayService extends Service {
     }
 
     private void showBubble(String text) {
+        if (quiet) return;
         bubbleView.setText(text.length() > 120 ? text.substring(0, 120) + "…" : text);
         bubbleView.setVisibility(View.VISIBLE);
-        if (params != null) windowManager.updateViewLayout(root, params);
         handler.removeCallbacks(hideBubbleTask);
         handler.postDelayed(hideBubbleTask, 12000);
     }
@@ -221,7 +270,6 @@ public class PetOverlayService extends Service {
     private void openChat() {
         Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        intent.putExtra("open_chat", true);
         startActivity(intent);
     }
 
@@ -234,11 +282,6 @@ public class PetOverlayService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && root != null) {
-            String action = intent.getAction();
-            if ("hide".equals(action)) root.setVisibility(View.GONE);
-            if ("show".equals(action)) root.setVisibility(View.VISIBLE);
-        }
         return START_STICKY;
     }
 
@@ -246,7 +289,6 @@ public class PetOverlayService extends Service {
     public void onDestroy() {
         stopped = true;
         running = false;
-        if (breath != null) breath.cancel();
         handler.removeCallbacksAndMessages(null);
         if (root != null && windowManager != null) {
             try {
