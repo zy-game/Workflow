@@ -8,3 +8,4 @@ build-debug.log
 build-release.log
 dist/
 .chrome-tmp*/`nsetup*.png
+emulator-*.png`nui.xml
