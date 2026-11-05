@@ -178,3 +178,22 @@ test('周报：统计热点/冷记忆并推送', async () => {
     await h.dispose()
   }
 })
+
+test('记忆日报：生成、落库并推送 owner', async () => {
+  const h = await setup(1)
+  try {
+    await seed(h)
+    const run = await h.call({ method: 'POST', path: '/api/v1/memory/daily/run', query: {}, headers: {} })
+    assert.equal(run.status, 200)
+    const body = run.body as { day: string; markdown: string }
+    assert.equal(body.day, '2026-11-03')
+    assert.match(body.markdown, /# 记忆日报/)
+    assert.match(body.markdown, /事实：10 条/)
+    const list = await h.call({ method: 'GET', path: '/api/v1/memory/daily', query: {}, headers: {} })
+    assert.equal(list.status, 200)
+    assert.equal((list.body as { items: unknown[] }).items.length, 1)
+    assert.equal(h.channel.sent.length, 1)
+  } finally {
+    await h.dispose()
+  }
+})

@@ -26,6 +26,10 @@ export interface HotspotConfig {
   hotHour?: number
   weekDay?: number
   weekHour?: number
+  /** 是否每天生成记忆日报；默认 true */
+  daily?: boolean
+  /** 日报小时；默认 09:00 */
+  dailyHour?: number
   maxDelta?: number
   maxRatio?: number
   clock?: () => Date
@@ -37,6 +41,7 @@ export const inject = ['store', 'channel', 'gateway']
 const DAY = 24 * 60 * 60 * 1000
 const HOT_COLLECTION = 'qm_memory_hotspot'
 const WEEKLY_COLLECTION = 'qm_memory_weekly'
+const DAILY_COLLECTION = 'qm_memory_daily'
 
 interface FactRow extends Row {
   subject: string
@@ -66,6 +71,12 @@ interface HotspotRow extends Row {
   status: string
 }
 
+interface DailyRow extends Row {
+  day: string
+  at: number
+  markdown: string
+}
+
 interface WeeklyRow extends Row {
   week: string
   at: number
@@ -83,6 +94,7 @@ export function apply(ctx: Context, config: HotspotConfig = {}): void {
   const facts = store.collection<FactRow>('qm_mem_fact')
   const runs = store.collection<HotspotRow>(HOT_COLLECTION)
   const weeklies = store.collection<WeeklyRow>(WEEKLY_COLLECTION)
+  const dailies = store.collection<DailyRow>(DAILY_COLLECTION)
   const audit = ctx.reflect.get('audit', false) as AuditService | undefined
   const now = () => (config.clock ? config.clock() : new Date())
   const maxDelta = Math.min(0.2, Math.max(0.01, config.maxDelta ?? 0.05))
@@ -201,13 +213,55 @@ export function apply(ctx: Context, config: HotspotConfig = {}): void {
     return row
   }
 
+  async function daily(): Promise<DailyRow> {
+    const at = now()
+    const day = dayKey(at)
+    const rows = (await facts.find({})).filter(
+      (row) => (row.valid_to ?? null) === null && row.audience === 'owner',
+    )
+    const hot = rows.filter((row) => (row.hits ?? 0) >= 3)
+    const cold = rows.filter((row) => (row.hits ?? 0) === 0 && (at.getTime() - row.created_at) / DAY > 30)
+    const recent = (await runs.find({}))
+      .filter((row) => row.status === 'applied' && at.getTime() - row.at < DAY)
+      .reduce((sum, row) => sum + (JSON.parse(row.changes_json) as Change[]).length, 0)
+    const top = [...rows].sort((a, b) => (b.hits ?? 0) - (a.hits ?? 0)).slice(0, 3)
+    const lines = [
+      `# 记忆日报 · ${day}`,
+      '',
+      `- 事实：${rows.length} 条（热点 ${hot.length}，长期未用 ${cold.length}）`,
+      `- 今日自动调整：${recent} 条（可回滚）`,
+    ]
+    if (top.length > 0) {
+      lines.push('', '## 常用记忆')
+      for (const row of top) lines.push(`- ${row.subject} / ${row.predicate} / ${row.object}（${row.hits ?? 0} 次）`)
+    }
+    const markdown = lines.join('\n')
+    const existing = (await dailies.find({})).find((row) => row.day === day)
+    const row: DailyRow = {
+      id: existing?.id ?? `day_${at.getTime().toString(36)}`,
+      day,
+      at: at.getTime(),
+      markdown,
+    }
+    if (existing) await dailies.update(existing.id, row)
+    else await dailies.insert(row)
+    await channel
+      .send({ channel: 'web', conversationId: 'owner', blocks: [{ type: 'text', text: markdown }] })
+      .catch(() => undefined)
+    return row
+  }
+
   if (config.auto !== false) {
     const hotTimer = scheduleDaily(Number(config.hotHour ?? 3), () => void runHotspot().catch(() => undefined))
+    const dailyTimer = config.daily === false
+      ? null
+      : scheduleDaily(Number(config.dailyHour ?? 9), () => void daily().catch(() => undefined))
     const weekTimer = scheduleWeekly(Number(config.weekDay ?? 1), Number(config.weekHour ?? 9), () =>
       void weekly().catch(() => undefined),
     )
     ctx.effect(() => () => {
       clearTimeout(hotTimer)
+      if (dailyTimer) clearTimeout(dailyTimer)
       clearTimeout(weekTimer)
     })
   }
@@ -272,6 +326,30 @@ export function apply(ctx: Context, config: HotspotConfig = {}): void {
 
   ctx.effect(() =>
     gateway.route({
+      method: 'POST',
+      path: '/api/v1/memory/daily/run',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const row = await daily()
+        res.status(200).send({ ok: true, day: row.day, markdown: row.markdown })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/memory/daily',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const items = (await dailies.find({}))
+          .sort((a, b) => b.at - a.at)
+          .slice(0, 14)
+          .map((row) => ({ day: row.day, at: new Date(row.at), markdown: row.markdown }))
+        res.status(200).send({ ok: true, items })
+      },
+    }),
+  )
+  ctx.effect(() =>
+    gateway.route({
       method: 'GET',
       path: '/api/v1/memory/weekly',
       async handler(_req: GatewayRequest, res: GatewayResponse) {
@@ -309,6 +387,12 @@ function scheduleWeekly(day: number, hour: number, task: () => void): ReturnType
   }, next.getTime() - now.getTime())
   timer.unref?.()
   return timer
+}
+
+function dayKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
 }
 
 function weekKey(date: Date): string {
