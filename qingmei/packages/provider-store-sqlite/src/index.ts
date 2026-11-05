@@ -70,6 +70,10 @@ export class SqliteStore extends StoreService {
     ctx.effect(() => () => this.close(), 'provider-store-sqlite: close database')
   }
 
+  filePath(): string | null {
+    return this.path
+  }
+
   async ready(): Promise<void> {
     if (this.db) return
     if (this.path !== ':memory:') {

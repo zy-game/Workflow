@@ -7,6 +7,7 @@
  * - 同一 subject+predicate 出现新 object → 旧值 `valid_to = now`（软失效，不删除），召回只看未失效的；
  * - `audience` 决定可见范围：群聊视口只注入 public 且 audience 精确匹配的记忆（零泄露）。
  */
+import { DatabaseSync } from 'node:sqlite'
 import type { Context } from 'cordis'
 import {
   MemoryService,
@@ -125,6 +126,67 @@ interface SynapseRow extends Row {
   last_fired_at: number | null
 }
 
+class FactFts {
+  private readonly path: string
+
+  constructor(path: string) {
+    this.path = path
+  }
+
+  private withDb<T>(fn: (db: DatabaseSync) => T): T {
+    const db = new DatabaseSync(this.path)
+    try {
+      db.exec('PRAGMA busy_timeout = 3000')
+      db.exec(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS qm_fact_fts USING fts5(id UNINDEXED, text, tokenize='unicode61')",
+      )
+      return fn(db)
+    } finally {
+      db.close()
+    }
+  }
+
+  private segment(value: string): string {
+    return String(value)
+      .replace(/[\u3400-\u9fff]/g, (char) => ` ${char} `)
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  private write(db: DatabaseSync, id: string, text: string): void {
+    db.prepare('DELETE FROM qm_fact_fts WHERE id = ?').run(id)
+    db.prepare('INSERT INTO qm_fact_fts(id, text) VALUES (?, ?)').run(id, this.segment(text))
+  }
+
+  upsert(id: string, text: string): void {
+    this.withDb((db) => this.write(db, id, text))
+  }
+
+  remove(id: string): void {
+    this.withDb((db) => db.prepare('DELETE FROM qm_fact_fts WHERE id = ?').run(id))
+  }
+
+  sync(rows: { id: string; subject: string; predicate: string; object: string }[]): void {
+    this.withDb((db) => {
+      for (const row of rows) this.write(db, row.id, row.subject + ' ' + row.predicate + ' ' + row.object)
+    })
+  }
+
+  search(text: string, limit: number): string[] {
+    const tokens = this.segment(text).split(' ').filter(Boolean)
+    if (tokens.length === 0) return []
+    const match = tokens.map((token) => `"${token.replace(/"/g, '')}"`).join(' OR ')
+    return this.withDb((db) => {
+      const rows = db
+        .prepare('SELECT id FROM qm_fact_fts WHERE qm_fact_fts MATCH ? LIMIT ?')
+        .all(match, limit) as { id: string }[]
+      return rows.map((row) => String(row.id))
+    })
+  }
+
+  close(): void {}
+}
 export class SqliteMemory extends MemoryService {
   private readonly collection
   private readonly synapses
@@ -138,6 +200,7 @@ export class SqliteMemory extends MemoryService {
   private readonly working = new Map<string, { ids: string[]; at: number }>()
   private readonly limit: number
   private readonly minConfidence: number
+  private readonly fts: FactFts | null
 
   constructor(ctx: Context, config: MemoryConfig = {}) {
     super(ctx)
@@ -153,6 +216,15 @@ export class SqliteMemory extends MemoryService {
     this.messages = store.collection<MessageRow>('qm_message')
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
+    const path = store.filePath?.()
+    this.fts = path && path !== ':memory:' ? new FactFts(path) : null
+    if (this.fts) {
+      void this.collection
+        .find({})
+        .then((rows) => this.fts?.sync(rows))
+        .catch(() => undefined)
+      ctx.effect(() => () => this.fts?.close())
+    }
   }
 
   async summarize(sessionId: string): Promise<string> {
@@ -223,6 +295,9 @@ export class SqliteMemory extends MemoryService {
     }
     if (Object.keys(next).length === 0) return false
     await this.collection.update(id, next)
+    if (typeof next.object === 'string') {
+      this.fts?.upsert(id, row.subject + ' ' + row.predicate + ' ' + next.object)
+    }
     return true
   }
   async ingest(records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }> {
@@ -289,6 +364,7 @@ export class SqliteMemory extends MemoryService {
       const now = Date.now()
       for (const row of live) {
         await this.collection.update(row.id, { valid_to: now })
+        this.fts?.remove(row.id)
       }
 
       let embeddingJson: string | null = null
@@ -330,6 +406,7 @@ export class SqliteMemory extends MemoryService {
       })
       await this.recordEvent(idempotencyKey, inserted.id, now, normalized.origin)
       created.push(inserted.id)
+      this.fts?.upsert(inserted.id, normalized.subject + ' ' + normalized.predicate + ' ' + normalized.object)
     }
     return { created, merged }
   }
@@ -391,6 +468,13 @@ export class SqliteMemory extends MemoryService {
       if (!list.includes(reason)) list.push(reason)
       reasons.set(id, list)
     }
+    for (const id of this.fts?.search(query.text, Math.max(20, (query.limit ?? this.limit) * 4)) ?? []) {
+      const row = byId.get(id)
+      if (!row) continue
+      if ((candidates.get(id) ?? 0) < 0.4) candidates.set(id, 0.4)
+      addReason(id, 'FTS')
+    }
+
     for (const row of visible) {
       const lexical = similarity(row, tokens)
       const vector = row.embedding_json ? cosine(queryVector, parseVector(row.embedding_json)) : 0
@@ -706,6 +790,7 @@ export class SqliteMemory extends MemoryService {
       const row = await this.collection.get(id)
       if (!row || row.valid_to !== null) continue
       await this.collection.update(id, { valid_to: Date.now() })
+      this.fts?.remove(id)
       count += 1
     }
     return count

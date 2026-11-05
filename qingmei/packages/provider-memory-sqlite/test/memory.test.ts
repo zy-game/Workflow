@@ -534,6 +534,7 @@ test('召回解释：fact 带命中信号，便于记忆页解释', async () => 
     assert.ok(result.facts.length > 0)
     assert.ok((result.facts[0]!.reasons ?? []).length > 0)
     assert.ok(result.facts[0]!.reasons!.some((reason) => reason.startsWith('关键词')))
+    assert.ok(result.facts[0]!.reasons!.includes('FTS'))
   } finally {
     await dispose()
   }
