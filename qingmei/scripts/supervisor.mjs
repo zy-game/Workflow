@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { existsSync, lstatSync, readlinkSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
+import { assertPatchScope } from './patch-scope.mjs'
 
 const SKIP_SEGMENTS = new Set(['data', 'node_modules', '.git', 'dist', 'current', 'releases'])
 // current/releases 是版本目录/符号链接，备份时会递归到自身；它们不参与代码回滚
@@ -159,6 +160,12 @@ async function main() {
   const rollbackToDir = args['rollback-to'] ? path.resolve(args['rollback-to']) : null
 
   if (!existsSync(appDir)) throw new Error(`app 目录不存在：${appDir}`)
+  if (process.argv.includes('--auto-patch') || process.env.QM_AUTO_PATCH === '1') {
+    const entries = String(execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' }))
+      .split(/\r?\n/)
+      .filter(Boolean)
+    assertPatchScope(entries)
+  }
 
   const restart = async () => {
     execFileSync('systemctl', ['restart', service], { stdio: 'inherit' })
