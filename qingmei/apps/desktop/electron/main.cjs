@@ -7,7 +7,7 @@
 const { app, BrowserWindow, Notification, ipcMain, Menu, safeStorage, screen, shell, Tray, nativeImage } = require('electron')
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
-const { execFile } = require('node:child_process')
+const { execFile, execFileSync } = require('node:child_process')
 
 
 const here = __dirname
@@ -136,7 +136,31 @@ function createTray() {
   }
 }
 
+function windowsLoginCommand() {
+  const executable = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath
+  if (app.isPackaged) return `"${executable}"`
+  return `"${executable}" "${app.getAppPath()}"`
+}
+
 function applyAutoStart(enabled) {
+  if (process.platform === 'win32') {
+    const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
+    try {
+      if (enabled) {
+        execFileSync('reg', ['add', key, '/v', 'Qingmei', '/t', 'REG_SZ', '/d', windowsLoginCommand(), '/f'], {
+          windowsHide: true,
+        })
+      } else {
+        execFileSync('reg', ['delete', key, '/v', 'Qingmei', '/f'], {
+          windowsHide: true,
+          stdio: 'ignore',
+        })
+      }
+      return
+    } catch (error) {
+      console.error('[qingmei] 注册表开机自启失败，回退 Electron API', error)
+    }
+  }
   try {
     app.setLoginItemSettings({
       openAtLogin: Boolean(enabled),
