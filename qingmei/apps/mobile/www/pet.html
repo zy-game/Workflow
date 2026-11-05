@@ -129,7 +129,45 @@
         background: var(--green);
       }
       .dock button:active { transform: scale(.97); }
-    </style>
+      .sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: grid;
+        align-items: end;
+        background: rgb(18 32 25 / 28%);
+        backdrop-filter: blur(3px);
+      }
+      .sheet[hidden] { display: none; }
+      .sheet-card {
+        background: #fff;
+        border-radius: 24px 24px 0 0;
+        padding: 14px 16px max(18px, env(safe-area-inset-bottom));
+        box-shadow: 0 -18px 50px rgb(20 40 30 / 18%);
+        max-height: 76vh;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .sheet-head { display: flex; align-items: center; justify-content: space-between; font-weight: 700; }
+      .sheet-head button { border: 0; background: transparent; font-size: 22px; color: var(--muted); }
+      .menu-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .menu-list button {
+        border: 1px solid #e4ebe6;
+        background: #f8fbf9;
+        border-radius: 14px;
+        padding: 14px 12px;
+        font: inherit;
+        color: var(--ink);
+        text-align: left;
+      }
+      .chat-messages { overflow: auto; display: flex; flex-direction: column; gap: 8px; min-height: 120px; max-height: 48vh; padding: 4px 0; }
+      .chat-msg { max-width: 82%; padding: 9px 12px; border-radius: 14px; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+      .chat-msg.user { align-self: flex-end; background: var(--green); color: #fff; border-bottom-right-radius: 4px; }
+      .chat-msg.assistant { align-self: flex-start; background: #f0f5f1; color: var(--ink); border-bottom-left-radius: 4px; }
+      .chat-form { display: flex; gap: 8px; }
+      .chat-form input { flex: 1; border: 1px solid #dfe7e2; border-radius: 12px; padding: 11px 12px; font: inherit; background: #fbfdfb; }
+      .chat-form button { border: 0; border-radius: 12px; padding: 0 16px; background: var(--green); color: #fff; font: inherit; font-weight: 600; }    </style>
   </head>
   <body>
     <div class="sky"></div>
@@ -154,6 +192,30 @@
       <button id="overlay" hidden>悬浮桌宠</button>
     </nav>
 
+    <div id="menu" class="sheet" hidden>
+      <div class="sheet-card">
+        <div class="sheet-head"><span>想做什么</span><button type="button" data-close="menu">×</button></div>
+        <div class="menu-list">
+          <button type="button" data-action="pet">摸摸头</button>
+          <button type="button" data-action="chat">聊聊天</button>
+          <button type="button" data-action="overlay">悬浮桌宠</button>
+          <button type="button" data-action="quiet">安静一会</button>
+          <button type="button" data-action="app">完整面板</button>
+          <button type="button" data-action="exit">关闭青梅</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="chat-sheet" class="sheet" hidden>
+      <div class="sheet-card">
+        <div class="sheet-head"><span>和青梅说句话</span><button type="button" data-close="chat-sheet">×</button></div>
+        <div id="chat-messages" class="chat-messages"></div>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-input" autocomplete="off" placeholder="说点什么…" />
+          <button type="submit">发送</button>
+        </form>
+      </div>
+    </div>
     <script src="./config.js"></script>
     <script>
       const base = String(window.__QM_SERVER_URL || '').replace(/\/+$/, '')
@@ -252,6 +314,7 @@
             if (!text) return
             showBubble(text.slice(0, 500))
             notify(text)
+            if (!chatSheet.hidden) appendChat('assistant', text)
           } catch {}
         })
         source.addEventListener('error', () => setOnline(false))
@@ -264,7 +327,7 @@
       })
 
       el.chat.addEventListener('click', () => {
-        location.href = './app/index.html'
+        openChat()
       })
 
       const overlay = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PetOverlay
@@ -309,6 +372,133 @@
         el.hint.textContent = '已安静，不会再弹气泡'
       }
 
+      const menuSheet = document.getElementById('menu')
+      const chatSheet = document.getElementById('chat-sheet')
+      const chatMessages = document.getElementById('chat-messages')
+      const chatForm = document.getElementById('chat-form')
+      const chatInput = document.getElementById('chat-input')
+      let longPressed = false
+      let pressTimer = null
+
+      function openSheet(sheet) {
+        closeSheets()
+        sheet.hidden = false
+      }
+
+      function closeSheets() {
+        menuSheet.hidden = true
+        chatSheet.hidden = true
+      }
+
+      function appendChat(role, text) {
+        if (!text) return
+        const node = document.createElement('div')
+        node.className = 'chat-msg ' + (role === 'user' ? 'user' : 'assistant')
+        node.textContent = text
+        chatMessages.append(node)
+        chatMessages.scrollTop = chatMessages.scrollHeight
+      }
+
+      async function loadChat() {
+        chatMessages.replaceChildren()
+        try {
+          const res = await fetch(base + '/api/v1/messages?conversationId=owner&limit=30', {
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+          })
+          if (!res.ok) return
+          const rows = await res.json()
+          for (const row of Array.isArray(rows) ? rows : []) {
+            appendChat(row.role === 'user' ? 'user' : 'assistant', String(row.text || ''))
+          }
+        } catch {}
+      }
+
+      function openChat() {
+        openSheet(chatSheet)
+        void loadChat()
+        setTimeout(() => chatInput.focus(), 300)
+      }
+
+      document.querySelectorAll('[data-close]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const sheet = document.getElementById(button.dataset.close)
+          if (sheet) sheet.hidden = true
+        })
+      })
+      ;[menuSheet, chatSheet].forEach((sheet) => {
+        sheet.addEventListener('click', (event) => {
+          if (event.target === sheet) sheet.hidden = true
+        })
+      })
+
+      document.querySelectorAll('[data-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const action = button.dataset.action
+          closeSheets()
+          if (action === 'pet') {
+            play(CLICK[Math.floor(Math.random() * CLICK.length)])
+            showBubble(LINES[Math.floor(Math.random() * LINES.length)])
+          } else if (action === 'chat') {
+            openChat()
+          } else if (action === 'overlay') {
+            document.getElementById('overlay').click()
+          } else if (action === 'quiet') {
+            el.quiet.click()
+          } else if (action === 'app') {
+            location.href = './app/index.html'
+          } else if (action === 'exit') {
+            const appPlugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App
+            if (appPlugin) void appPlugin.exitApp()
+          }
+        })
+      })
+
+      chatForm.addEventListener('submit', async (event) => {
+        event.preventDefault()
+        const text = chatInput.value.trim()
+        if (!text) return
+        chatInput.value = ''
+        appendChat('user', text)
+        try {
+          const res = await fetch(base + '/api/v1/messages', {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + token,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ conversationId: 'owner', text }),
+          })
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            appendChat('assistant', '发送失败：' + (body.error || res.status))
+          }
+        } catch (error) {
+          appendChat('assistant', '发送失败：' + (error && error.message ? error.message : '网络错误'))
+        }
+      })
+
+      el.wrap.addEventListener('pointerdown', () => {
+        clearTimeout(pressTimer)
+        pressTimer = setTimeout(() => {
+          longPressed = true
+          openSheet(menuSheet)
+        }, 520)
+      })
+      el.wrap.addEventListener('pointerup', () => clearTimeout(pressTimer))
+      el.wrap.addEventListener('pointercancel', () => clearTimeout(pressTimer))
+      el.wrap.addEventListener('pointermove', (event) => {
+        if (event.buttons === 0) return
+      })
+      el.wrap.addEventListener(
+        'click',
+        (event) => {
+          if (!longPressed) return
+          longPressed = false
+          event.stopImmediatePropagation()
+          event.preventDefault()
+        },
+        true,
+      )
       setOnline(false)
       void latest()
       connect()

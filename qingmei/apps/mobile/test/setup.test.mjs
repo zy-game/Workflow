@@ -30,3 +30,11 @@ test('桌宠主页：气泡、聊天入口与宠物资源', () => {
   assert.match(html, /idle-breath\.webm/)
   assert.ok(existsSync(join(root, 'www', 'pet', 'idle-breath.webm')))
 })
+
+test('桌宠菜单与聊天弹窗', () => {
+  const html = readFileSync(join(root, 'www', 'pet.html'), 'utf8')
+  assert.match(html, /id="menu"/)
+  assert.match(html, /id="chat-sheet"/)
+  assert.match(html, /data-action="chat"/)
+  assert.match(html, /openChat\(\)/)
+})
