@@ -985,6 +985,8 @@ body {
   }
 }
 
+.conversation-history { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.conversation-policy { color: var(--accent); }
 .conversation-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1049,6 +1051,8 @@ body {
   align-self: center;
 }
 
+.review-proposal { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-elev); }
+.review-proposal-prompt { margin: 8px 0; max-height: 160px; overflow: auto; white-space: pre-wrap; font-size: 12px; color: var(--muted); }
 .review-cards {
   display: grid;
   gap: 8px;

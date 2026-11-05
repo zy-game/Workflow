@@ -36,8 +36,16 @@ interface ProposalRow extends Row {
   review_id: string
   month: string
   suggestion: string
+  kind?: string
+  prompt?: string
+  base_hash?: string
   status: string
   created_at: number
+}
+
+interface PersonaLike {
+  current(): { prompt: string; hash: string }
+  apply(input: { prompt: string; note?: string }): Promise<unknown>
 }
 
 interface CardRow extends Row {
@@ -405,14 +413,40 @@ const MAX_TIMEOUT = 2_147_000_000
         const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : null
         await reviews.update(id, { score: Math.round(score), note })
         if (score < minScore) {
-          await proposals.insert({
-            id: uid('prop'),
-            review_id: id,
-            month: row.month,
-            suggestion: `本月自评 ${Math.round(score)}/10，低于 ${minScore}。建议：从报告里挑一件最影响体验的事，下月只改它；必要时调整人格/提示词。`,
-            status: 'proposed',
-            created_at: Date.now(),
-          })
+          const existing = await proposals.find({ where: { review_id: id } })
+          if (!existing.some((proposal) => proposal.status === 'proposed')) {
+            await proposals.insert({
+              id: uid('prop'),
+              review_id: id,
+              month: row.month,
+              kind: 'suggestion',
+              suggestion: `本月自评 ${Math.round(score)}/10，低于 ${minScore}。建议：从报告里挑一件最影响体验的事，下月只改它；必要时调整人格/提示词。`,
+              status: 'proposed',
+              created_at: Date.now(),
+            })
+          }
+          const persona = ctx.reflect.get('persona', false) as PersonaLike | undefined
+          const hasPromptProposal = existing.some(
+            (proposal) => proposal.kind === 'prompt' && proposal.status === 'proposed',
+          )
+          if (persona && !hasPromptProposal) {
+            const current = persona.current()
+            const clause = '\n\n复盘改进：回答先给结论，再给一个可执行下一步；不确定时直接说不确定；少用空泛安慰。'
+            const prompt = current.prompt.includes('复盘改进：')
+              ? current.prompt
+              : `${current.prompt.trim()}${clause}`
+            await proposals.insert({
+              id: uid('prop'),
+              review_id: id,
+              month: row.month,
+              kind: 'prompt',
+              prompt,
+              base_hash: current.hash,
+              suggestion: '低分复盘生成的提示词提案：先结论、再下一步、不空泛。',
+              status: 'proposed',
+              created_at: Date.now(),
+            })
+          }
           await channel
             .send({
               channel: 'web',
@@ -420,7 +454,7 @@ const MAX_TIMEOUT = 2_147_000_000
               blocks: [
                 {
                   type: 'text',
-                  text: `📉 本月自评 ${score}/10（低于 ${minScore}）。建议从报告里挑一件最影响体验的事，下月只改它。`,
+                  text: `📉 本月自评 ${score}/10（低于 ${minScore}）。已生成提示词提案，可在复盘中一键应用。`,
                 },
               ],
             })
@@ -444,6 +478,9 @@ const MAX_TIMEOUT = 2_147_000_000
             reviewId: row.review_id,
             month: row.month,
             suggestion: row.suggestion,
+            kind: row.kind ?? 'suggestion',
+            prompt: row.prompt ?? null,
+            baseHash: row.base_hash ?? null,
             createdAt: new Date(row.created_at),
           }))
         res.status(200).send({ ok: true, items })
@@ -473,6 +510,44 @@ const MAX_TIMEOUT = 2_147_000_000
     }),
   )
 
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/review/proposals/apply',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const row = await proposals.get(id)
+        if (!row || row.status !== 'proposed') {
+          res.status(404).send({ ok: false, error: '没有这条提案' })
+          return
+        }
+        const persona = ctx.reflect.get('persona', false) as PersonaLike | undefined
+        if (!persona) {
+          res.status(409).send({ ok: false, error: '人格服务未启用' })
+          return
+        }
+        if (row.kind !== 'prompt' || !row.prompt) {
+          res.status(400).send({ ok: false, error: '这条提案没有可应用的提示词' })
+          return
+        }
+        const applied = await persona.apply({ prompt: row.prompt, note: `复盘应用 ${row.month}` })
+        await proposals.update(id, { status: 'applied' })
+        await channel
+          .send({
+            channel: 'web',
+            conversationId: 'owner',
+            blocks: [{ type: 'text', text: `✅ 已应用复盘提示词提案（${row.month}）。` }],
+          })
+          .catch(() => undefined)
+        res.status(200).send({ ok: true, persona: applied })
+      },
+    }),
+  )
   function toReview(row: ReviewRow) {
     return {
       id: row.id,

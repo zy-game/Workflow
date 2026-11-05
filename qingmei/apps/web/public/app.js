@@ -20,6 +20,9 @@ const ENDPOINTS = {
   conversations: './api/v1/conversations',
   conversationsConfigure: './api/v1/conversations/configure',
   conversationSuggestions: './api/v1/conversations/suggestions',
+  conversationPreview: './api/v1/conversations/preview',
+  conversationHistory: './api/v1/conversations/history',
+  conversationRollback: './api/v1/conversations/rollback',
   conversationSuggestionAccept: './api/v1/conversations/suggestions/accept',
   conversationSuggestionDismiss: './api/v1/conversations/suggestions/dismiss',
   incidents: './api/v1/incidents',
@@ -38,6 +41,9 @@ const ENDPOINTS = {
   reviewCardScore: './api/v1/review/cards/score',
   reviewRun: './api/v1/review/run',
   reviewScore: './api/v1/review/score',
+  reviewProposals: './api/v1/review/proposals',
+  reviewProposalApply: './api/v1/review/proposals/apply',
+  reviewProposalDismiss: './api/v1/review/proposals/dismiss',
 }
 if (window.Capacitor) {
   const overlay = window.Capacitor.Plugins.PetOverlay
@@ -143,6 +149,7 @@ const el = {
   reviewScoreInput: document.getElementById('review-score-input'),
   reviewScoreSubmit: document.getElementById('review-score-submit'),
   reviewCards: document.getElementById('review-cards'),
+  reviewProposals: document.getElementById('review-proposals'),
   auditToggle: document.getElementById('audit-toggle'),
   audit: document.getElementById('audit'),
   auditList: document.getElementById('audit-list'),
@@ -174,6 +181,7 @@ const el = {
 
 const state = {
   token: '',
+  cookieAuth: false,
   events: null,
   reconnectAttempt: 0,
   reconnectTimer: 0,
@@ -249,6 +257,10 @@ function readUrlToken() {
   return token
 }
 
+function hasAuth() {
+  return Boolean(state.token || state.cookieAuth)
+}
+
 function withAuth(headers = {}) {
   const next = { ...headers }
   if (state.token) next.Authorization = `Bearer ${state.token}`
@@ -318,7 +330,7 @@ function closeEvents() {
 }
 
 function connect() {
-  if (!state.token) return
+  if (!hasAuth()) return
   closeEvents()
   const attempt = state.reconnectAttempt
   setStatus('connecting', attempt > 0 ? `重连中（第 ${attempt} 次）…` : '连接中…')
@@ -381,7 +393,7 @@ function connect() {
 }
 
 function scheduleReconnect() {
-  if (!state.token) return
+  if (!hasAuth()) return
   if (state.events) {
     state.events.close()
     state.events = null
@@ -781,7 +793,7 @@ function showSchedulesError(message) {
 }
 
 async function loadSchedules() {
-  if (!state.token || state.schedulesLoading) return
+  if (!hasAuth() || state.schedulesLoading) return
   state.schedulesLoading = true
   showSchedulesError('')
   try {
@@ -878,7 +890,7 @@ const CONVERSATION_TAGS = [
 ]
 
 async function loadConversations() {
-  if (!state.token || state.conversationsLoading) return
+  if (!hasAuth() || state.conversationsLoading) return
   state.conversationsLoading = true
   try {
     const [res, suggestions] = await Promise.all([
@@ -922,7 +934,7 @@ function renderConversationSuggestions(body) {
 }
 
 async function decideSuggestion(id, accept) {
-  if (!state.token) return
+  if (!hasAuth()) return
   try {
     const res = await fetch(
       accept ? ENDPOINTS.conversationSuggestionAccept : ENDPOINTS.conversationSuggestionDismiss,
@@ -935,6 +947,7 @@ async function decideSuggestion(id, accept) {
     const detail = await res.json().catch(() => null)
     if (!res.ok) throw new Error(detail?.error || `操作失败（HTTP ${res.status}）`)
     showConversationsError('')
+    if (policy) policy.textContent = formatConversationPolicy(detail.policy)
     await loadConversations()
     setStatus('online', accept ? '已采纳标签建议' : '已忽略标签建议')
   } catch (error) {
@@ -968,21 +981,132 @@ function renderConversations(body) {
       wrapper.append(input, document.createTextNode(label))
       tags.append(wrapper)
     }
+    tags.addEventListener('change', () => void previewConversationPolicy(tags, policy))
+    const policy = document.createElement('p')
+    policy.className = 'autonomy-budget conversation-policy'
+    policy.textContent = '正在读取策略…'
+    const history = document.createElement('ul')
+    history.className = 'conversation-history'
+    history.hidden = true
+
+    const tools = document.createElement('div')
+    tools.className = 'autonomy-tools'
     const save = document.createElement('button')
     save.className = 'ghost'
     save.type = 'button'
     save.textContent = '保存标签'
     save.addEventListener('click', () => {
-      const selected = Array.from(tags.querySelectorAll('input:checked')).map((input) => input.value)
-      void saveConversationTags(item, selected)
+      const selected = selectedTags(tags)
+      if (selected.length === 0) {
+        showConversationsError('至少选一个标签')
+        return
+      }
+      void saveConversationTags(item, selected, policy)
     })
-    row.append(title, meta, tags, save)
+    const historyButton = document.createElement('button')
+    historyButton.className = 'ghost'
+    historyButton.type = 'button'
+    historyButton.textContent = '历史'
+    historyButton.addEventListener('click', async () => {
+      if (!history.hidden) {
+        history.hidden = true
+        return
+      }
+      historyButton.disabled = true
+      try {
+        const result = await fetchConversationHistory(item)
+        history.replaceChildren()
+        if (result.length === 0) {
+          const empty = document.createElement('li')
+          empty.textContent = '还没有可回滚的历史。'
+          history.append(empty)
+        }
+        for (const snapshot of result) {
+          const line = document.createElement('li')
+          line.textContent = `${new Date(snapshot.at).toLocaleString()} · ${(snapshot.tags || []).join('/')} · ${snapshot.status}`
+          history.append(line)
+        }
+        history.hidden = false
+      } catch (error) {
+        showConversationsError(error.message || '加载历史失败')
+      } finally {
+        historyButton.disabled = false
+      }
+    })
+    const rollback = document.createElement('button')
+    rollback.className = 'ghost'
+    rollback.type = 'button'
+    rollback.textContent = '回滚'
+    rollback.addEventListener('click', async () => {
+      if (!window.confirm(`把「${item.title || item.platformConversationId}」恢复到上一版标签？`)) return
+      rollback.disabled = true
+      try {
+        const res = await fetch(ENDPOINTS.conversationRollback, {
+          method: 'POST',
+          headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+          body: JSON.stringify({ channel: item.channel, conversationId: item.platformConversationId }),
+        })
+        const detail = await res.json().catch(() => null)
+        if (!res.ok) throw new Error(detail?.error || `回滚失败（HTTP ${res.status}）`)
+        showConversationsError('')
+        await loadConversations()
+        setStatus('online', '群策略已回滚')
+      } catch (error) {
+        showConversationsError(error instanceof TypeError ? '无法连接服务' : error.message || '回滚失败')
+      } finally {
+        rollback.disabled = false
+      }
+    })
+    tools.append(save, historyButton, rollback)
+    row.append(title, meta, tags, policy, tools, history)
     el.conversationsList.append(row)
+    void previewConversationPolicy(tags, policy)
   }
 }
 
-async function saveConversationTags(item, tags) {
-  if (!state.token) return
+function selectedTags(container) {
+  return Array.from(container.querySelectorAll('input:checked')).map((input) => input.value)
+}
+
+function formatConversationPolicy(policy) {
+  if (!policy) return '未知策略'
+  const tone = policy.tone === 'formal' ? '正式' : policy.tone === 'neutral' ? '中性' : '随意'
+  const forbidden = Array.isArray(policy.forbiddenTopics) && policy.forbiddenTopics.length > 0
+    ? ` · 禁止 ${policy.forbiddenTopics.join('/')}`
+    : ''
+  return `预览：≤${policy.maxChars} 字 · ${tone} · ${policy.proactive ? '可主动' : '不主动'}${forbidden}`
+}
+
+async function previewConversationPolicy(container, target) {
+  const tags = selectedTags(container)
+  if (tags.length === 0) {
+    target.textContent = '至少选一个标签才能预览策略'
+    return
+  }
+  try {
+    const res = await fetch(`${ENDPOINTS.conversationPreview}?tags=${encodeURIComponent(tags.join(','))}`, {
+      headers: withAuth({ Accept: 'application/json' }),
+    })
+    if (!res.ok) throw new Error('策略预览失败')
+    const detail = await res.json()
+    target.textContent = formatConversationPolicy(detail.policy)
+  } catch {
+    target.textContent = '策略预览暂不可用'
+  }
+}
+
+async function fetchConversationHistory(item) {
+  const query = new URLSearchParams({ channel: item.channel, conversationId: item.platformConversationId })
+  const res = await fetch(`${ENDPOINTS.conversationHistory}?${query}`, {
+    headers: withAuth({ Accept: 'application/json' }),
+  })
+  const detail = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(detail?.error || `加载历史失败（HTTP ${res.status}）`)
+  return Array.isArray(detail?.items) ? detail.items : []
+}
+
+async function saveConversationTags(item, tags, policy) {
+  if (!hasAuth()) return
   if (tags.length === 0) {
     showConversationsError('至少选一个标签')
     return
@@ -996,6 +1120,7 @@ async function saveConversationTags(item, tags) {
     const detail = await res.json().catch(() => null)
     if (!res.ok) throw new Error(detail?.error || `保存失败（HTTP ${res.status}）`)
     showConversationsError('')
+    if (policy) policy.textContent = formatConversationPolicy(detail.policy)
     await loadConversations()
     setStatus('online', `已保存群标签：${tags.join('/')}`)
   } catch (error) {
@@ -1032,7 +1157,7 @@ const INCIDENT_STATUS_TEXT = {
 }
 
 async function loadIncidents() {
-  if (!state.token || state.incidentsLoading) return
+  if (!hasAuth() || state.incidentsLoading) return
   state.incidentsLoading = true
   try {
     const res = await fetch(ENDPOINTS.incidents, { headers: withAuth({ Accept: 'application/json' }) })
@@ -1094,7 +1219,7 @@ function renderIncidents(body) {
 }
 
 async function incidentAction(endpoint, id, okText) {
-  if (!state.token) return
+  if (!hasAuth()) return
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -1179,7 +1304,7 @@ async function scoreReviewCard(id, score, button) {
   button.textContent = `${score >= 6 ? '👍 好' : '👎 差'}（已评 ${score}）`
 }
 async function loadReview() {
-  if (!state.token || state.reviewLoading) return
+  if (!hasAuth() || state.reviewLoading) return
   state.reviewLoading = true
   try {
     const res = await fetch(ENDPOINTS.review, { headers: withAuth({ Accept: 'application/json' }) })
@@ -1187,6 +1312,7 @@ async function loadReview() {
     const body = await res.json()
     renderReview(Array.isArray(body.items) ? body.items[0] : null)
     await loadReviewCards()
+    await loadReviewProposals()
     showReviewError('')
   } catch (error) {
     showReviewError(error instanceof TypeError ? '无法连接服务' : error.message || '加载复盘失败')
@@ -1195,6 +1321,85 @@ async function loadReview() {
   }
 }
 
+async function loadReviewProposals() {
+  if (!el.reviewProposals) return
+  el.reviewProposals.replaceChildren()
+  try {
+    const res = await fetch(ENDPOINTS.reviewProposals, { headers: withAuth({ Accept: 'application/json' }) })
+    if (!res.ok) return
+    const body = await res.json()
+    const items = Array.isArray(body?.items) ? body.items : []
+    for (const item of items) {
+      const card = document.createElement('div')
+      card.className = 'review-proposal'
+      const title = document.createElement('p')
+      title.className = 'autonomy-budget'
+      title.textContent = `${item.kind === 'prompt' ? '提示词提案' : '改进建议'} · ${item.month}`
+      const text = document.createElement('p')
+      text.textContent = item.suggestion
+      card.append(title, text)
+      if (item.kind === 'prompt' && item.prompt) {
+        const prompt = document.createElement('pre')
+        prompt.className = 'review-proposal-prompt'
+        prompt.textContent = item.prompt
+        card.append(prompt)
+      }
+      const tools = document.createElement('div')
+      tools.className = 'autonomy-tools'
+      if (item.kind === 'prompt') {
+        const apply = document.createElement('button')
+        apply.className = 'ghost'
+        apply.type = 'button'
+        apply.textContent = '应用提示词'
+        apply.addEventListener('click', async () => {
+          if (!window.confirm('应用后人格提示词会立即更新，可在人格历史里回滚。继续？')) return
+          apply.disabled = true
+          try {
+            const response = await fetch(ENDPOINTS.reviewProposalApply, {
+              method: 'POST',
+              headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+              body: JSON.stringify({ id: item.id }),
+            })
+            const detail = await response.json().catch(() => null)
+            if (!response.ok) throw new Error(detail?.error || `应用失败（HTTP ${response.status}）`)
+            setStatus('online', '已应用复盘提示词提案')
+            await loadReviewProposals()
+          } catch (error) {
+            showReviewError(error.message || '应用失败')
+          } finally {
+            apply.disabled = false
+          }
+        })
+        tools.append(apply)
+      }
+      const dismiss = document.createElement('button')
+      dismiss.className = 'ghost'
+      dismiss.type = 'button'
+      dismiss.textContent = '忽略'
+      dismiss.addEventListener('click', async () => {
+        dismiss.disabled = true
+        try {
+          const response = await fetch(ENDPOINTS.reviewProposalDismiss, {
+            method: 'POST',
+            headers: withAuth({ 'Content-Type': 'application/json', Accept: 'application/json' }),
+            body: JSON.stringify({ id: item.id }),
+          })
+          if (!response.ok) throw new Error('忽略失败')
+          await loadReviewProposals()
+        } catch (error) {
+          showReviewError(error.message || '忽略失败')
+        } finally {
+          dismiss.disabled = false
+        }
+      })
+      tools.append(dismiss)
+      card.append(tools)
+      el.reviewProposals.append(card)
+    }
+  } catch {
+    // 提案加载失败不阻塞复盘正文
+  }
+}
 function renderReview(item) {
   if (!el.reviewMarkdown) return
   state.reviewId = item?.id ?? null
@@ -1204,7 +1409,7 @@ function renderReview(item) {
 }
 
 async function runReview() {
-  if (!state.token) return
+  if (!hasAuth()) return
   try {
     const res = await fetch(ENDPOINTS.reviewRun, {
       method: 'POST',
@@ -1221,7 +1426,7 @@ async function runReview() {
 }
 
 async function submitReviewScore() {
-  if (!state.token || !state.reviewId) return
+  if (!hasAuth() || !state.reviewId) return
   const score = Number(el.reviewScoreInput?.value)
   if (!Number.isFinite(score) || score < 1 || score > 10) {
     showReviewError('评分需在 1..10')
@@ -1348,7 +1553,7 @@ function renderTasks(items) {
 }
 
 async function loadTasks() {
-  if (!state.token || state.tasksLoading) return
+  if (!hasAuth() || state.tasksLoading) return
   state.tasksLoading = true
   showTasksError('')
   try {
@@ -1474,7 +1679,7 @@ function renderAutonomy(body) {
 }
 
 async function loadAutonomy() {
-  if (!state.token || state.autonomyLoading) return
+  if (!hasAuth() || state.autonomyLoading) return
   state.autonomyLoading = true
   showAutonomyError('')
   try {
@@ -1493,7 +1698,7 @@ async function loadAutonomy() {
 }
 
 async function setAutonomyTrust(payload) {
-  if (!state.token) return
+  if (!hasAuth()) return
   try {
     const res = await fetch(ENDPOINTS.autonomyTrust, {
       method: 'POST',
@@ -1512,7 +1717,7 @@ async function setAutonomyTrust(payload) {
 }
 
 async function complainAutonomy() {
-  if (!state.token) return
+  if (!hasAuth()) return
   try {
     const res = await fetch(ENDPOINTS.autonomyComplaint, {
       method: 'POST',
@@ -1533,7 +1738,7 @@ async function complainAutonomy() {
 }
 
 async function rollbackAutonomy() {
-  if (!state.token) return
+  if (!hasAuth()) return
   try {
     const res = await fetch(ENDPOINTS.autonomyRollback, {
       method: 'POST',
@@ -1553,7 +1758,7 @@ async function rollbackAutonomy() {
 }
 
 async function flushAutonomyDigest() {
-  if (!state.token || el.autonomyDigest?.disabled) return
+  if (!hasAuth() || el.autonomyDigest?.disabled) return
   try {
     const res = await fetch(ENDPOINTS.autonomyDigest, {
       method: 'POST',
@@ -1571,7 +1776,7 @@ async function flushAutonomyDigest() {
 }
 
 async function tickAutonomy() {
-  if (!state.token) return
+  if (!hasAuth()) return
   if (el.autonomyTick) {
     el.autonomyTick.disabled = true
     el.autonomyTick.textContent = '巡视中…'
@@ -1644,7 +1849,7 @@ function renderApprovals(items) {
 }
 
 async function loadApprovals() {
-  if (!state.token) return
+  if (!hasAuth()) return
   try {
     const res = await fetch(`${ENDPOINTS.approvals}?status=pending`, {
       headers: withAuth({ Accept: 'application/json' }),
@@ -1686,7 +1891,7 @@ async function decideApproval(id, allow, allowButton, denyButton) {
 // ── 发送 ─────────────────────────────────────
 
 function updateSendButton() {
-  if (!state.token) {
+  if (!hasAuth()) {
     el.send.disabled = true
     el.send.textContent = '发送'
     return
@@ -1722,7 +1927,7 @@ async function describeFailure(res) {
 }
 
 async function sendMessage(text) {
-  if (!state.token) {
+  if (!hasAuth()) {
     appendNotice('缺少访问令牌，无法发送')
     return
   }
@@ -1782,7 +1987,7 @@ function resizeInput() {
 }
 
 async function loadMemories() {
-  if (!state.token || state.memoriesLoading) return
+  if (!hasAuth() || state.memoriesLoading) return
   state.memoriesLoading = true
   if (el.memoriesError) {
     el.memoriesError.hidden = true
@@ -1885,7 +2090,7 @@ function setMemoriesOpen(open) {
   }
 }
 async function loadAudit() {
-  if (!state.token || state.auditLoading) return
+  if (!hasAuth() || state.auditLoading) return
   state.auditLoading = true
   if (el.auditError) {
     el.auditError.hidden = true
@@ -1986,7 +2191,7 @@ async function loadPersonaHistory() {
 }
 
 async function loadSettings() {
-  if (!state.token || state.settingsLoading) return
+  if (!hasAuth() || state.settingsLoading) return
   state.settingsLoading = true
   showSettingsError('')
   try {
@@ -2191,6 +2396,8 @@ async function loginWithPassword() {
     if (body && typeof body.token === 'string') {
       state.token = body.token
       saveToken(body.token)
+    } else {
+      state.cookieAuth = true
     }
     return true
   } catch {
@@ -2201,9 +2408,10 @@ async function loginWithPassword() {
 
 async function start() {
   state.token = readUrlToken() || loadToken()
-  if (!state.token) {
+  if (!hasAuth()) {
     try {
       const session = await fetch(API_BASE + '/api/v1/session', { credentials: 'include' })
+      if (session.ok) state.cookieAuth = true
       if (!session.ok) {
         const loggedIn = await loginWithPassword()
         if (!loggedIn) {
@@ -2218,7 +2426,7 @@ async function start() {
       return
     }
   }
-  if (!state.token && window.Capacitor?.Plugins?.SecureStore) {
+  if (!hasAuth() && window.Capacitor?.Plugins?.SecureStore) {
     try {
       const result = await window.Capacitor.Plugins.SecureStore.get({ key: 'qm.token' })
       if (result && result.value) {
@@ -2229,7 +2437,7 @@ async function start() {
       // 继续走页面内输入
     }
   }
-  if (!state.token) {
+  if (!hasAuth()) {
     const entered = window.prompt('请输入访问令牌（QM_TOKEN）')
     if (entered && entered.trim()) {
       state.token = entered.trim()
@@ -2239,7 +2447,7 @@ async function start() {
   bindEvents()
   resizeInput()
 
-  if (!state.token) {
+  if (!hasAuth()) {
     setStatus('offline', '缺少令牌')
     el.input.disabled = true
     el.input.placeholder = '缺少令牌，刷新页面重新输入'
