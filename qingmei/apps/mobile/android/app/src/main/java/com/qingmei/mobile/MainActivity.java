@@ -25,14 +25,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        toggleOverlay(hasFocus ? "hide" : "show");
-    }
-
-    private void toggleOverlay(String action) {
-        if (!PetOverlayService.running) return;
-        Intent intent = new Intent(this, PetOverlayService.class);
-        intent.setAction(action);
-        startService(intent);
+        if (hasFocus && PetOverlayService.running) {
+            stopService(new Intent(this, PetOverlayService.class));
+        }
     }
 
     private void routeIntent(Intent intent) {

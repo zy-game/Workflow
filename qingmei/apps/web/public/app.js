@@ -39,18 +39,30 @@ const ENDPOINTS = {
   reviewRun: './api/v1/review/run',
   reviewScore: './api/v1/review/score',
 }
-if (window.Capacitor && !document.querySelector('#pet-back')) {
-  const back = document.createElement('a')
-  back.id = 'pet-back'
-  back.href = '../pet.html'
-  back.textContent = '← 桌宠'
-  back.setAttribute('aria-label', '返回桌宠')
-  document.body.append(back)
-  const appPlugin = window.Capacitor.Plugins.App
-  if (appPlugin) {
-    void appPlugin.addListener('backButton', () => {
-      location.href = '../pet.html'
+if (window.Capacitor) {
+  const overlay = window.Capacitor.Plugins.PetOverlay
+  const actions = document.querySelector('.topbar-actions')
+  if (overlay && actions && !document.querySelector('#overlay-toggle')) {
+    const button = document.createElement('button')
+    button.id = 'overlay-toggle'
+    button.type = 'button'
+    button.className = 'ghost'
+    button.textContent = '悬浮'
+    button.title = '把桌宠悬浮到桌面'
+    button.addEventListener('click', async () => {
+      try {
+        const check = await overlay.canDraw()
+        if (!check || !check.granted) {
+          await overlay.openSettings()
+          appendNotice('打开「显示在其他应用上层」后再点悬浮。')
+          return
+        }
+        await overlay.start()
+      } catch (error) {
+        appendNotice(error && error.message ? error.message : '悬浮启动失败')
+      }
     })
+    actions.prepend(button)
   }
 }
 

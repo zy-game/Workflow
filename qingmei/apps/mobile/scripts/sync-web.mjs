@@ -10,10 +10,7 @@ const target = path.join(root, 'www', 'app')
 await rm(target, { recursive: true, force: true })
 await mkdir(target, { recursive: true })
 await cp(source, target, { recursive: true })
-
-const petTarget = path.join(root, 'www', 'pet')
-await rm(petTarget, { recursive: true, force: true })
-await cp(path.resolve(root, '..', 'desktop', 'renderer', 'assets', 'webm'), petTarget, { recursive: true })
+await rm(path.join(root, 'www', 'pet'), { recursive: true, force: true })
 
 const config = `window.__QM_SERVER_URL = 'https://139.155.78.241:8710'
 window.__QM_PERSIST_TOKEN__ = false

@@ -42,6 +42,7 @@ public class PetOverlayPlugin extends Plugin {
             return;
         }
         ContextCompat.startForegroundService(getContext(), new Intent(getContext(), PetOverlayService.class));
+        if (getActivity() != null) getActivity().moveTaskToBack(true);
         call.resolve();
     }
 
