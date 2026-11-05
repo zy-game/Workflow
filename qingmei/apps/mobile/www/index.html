@@ -178,6 +178,20 @@
           const token = typeof login.token === 'string' ? login.token : ''
           if (!token) throw new Error('登录响应缺少 token')
           await saveToken(token)
+          const deviceId = localStorage.getItem('qm.device') || 'android-' + Math.random().toString(36).slice(2, 10)
+          localStorage.setItem('qm.device', deviceId)
+          void fetch(server + '/api/v1/devices/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify({
+              id: deviceId,
+              name: 'Android',
+              platform: 'android',
+              arch: 'arm64',
+              harnesses: [{ kind: 'chat', acp: false, mcp: false }],
+              workerVersion: 'mobile-0.1.0',
+            }),
+          }).catch(() => undefined)
           const notifications = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications
           if (notifications) void notifications.requestPermissions().catch(() => undefined)
           location.replace('./app/index.html')

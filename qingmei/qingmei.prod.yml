@@ -80,6 +80,9 @@
       end: '08:00'
 
 # 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
+- name: '@qingmei/qm-device'
+  config: {}
+
 - name: '@qingmei/qm-thread'
 
 - name: '@qingmei/qm-approval'

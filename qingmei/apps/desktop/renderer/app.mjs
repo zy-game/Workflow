@@ -9,6 +9,7 @@ import {
 const desktop = window.qmDesktop ?? {
   getSettings: async () => ({ serverUrl: 'http://127.0.0.1:7410', token: '' }),
   saveSettings: async () => ({ ok: true }),
+  setupAgent: async () => ({ ok: false, error: '仅桌面端支持' }),
   popupMenu: async () => undefined,
   quit: () => undefined,
   onOpenSettings: () => undefined,
@@ -55,6 +56,11 @@ const el = {
   settingsForm: document.getElementById('settings-form'),
   settingsServer: document.getElementById('settings-server'),
   settingsToken: document.getElementById('settings-token'),
+  settingsMcpToken: document.getElementById('settings-mcp-token'),
+  settingsSetupZcode: document.getElementById('settings-setup-zcode'),
+  settingsSetupDsh: document.getElementById('settings-setup-dsh'),
+  settingsSetupWorker: document.getElementById('settings-setup-worker'),
+  settingsAgentStatus: document.getElementById('settings-agent-status'),
   settingsError: document.getElementById('settings-error'),
   settingsTest: document.getElementById('settings-test'),
   settingsCancel: document.getElementById('settings-cancel'),
@@ -63,6 +69,7 @@ const el = {
 const settings = {
   serverUrl: '',
   token: '',
+  mcpToken: '',
   scale: 1,
   sound: true,
   autoStart: false,
@@ -259,6 +266,7 @@ async function init() {
   const saved = await desktop.getSettings()
   settings.serverUrl = saved.serverUrl || 'http://127.0.0.1:7410'
   settings.token = saved.token || ''
+  settings.mcpToken = saved.mcpToken || ''
   settings.scale = Number(saved.scale) || 1
   settings.fontScale = Number(saved.fontScale) || 1
   settings.sound = saved.sound !== false
@@ -273,6 +281,7 @@ async function init() {
     else el.onboarding.hidden = false
   } else {
     connect()
+    void registerDevice()
   }
 }
 
@@ -756,9 +765,31 @@ async function sendMessage(event) {
   }
 }
 
+async function registerDevice() {
+  if (!settings.serverUrl || !settings.token) return
+  const deviceId = localStorage.getItem('qm.device') || `desktop-${Math.random().toString(36).slice(2, 10)}`
+  localStorage.setItem('qm.device', deviceId)
+  try {
+    await fetch(`${settings.serverUrl.replace(/\/+$/, '')}/api/v1/devices/register`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${settings.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: deviceId,
+        name: navigator.userAgent.includes('Windows') ? 'Windows 桌面' : '桌面',
+        platform: navigator.userAgent.includes('Windows') ? 'windows' : 'unknown',
+        arch: navigator.userAgent.includes('x64') ? 'x64' : '',
+        harnesses: [{ kind: 'desktop', acp: false, mcp: false }],
+        workerVersion: 'desktop-0.1.0',
+      }),
+    })
+  } catch {
+    // 设备上报失败不阻塞聊天
+  }
+}
 function openSettings() {
   el.settingsServer.value = settings.serverUrl
   el.settingsToken.value = settings.token
+  if (el.settingsMcpToken) el.settingsMcpToken.value = settings.mcpToken
   el.settingsScale.value = String(settings.scale)
   if (el.settingsFontScale) el.settingsFontScale.value = String(settings.fontScale)
   if (el.settingsFontScaleValue) el.settingsFontScaleValue.textContent = Math.round(settings.fontScale * 100) + '%'
@@ -792,10 +823,23 @@ async function testConnection() {
   }
 }
 
+async function setupAgent(target) {
+  if (!el.settingsAgentStatus) return
+  el.settingsAgentStatus.hidden = false
+  el.settingsAgentStatus.textContent = '正在写入配置…'
+  try {
+    const result = await desktop.setupAgent(target)
+    el.settingsAgentStatus.textContent = result?.ok ? result.message : result?.error || '配置失败'
+  } catch (error) {
+    el.settingsAgentStatus.textContent = error instanceof Error ? error.message : '配置失败'
+  }
+}
 async function saveSettings(event) {
   event.preventDefault()
   const base = normalizeServerUrl(el.settingsServer.value)
   const token = el.settingsToken.value.trim()
+  const mcpToken = (el.settingsMcpToken?.value ?? '').trim()
+  const hideOnFullscreen = el.settingsHideFullscreen.checked
   if (!base) {
     showError('服务器地址必须是 http(s) URL')
     return
@@ -811,9 +855,10 @@ async function saveSettings(event) {
     const autoStart = el.settingsAutostart.checked
     const notifyHidden = el.settingsNotifyHidden.checked
     const character = el.settingsCharacter.value === 'orb' ? 'orb' : 'qingmei'
-    await desktop.saveSettings({ serverUrl: base, token, scale, fontScale, sound, autoStart, notifyHidden, hideOnFullscreen, character })
+    await desktop.saveSettings({ serverUrl: base, token, mcpToken, scale, fontScale, sound, autoStart, notifyHidden, hideOnFullscreen, character })
     settings.serverUrl = base
     settings.token = token
+    settings.mcpToken = mcpToken
     settings.scale = scale
     settings.fontScale = fontScale
     settings.sound = sound
@@ -825,6 +870,7 @@ async function saveSettings(event) {
     applyFontScale()
     localStorage.setItem('qm.onboarded', '1')
     historyLoaded = false
+    void registerDevice()
     closeSettings()
     connect()
   } catch (error) {
@@ -971,6 +1017,9 @@ function bind() {
     void sendImage(file)
   })
   el.settingsForm.addEventListener('submit', (event) => void saveSettings(event))
+  el.settingsSetupZcode?.addEventListener('click', () => void setupAgent('zcode'))
+  el.settingsSetupDsh?.addEventListener('click', () => void setupAgent('dsh'))
+  el.settingsSetupWorker?.addEventListener('click', () => void setupAgent('worker'))
   el.onboardingStart.addEventListener('click', () => {
     el.onboarding.hidden = true
     localStorage.setItem('qm.onboarded', '1')

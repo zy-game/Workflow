@@ -12,6 +12,7 @@
     "serve": "node apps/server/src/cli.ts serve",
     "doctor": "node apps/server/src/cli.ts doctor",
     "smoke": "node scripts/smoke.mjs",
+    "worker": "node scripts/harness-worker.mjs",
     "test": "node --test --test-reporter=spec"
   },
   "pnpm": {
