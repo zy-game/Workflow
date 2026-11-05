@@ -251,10 +251,20 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
     createdAt: new Date(row.created_at),
   }
 }
-function schedule(): ReturnType<typeof setTimeout> {
+const MAX_TIMEOUT = 2_147_000_000
+  function schedule(): ReturnType<typeof setTimeout> {
     const now = new Date()
     const next = new Date(now.getFullYear(), now.getMonth(), dayOfMonth, hour, 0, 0, 0)
     if (next.getTime() <= now.getTime()) next.setMonth(next.getMonth() + 1)
+    const delay = next.getTime() - now.getTime()
+    // 月度间隔可能超过 Node 的 2^31ms 上限；分段等待，避免 TimeoutOverflowWarning 刷日志
+    if (delay > MAX_TIMEOUT) {
+      const timer = setTimeout(() => {
+        current = schedule()
+      }, MAX_TIMEOUT)
+      timer.unref?.()
+      return timer
+    }
     const timer = setTimeout(() => {
       void generate()
         .catch(() => undefined)
@@ -262,7 +272,7 @@ function schedule(): ReturnType<typeof setTimeout> {
           const replaced = schedule()
           current = replaced
         })
-    }, next.getTime() - now.getTime())
+    }, delay)
     timer.unref?.()
     return timer
   }
