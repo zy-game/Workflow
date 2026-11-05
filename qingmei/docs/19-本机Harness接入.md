@@ -73,7 +73,13 @@ ZCode 用户配置：`~/.zcode/cli/config.json` 的 `mcp.servers`。
 DSH 用户配置：项目根 `.agents/mcp.json`，并安装 MCP 客户端插件：`dsh plugin --profile web add dsh-mcp-autoload`（`acp` profile 同理）。
 桌面设置页的“配置 ZCode / 配置 DSH”按钮会写入这两份配置，并同步 `~/.agents/mcp.json`。
 
-## 5. 边界
+## 5. 已验证
+
+- Windows worker + 本机 `dsh --profile acp`：任务 `done:OK`。
+- DSH `acp` profile + `dsh-mcp-autoload` + 项目 `.agents/mcp.json`：模型实际调用 `mcp__qingmei__memory_recall`，结果 `MCP_OK`。
+- ZCode 只有 GUI，没有可用 ACP bridge；`zcode-acp` 在 Windows 安装失败，因此 ZCode 当前只接 MCP，不接 worker ACP。
+
+## 6. 边界
 
 - ACP 是客户端 spawn 子进程的 stdio 协议，**不能连接已经运行的 GUI ZCode/DSH 窗口**。
 - 要控制本机 GUI 客户端，必须有本机 worker/插件；当前 worker 支持 CLI/ACP bridge，不支持屏幕控制。
