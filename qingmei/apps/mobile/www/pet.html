@@ -151,6 +151,7 @@
     <nav class="dock">
       <button id="chat" class="primary">聊聊天</button>
       <button id="quiet">安静一会</button>
+      <button id="overlay" hidden>悬浮桌宠</button>
     </nav>
 
     <script src="./config.js"></script>
@@ -265,6 +266,37 @@
       el.chat.addEventListener('click', () => {
         location.href = './app/index.html'
       })
+
+      const overlay = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PetOverlay
+      const overlayButton = document.getElementById('overlay')
+      if (overlay && overlayButton) {
+        overlayButton.hidden = false
+        void overlay.isRunning().then((result) => {
+          if (result && result.running) overlayButton.textContent = '停止悬浮'
+        })
+        overlayButton.addEventListener('click', async () => {
+          try {
+            const running = await overlay.isRunning()
+            if (running && running.running) {
+              await overlay.stop()
+              overlayButton.textContent = '悬浮桌宠'
+              showBubble('已停止悬浮')
+              return
+            }
+            const check = await overlay.canDraw()
+            if (!check || !check.granted) {
+              await overlay.openSettings()
+              showBubble('打开「显示在其他应用上层」后再点悬浮')
+              return
+            }
+            await overlay.start()
+            overlayButton.textContent = '停止悬浮'
+            showBubble('已开启悬浮，回桌面看看')
+          } catch (error) {
+            showBubble(error && error.message ? error.message : '悬浮启动失败')
+          }
+        })
+      }
 
       el.quiet.addEventListener('click', () => {
         quiet = !quiet
