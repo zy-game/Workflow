@@ -44,7 +44,7 @@
   config:
     baseURL: { $env: 'QM_LLM_BASE_URL' }
     apiKey: { $env: 'QM_LLM_KEY' }
-    model: 'deepseek-v4-flash'
+    model: 'deepseek-chat'
     maxTokens: 800
 
 # 对话车道：内嵌 DSH。密钥通过 env 传给子进程，不写进配置。
