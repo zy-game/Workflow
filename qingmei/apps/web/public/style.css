@@ -1138,3 +1138,18 @@ body {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+#pet-back {
+  position: fixed;
+  left: 14px;
+  top: max(12px, env(safe-area-inset-top));
+  z-index: 50;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgb(22 26 35 / 82%);
+  border: 1px solid var(--line);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  backdrop-filter: blur(10px);
+}

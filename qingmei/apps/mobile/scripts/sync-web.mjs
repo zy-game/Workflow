@@ -11,6 +11,10 @@ await rm(target, { recursive: true, force: true })
 await mkdir(target, { recursive: true })
 await cp(source, target, { recursive: true })
 
+const petTarget = path.join(root, 'www', 'pet')
+await rm(petTarget, { recursive: true, force: true })
+await cp(path.resolve(root, '..', 'desktop', 'renderer', 'assets', 'webm'), petTarget, { recursive: true })
+
 const config = `window.__QM_SERVER_URL = (localStorage.getItem('qm.server') || '').replace(/\\/+$/, '')
 window.__QM_PERSIST_TOKEN__ = false
 `

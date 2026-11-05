@@ -39,6 +39,21 @@ const ENDPOINTS = {
   reviewRun: './api/v1/review/run',
   reviewScore: './api/v1/review/score',
 }
+if (window.Capacitor && !document.querySelector('#pet-back')) {
+  const back = document.createElement('a')
+  back.id = 'pet-back'
+  back.href = '../pet.html'
+  back.textContent = '← 桌宠'
+  back.setAttribute('aria-label', '返回桌宠')
+  document.body.append(back)
+  const appPlugin = window.Capacitor.Plugins.App
+  if (appPlugin) {
+    void appPlugin.addListener('backButton', () => {
+      location.href = '../pet.html'
+    })
+  }
+}
+
 const API_BASE = String(window.__QM_SERVER_URL || '').replace(/\/+$/, '')
 if (API_BASE) {
   for (const key of Object.keys(ENDPOINTS)) {

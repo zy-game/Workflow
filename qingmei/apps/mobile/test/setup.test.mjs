@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 
@@ -12,7 +12,7 @@ test('移动端首屏：服务器/令牌表单与本地保存键', () => {
   assert.match(html, /id="token"/)
   assert.match(html, /qm\.server/)
   assert.match(html, /qm\.token/)
-  assert.match(html, /\.\/app\/index\.html/)
+  assert.match(html, /\.\/pet\.html/)
 })
 
 test('移动端配置：固定 API 基址，令牌不写 localStorage', () => {
@@ -20,4 +20,13 @@ test('移动端配置：固定 API 基址，令牌不写 localStorage', () => {
   const config = readFileSync(join(root, 'www', 'app', 'config.js'), 'utf8')
   assert.match(config, /__QM_SERVER_URL/)
   assert.match(config, /__QM_PERSIST_TOKEN__\s*=\s*false/)
+})
+
+test('桌宠主页：气泡、聊天入口与宠物资源', () => {
+  execFileSync(process.execPath, [join(root, 'scripts', 'sync-web.mjs')], { cwd: root })
+  const html = readFileSync(join(root, 'www', 'pet.html'), 'utf8')
+  assert.match(html, /id="bubble"/)
+  assert.match(html, /id="chat"/)
+  assert.match(html, /idle-breath\.webm/)
+  assert.ok(existsSync(join(root, 'www', 'pet', 'idle-breath.webm')))
 })

@@ -153,7 +153,7 @@
           const token = await readToken()
           if (token) {
             sessionStorage.setItem(TOKEN_KEY, token)
-            location.replace('./app/index.html')
+            location.replace('./pet.html')
             return
           }
         }
@@ -183,7 +183,7 @@
           await saveToken(token)
           const notifications = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications
           if (notifications) void notifications.requestPermissions().catch(() => undefined)
-          location.replace('./app/index.html')
+          location.replace('./pet.html')
         } catch (error) {
           errorEl.textContent = error && error.message ? error.message : '连接失败'
         } finally {
@@ -192,7 +192,6 @@
       })
 
       void boot()
-</script>
     </script>
   </body>
 </html>

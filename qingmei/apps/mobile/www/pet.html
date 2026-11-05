@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#e9f4ed" />
+    <title>青梅</title>
+    <style>
+      :root {
+        --paper: #edf6ef;
+        --ink: #22302b;
+        --muted: #6f7d76;
+        --green: #3f7f63;
+        --card: rgb(255 255 255 / 82%);
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        overflow: hidden;
+        color: var(--ink);
+        font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background:
+          radial-gradient(circle at 50% 18%, rgb(255 255 255 / 85%), transparent 42%),
+          linear-gradient(165deg, #edf6ef, #dceee4 55%, #cfe5d9);
+      }
+      .sky {
+        position: fixed;
+        inset: 0;
+        background-image: radial-gradient(rgb(63 127 99 / 10%) 1px, transparent 1px);
+        background-size: 18px 18px;
+        opacity: .45;
+        pointer-events: none;
+      }
+      header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: max(14px, env(safe-area-inset-top)) 20px 0;
+        z-index: 4;
+      }
+      .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: .04em; }
+      .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: #b7c2ba; }
+      .brand .dot.online { background: #3fb950; box-shadow: 0 0 0 4px rgb(63 185 80 / 14%); }
+      .status { font-size: 12px; color: var(--muted); }
+      .stage {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 8vh 20px 120px;
+      }
+      .pet-wrap { position: relative; display: grid; place-items: center; width: min(78vw, 360px); }
+      .glow {
+        position: absolute;
+        width: 70%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgb(255 255 255 / 78%), transparent 68%);
+        filter: blur(10px);
+      }
+      video {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 10;
+        object-fit: contain;
+        background: transparent;
+        filter: drop-shadow(0 22px 24px rgb(24 44 34 / 20%));
+      }
+      .bubble {
+        position: fixed;
+        left: 50%;
+        bottom: calc(30vh + 90px);
+        transform: translateX(-50%);
+        width: min(86vw, 380px);
+        padding: 12px 16px;
+        border-radius: 18px 18px 18px 6px;
+        background: var(--card);
+        border: 1px solid rgb(255 255 255 / 80%);
+        box-shadow: 0 12px 34px rgb(32 60 46 / 14%);
+        backdrop-filter: blur(12px);
+        font-size: 14px;
+        max-height: 24vh;
+        overflow: auto;
+        white-space: pre-wrap;
+        z-index: 3;
+      }
+      .bubble[hidden] { display: none; }
+      .hint {
+        position: fixed;
+        left: 50%;
+        bottom: calc(30vh + 48px);
+        transform: translateX(-50%);
+        color: var(--muted);
+        font-size: 12px;
+        z-index: 2;
+        white-space: nowrap;
+      }
+      .dock {
+        position: fixed;
+        left: 50%;
+        bottom: max(22px, env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        display: flex;
+        gap: 10px;
+        padding: 8px;
+        border-radius: 999px;
+        background: rgb(255 255 255 / 72%);
+        border: 1px solid rgb(255 255 255 / 80%);
+        box-shadow: 0 10px 28px rgb(32 60 46 / 12%);
+        backdrop-filter: blur(14px);
+        z-index: 5;
+      }
+      .dock button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 18px;
+        font: inherit;
+        font-weight: 600;
+        color: var(--ink);
+        background: transparent;
+      }
+      .dock button.primary {
+        color: #fff;
+        background: var(--green);
+      }
+      .dock button:active { transform: scale(.97); }
+    </style>
+  </head>
+  <body>
+    <div class="sky"></div>
+    <header>
+      <div class="brand"><span class="dot" id="dot"></span>青梅</div>
+      <div class="status" id="status">连接中…</div>
+    </header>
+
+    <main class="stage">
+      <div class="pet-wrap" id="pet-wrap">
+        <div class="glow"></div>
+        <video id="pet" autoplay loop muted playsinline preload="auto" src="./pet/idle-breath.webm"></video>
+      </div>
+    </main>
+
+    <div class="bubble" id="bubble" hidden></div>
+    <div class="hint" id="hint">点点我</div>
+
+    <nav class="dock">
+      <button id="chat" class="primary">聊聊天</button>
+      <button id="quiet">安静一会</button>
+    </nav>
+
+    <script src="./config.js"></script>
+    <script>
+      const base = String(window.__QM_SERVER_URL || '').replace(/\/+$/, '')
+      const token = sessionStorage.getItem('qm.token') || localStorage.getItem('qm.token') || ''
+      if (!base || !token) location.replace('./index.html')
+
+      const el = {
+        dot: document.getElementById('dot'),
+        status: document.getElementById('status'),
+        bubble: document.getElementById('bubble'),
+        hint: document.getElementById('hint'),
+        pet: document.getElementById('pet'),
+        wrap: document.getElementById('pet-wrap'),
+        chat: document.getElementById('chat'),
+        quiet: document.getElementById('quiet'),
+      }
+      const LINES = ['在呢。', '摸摸头～', '今天也慢慢来。', '我在这儿陪你。', '要不要聊两句？']
+      const IDLE = './pet/idle-breath.webm'
+      const CLICK = ['./pet/click-wave.webm', './pet/click-happy.webm', './pet/click-tickle.webm']
+      let bubbleTimer = null
+      let current = IDLE
+      let quiet = localStorage.getItem('qm.pet.quiet') === '1'
+
+      function setOnline(online) {
+        el.dot.classList.toggle('online', online)
+        el.status.textContent = online ? '在线' : '离线'
+      }
+
+      function showBubble(text) {
+        if (!text) return
+        el.bubble.textContent = text
+        el.bubble.hidden = false
+        clearTimeout(bubbleTimer)
+        bubbleTimer = setTimeout(() => {
+          el.bubble.hidden = true
+        }, 12000)
+      }
+
+      function play(src) {
+        if (current === src) {
+          el.pet.currentTime = 0
+          void el.pet.play()
+          return
+        }
+        current = src
+        el.pet.src = src
+        void el.pet.play().catch(() => undefined)
+      }
+
+      function notify(text) {
+        const plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications
+        if (!plugin || !document.hidden || quiet) return
+        void plugin
+          .schedule({
+            notifications: [
+              { id: Math.floor(Date.now() % 2147483647), title: '青梅', body: String(text).slice(0, 120) },
+            ],
+          })
+          .catch(() => undefined)
+      }
+
+      function textOfBlocks(blocks) {
+        if (!Array.isArray(blocks)) return ''
+        return blocks
+          .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
+          .map((block) => block.text)
+          .join('\n')
+          .trim()
+      }
+
+      async function latest() {
+        try {
+          const res = await fetch(base + '/api/v1/messages?conversationId=owner&limit=1', {
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+          })
+          if (!res.ok) {
+            setOnline(false)
+            return
+          }
+          setOnline(true)
+          const rows = await res.json()
+          const text = Array.isArray(rows) && rows[0] ? String(rows[0].text || '') : ''
+          if (text) showBubble(text.slice(0, 500))
+        } catch {
+          setOnline(false)
+        }
+      }
+
+      function connect() {
+        const source = new EventSource(base + '/api/v1/events?token=' + encodeURIComponent(token))
+        source.addEventListener('open', () => setOnline(true))
+        source.addEventListener('assistant', (event) => {
+          try {
+            const payload = JSON.parse(event.data)
+            const text = textOfBlocks(payload.blocks) || String(payload.text || '')
+            if (!text) return
+            showBubble(text.slice(0, 500))
+            notify(text)
+          } catch {}
+        })
+        source.addEventListener('error', () => setOnline(false))
+      }
+
+      el.pet.addEventListener('ended', () => play(IDLE))
+      el.wrap.addEventListener('click', () => {
+        play(CLICK[Math.floor(Math.random() * CLICK.length)])
+        if (!quiet) showBubble(LINES[Math.floor(Math.random() * LINES.length)])
+      })
+
+      el.chat.addEventListener('click', () => {
+        location.href = './app/index.html'
+      })
+
+      el.quiet.addEventListener('click', () => {
+        quiet = !quiet
+        localStorage.setItem('qm.pet.quiet', quiet ? '1' : '0')
+        el.quiet.textContent = quiet ? '取消安静' : '安静一会'
+        el.hint.textContent = quiet ? '已安静，不会再弹气泡' : '点点我'
+      })
+      if (quiet) {
+        el.quiet.textContent = '取消安静'
+        el.hint.textContent = '已安静，不会再弹气泡'
+      }
+
+      setOnline(false)
+      void latest()
+      connect()
+    </script>
+  </body>
+</html>

@@ -4,7 +4,7 @@ Capacitor Android 壳，内置青梅 Web UI，不依赖手机浏览器。
 
 ## 结构
 
-- `www/index.html`：首次连接页（服务器地址 + `QM_TOKEN`，本地校验后保存）
+- `www/index.html`：首次连接页（服务器地址 + `QM_TOKEN`，本地校验后保存）`n- `www/pet.html`：桌宠主页（全屏宠物、气泡、在线状态、聊聊天/安静一会）
 - `www/app/`：由 `scripts/sync-web.mjs` 从 `apps/web/public` 复制，构建产物不提交
 - `android/`：Capacitor 生成的 Android 工程
 - `capacitor.config.json`：`appId=com.qingmei.mobile`，`webDir=www`
@@ -38,7 +38,7 @@ Gradle wrapper 默认指向腾讯镜像；离线时可把 `distributionUrl` 改�
 
 1. 安装 APK，打开青梅
 2. 填服务器地址（生产 `https://139.155.78.241:8710`）和 `QM_TOKEN`
-3. 连接成功后进入聊天；令牌写入 Android Keystore 加密存储（EncryptedSharedPreferences），下次直接进入
+3. 连接成功后进入桌宠主页；令牌写入 Android Keystore 加密存储（EncryptedSharedPreferences），下次直接进入`n4. 点「聊聊天」进入完整聊天/任务/审批页；返回键或「← 桌宠」回到桌宠
 4. 需要换服务器时清除应用数据，或在连接页点“清除已保存的连接”
 
 ## 已验证（2026-11-05）
