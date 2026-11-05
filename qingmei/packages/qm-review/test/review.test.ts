@@ -200,3 +200,28 @@ test('逐条评分卡：月报生成后抽样成卡，可逐条打分', async ()
     await h.dispose()
   }
 })
+
+test('复盘提醒可暂停，手动评分不受影响', async () => {
+  const h = await setup()
+  try {
+    const before = await h.call({ method: 'GET', path: '/api/v1/review/pause', query: {}, headers: {} })
+    assert.equal(before.status, 200)
+    assert.equal((before.body as { pausedUntil: Date | null }).pausedUntil, null)
+
+    const paused = await h.call({
+      method: 'POST',
+      path: '/api/v1/review/pause',
+      query: {},
+      headers: {},
+      body: { hours: 2 },
+    })
+    assert.equal(paused.status, 200)
+    const until = (paused.body as { pausedUntil: string }).pausedUntil
+    assert.ok(new Date(until).getTime() > Date.now())
+
+    const after = await h.call({ method: 'GET', path: '/api/v1/review/pause', query: {}, headers: {} })
+    assert.ok((after.body as { pausedUntil: string }).pausedUntil)
+  } finally {
+    await h.dispose()
+  }
+})

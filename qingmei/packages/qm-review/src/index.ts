@@ -59,6 +59,10 @@ interface ReviewRow extends Row {
   note: string | null
 }
 
+interface ReviewStateRow extends Row {
+  paused_until: number
+}
+
 interface TurnRow extends Row {
   status: string
   latency_ms: number | null
@@ -104,6 +108,11 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
   const messages = store.collection<{ id: string; role: string; text: string; created_at: number }>('qm_message')
   const tasks = store.collection<TaskRow>('qm_task_run')
   const incidents = store.collection<IncidentRow>('qm_incident')
+  const reviewState = store.collection<ReviewStateRow>('qm_review_state')
+  async function isPaused(): Promise<boolean> {
+    const row = await reviewState.get('state')
+    return (row?.paused_until ?? 0) > Date.now()
+  }
   const dayOfMonth = Math.min(28, Math.max(1, Math.round(Number(config.dayOfMonth ?? 1))))
   const hour = Math.min(23, Math.max(0, Math.round(Number(config.hour ?? 9))))
   const minScore = Math.min(10, Math.max(1, Math.round(Number(config.minScore ?? 6))))
@@ -266,12 +275,24 @@ const MAX_TIMEOUT = 2_147_000_000
       return timer
     }
     const timer = setTimeout(() => {
-      void generate()
-        .catch(() => undefined)
-        .finally(() => {
-          const replaced = schedule()
-          current = replaced
+      void isPaused()
+        .then((paused) => {
+          if (paused) {
+            const check = setTimeout(() => {
+              current = schedule()
+            }, 6 * 60 * 60 * 1000)
+            check.unref?.()
+            current = check
+            return
+          }
+          return generate()
+            .catch(() => undefined)
+            .finally(() => {
+              const replaced = schedule()
+              current = replaced
+            })
         })
+        .catch(() => undefined)
     }, delay)
     timer.unref?.()
     return timer
@@ -290,6 +311,32 @@ const MAX_TIMEOUT = 2_147_000_000
     }),
   )
 
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/review/pause',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const row = await reviewState.get('state')
+        res.status(200).send({ ok: true, pausedUntil: row?.paused_until ? new Date(row.paused_until) : null })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/review/pause',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const hours = Math.min(720, Math.max(1, Math.round(Number(body.hours ?? 24))))
+        const until = Date.now() + hours * 60 * 60 * 1000
+        const existing = await reviewState.get('state')
+        if (existing) await reviewState.update('state', { paused_until: until })
+        else await reviewState.insert({ id: 'state', paused_until: until })
+        res.status(200).send({ ok: true, pausedUntil: new Date(until) })
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'GET',
