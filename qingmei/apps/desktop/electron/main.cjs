@@ -144,7 +144,7 @@ function windowsLoginCommand() {
 
 function setupUpdates() {
   if (!app.isPackaged) return
-  const feed = process.env.QM_UPDATE_URL
+  const feed = process.env.QM_UPDATE_URL || 'https://139.155.78.241:8710/updates'
   if (!feed) return
   try {
     const { autoUpdater } = require('electron-updater')
