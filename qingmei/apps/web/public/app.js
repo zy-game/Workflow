@@ -453,6 +453,22 @@ function handleChunk(payload) {
   if (stick) el.messages.scrollTop = el.messages.scrollHeight
 }
 
+function notifyMobile(text) {
+  const plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications
+  if (!plugin || !document.hidden || !text) return
+  void plugin
+    .schedule({
+      notifications: [
+        {
+          id: Math.floor(Date.now() % 2147483647),
+          title: '青梅',
+          body: text.slice(0, 120),
+        },
+      ],
+    })
+    .catch(() => undefined)
+}
+
 function handleAssistant(payload) {
   const text = textOf(payload)
   const stick = isNearBottom()
@@ -462,6 +478,7 @@ function handleAssistant(payload) {
   turn.body.textContent = finalText
   turn.node.classList.remove('is-streaming')
   addQuickReplies(turn.node, finalText)
+  notifyMobile(finalText)
   state.current = null
   if (stick) el.messages.scrollTop = el.messages.scrollHeight
   // 回合结束后刷新日程面板：用户可能刚在对话里加了提醒

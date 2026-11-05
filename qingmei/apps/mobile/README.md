@@ -38,11 +38,11 @@ Gradle wrapper 默认指向腾讯镜像；离线时可把 `distributionUrl` 改�
 
 1. 安装 APK，打开青梅
 2. 填服务器地址（生产 `https://139.155.78.241:8710`）和 `QM_TOKEN`
-3. 连接成功后进入聊天；令牌写入应用本地存储，下次直接进入
+3. 连接成功后进入聊天；令牌写入 Android Keystore 加密存储（EncryptedSharedPreferences），下次直接进入
 4. 需要换服务器时清除应用数据，或在连接页点“清除已保存的连接”
 
 ## 已知边界
 
-- 目前是 Web UI 的移动壳，聊天/任务/审批/审计都能用；没有原生推送
+- 目前是 Web UI 的移动壳，聊天/任务/审批/审计都能用；后台收到回复时用本地通知提示（需授权）
 - Android 后台 WebView 被系统冻结时，SSE 会断开，回到前台自动重连
 - 没有正式签名，debug APK 仅供个人安装；release 需要自己的 keystore

@@ -15,9 +15,9 @@ test('移动端首屏：服务器/令牌表单与本地保存键', () => {
   assert.match(html, /\.\/app\/index\.html/)
 })
 
-test('移动端配置：固定 API 基址并持久化令牌', () => {
+test('移动端配置：固定 API 基址，令牌不写 localStorage', () => {
   execFileSync(process.execPath, [join(root, 'scripts', 'sync-web.mjs')], { cwd: root })
   const config = readFileSync(join(root, 'www', 'app', 'config.js'), 'utf8')
   assert.match(config, /__QM_SERVER_URL/)
-  assert.match(config, /__QM_PERSIST_TOKEN__\s*=\s*true/)
+  assert.match(config, /__QM_PERSIST_TOKEN__\s*=\s*false/)
 })

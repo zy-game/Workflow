@@ -91,7 +91,7 @@
       </form>
 
       <button class="reset" id="reset" type="button">清除已保存的连接</button>
-      <div class="hint">令牌只保存在本机应用数据里，不上传。</div>
+      <div class="hint">令牌用 Android Keystore 加密保存在本机，不上传。</div>
     </main>
 
     <script>
@@ -101,6 +101,7 @@
       const errorEl = document.getElementById('error')
       const form = document.getElementById('form')
       const submit = document.getElementById('submit')
+      const secure = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SecureStore
 
       function normalize(value) {
         const text = String(value || '').trim().replace(/\/+$/, '')
@@ -108,18 +109,60 @@
         return text
       }
 
-      const savedServer = localStorage.getItem(SERVER_KEY) || ''
-      const savedToken = localStorage.getItem(TOKEN_KEY) || ''
-      if (!reset && savedServer && savedToken) {
-        location.replace('./app/index.html')
-      } else {
+      async function readToken() {
+        if (secure) {
+          try {
+            const result = await secure.get({ key: TOKEN_KEY })
+            if (result && result.value) return result.value
+          } catch {
+            // 系统密钥库不可用时回退到会话存储
+          }
+        }
+        return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || ''
+      }
+
+      async function saveToken(token) {
+        if (secure) {
+          try {
+            await secure.set({ key: TOKEN_KEY, value: token })
+            localStorage.removeItem(TOKEN_KEY)
+          } catch {
+            localStorage.setItem(TOKEN_KEY, token)
+          }
+        } else {
+          localStorage.setItem(TOKEN_KEY, token)
+        }
+        sessionStorage.setItem(TOKEN_KEY, token)
+      }
+
+      async function removeToken() {
+        if (secure) {
+          try {
+            await secure.remove({ key: TOKEN_KEY })
+          } catch {
+            // 忽略
+          }
+        }
+        localStorage.removeItem(TOKEN_KEY)
+        sessionStorage.removeItem(TOKEN_KEY)
+      }
+
+      async function boot() {
+        const savedServer = localStorage.getItem(SERVER_KEY) || ''
+        if (!reset && savedServer) {
+          const token = await readToken()
+          if (token) {
+            sessionStorage.setItem(TOKEN_KEY, token)
+            location.replace('./app/index.html')
+            return
+          }
+        }
         document.getElementById('server').value = savedServer
       }
 
       document.getElementById('reset').addEventListener('click', () => {
         localStorage.removeItem(SERVER_KEY)
-        localStorage.removeItem(TOKEN_KEY)
-        sessionStorage.removeItem(TOKEN_KEY)
+        void removeToken()
         errorEl.textContent = ''
       })
 
@@ -137,8 +180,9 @@
           if (res.status === 401) throw new Error('令牌不对')
           if (!res.ok) throw new Error('服务器返回 ' + res.status)
           localStorage.setItem(SERVER_KEY, server)
-          localStorage.setItem(TOKEN_KEY, token)
-          sessionStorage.setItem(TOKEN_KEY, token)
+          await saveToken(token)
+          const notifications = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications
+          if (notifications) void notifications.requestPermissions().catch(() => undefined)
           location.replace('./app/index.html')
         } catch (error) {
           errorEl.textContent = error && error.message ? error.message : '连接失败'
@@ -146,6 +190,9 @@
           submit.disabled = false
         }
       })
+
+      void boot()
+</script>
     </script>
   </body>
 </html>
