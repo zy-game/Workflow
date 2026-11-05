@@ -19,7 +19,8 @@ import { existsSync, lstatSync, readlinkSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
-const SKIP_SEGMENTS = new Set(['data', 'node_modules', '.git', 'dist'])
+const SKIP_SEGMENTS = new Set(['data', 'node_modules', '.git', 'dist', 'current', 'releases'])
+// current/releases 是版本目录/符号链接，备份时会递归到自身；它们不参与代码回滚
 
 export async function copyTree(from, to, { skip = SKIP_SEGMENTS } = {}) {
   await rm(to, { recursive: true, force: true })

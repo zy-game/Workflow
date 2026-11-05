@@ -164,6 +164,7 @@
     port: 7410
     token: { $env: 'QM_TOKEN' }
     adminUser: 'admin'
+    adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     webRoot: '/opt/qingmei/current/apps/web/public'
 
 
