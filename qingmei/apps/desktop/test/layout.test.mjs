@@ -39,3 +39,11 @@ test('更新源：环境变量优先，否则生产默认', () => {
   assert.equal(layout.updateFeed({ QM_UPDATE_URL: 'https://example.test/updates/' }), 'https://example.test/updates/')
   assert.equal(layout.updateFeed({}), 'https://139.155.78.241:8710/updates')
 })
+
+test('自启命令：打包版只带 exe，开发版带 app 路径', () => {
+  assert.equal(layout.loginCommand({ executable: 'C:/Qingmei.exe', packaged: true }), '"C:/Qingmei.exe"')
+  assert.equal(
+    layout.loginCommand({ executable: 'C:/electron.exe', appPath: 'C:/app', packaged: false }),
+    '"C:/electron.exe" "C:/app"',
+  )
+})

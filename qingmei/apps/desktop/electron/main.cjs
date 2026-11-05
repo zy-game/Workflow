@@ -8,7 +8,7 @@ const { app, BrowserWindow, Notification, ipcMain, Menu, safeStorage, screen, sh
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
 const { execFile, execFileSync } = require('node:child_process')
-const { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed } = require('./layout.cjs')
+const { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed, loginCommand } = require('./layout.cjs')
 
 
 const here = __dirname
@@ -139,8 +139,7 @@ function createTray() {
 
 function windowsLoginCommand() {
   const executable = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath
-  if (app.isPackaged) return `"${executable}"`
-  return `"${executable}" "${app.getAppPath()}"`
+  return loginCommand({ executable, appPath: app.getAppPath(), packaged: app.isPackaged })
 }
 
 function setupUpdates() {

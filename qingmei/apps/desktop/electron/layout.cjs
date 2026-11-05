@@ -56,9 +56,14 @@ function clampToDisplays(bounds, displays) {
   }
 }
 
+function loginCommand({ executable, appPath = '', packaged = false }) {
+  if (!executable) throw new Error('executable 不能为空')
+  return packaged ? `"${executable}"` : `"${executable}" "${appPath}"`
+}
+
 function updateFeed(env = process.env, fallback = 'https://139.155.78.241:8710/updates') {
   const value = String(env?.QM_UPDATE_URL ?? '').trim()
   return value || fallback
 }
 
-module.exports = { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed }
+module.exports = { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed, loginCommand }
