@@ -74,7 +74,7 @@
       .bubble {
         position: fixed;
         left: 50%;
-        bottom: calc(30vh + 90px);
+        bottom: calc(50% + 260px);
         transform: translateX(-50%);
         width: min(86vw, 380px);
         padding: 12px 16px;
@@ -106,8 +106,10 @@
         bottom: max(22px, env(safe-area-inset-bottom));
         transform: translateX(-50%);
         display: flex;
-        gap: 10px;
+        gap: 8px;
         padding: 8px;
+        width: min(92vw, 420px);
+        justify-content: center;
         border-radius: 999px;
         background: rgb(255 255 255 / 72%);
         border: 1px solid rgb(255 255 255 / 80%);
@@ -118,9 +120,13 @@
       .dock button {
         border: 0;
         border-radius: 999px;
-        padding: 10px 18px;
+        padding: 10px 12px;
         font: inherit;
         font-weight: 600;
+        white-space: nowrap;
+        flex: 1 1 0;
+        min-width: 0;
+        font-size: 14px;
         color: var(--ink);
         background: transparent;
       }
@@ -249,9 +255,7 @@
         el.bubble.textContent = text
         el.bubble.hidden = false
         clearTimeout(bubbleTimer)
-        bubbleTimer = setTimeout(() => {
-          el.bubble.hidden = true
-        }, 12000)
+        // 保留最新一条，直到新消息或手动安静
       }
 
       function play(src) {
@@ -499,6 +503,8 @@
         },
         true,
       )
+      window.openChatFromOverlay = () => openChat()
+
       setOnline(false)
       void latest()
       connect()
