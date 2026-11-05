@@ -6,11 +6,12 @@ import { join } from 'node:path'
 
 const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
 
-test('移动端首屏：服务器/令牌表单与本地保存键', () => {
+test('移动端首屏：固定服务器地址与 admin 登录', () => {
   const html = readFileSync(join(root, 'www', 'index.html'), 'utf8')
-  assert.match(html, /id="server"/)
+  assert.match(html, /139\.155\.78\.241:8710/)
+  assert.match(html, /id="user"/)
   assert.match(html, /id="token"/)
-  assert.match(html, /qm\.server/)
+  assert.doesNotMatch(html, /id="server"/)
   assert.match(html, /qm\.token/)
   assert.match(html, /\.\/pet\.html/)
 })

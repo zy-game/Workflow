@@ -71,7 +71,7 @@
       button:disabled { opacity: .6; }
       .error { margin-top: 12px; color: #b34a3a; font-size: 13px; text-align: center; min-height: 18px; }
       .reset { display: block; margin: 14px auto 0; border: 0; background: none; color: var(--muted); font-size: 12px; width: auto; }
-      .hint { font-size: 12px; color: var(--muted); text-align: center; margin-top: 14px; }
+      .hint { font-size: 12px; color: var(--muted); text-align: center; margin-top: 14px; }`n      .server-note { text-align: center; color: var(--muted); font-size: 12px; margin-bottom: 10px; }
     </style>
   </head>
   <body>
@@ -81,9 +81,7 @@
       <p>手机和服务器在同一个网关下</p>
 
       <form id="form">
-        <label for="server">服务器地址</label>
-        <input id="server" type="url" inputmode="url" autocomplete="url" spellcheck="false"
-          placeholder="https://139.155.78.241:8710" required />
+        <div class="server-note">服务器：139.155.78.241:8710</div>
         <label for="user">管理员账号</label>
         <input id="user" type="text" autocomplete="username" spellcheck="false" value="admin" required />
         <label for="token">密码（或 QM_TOKEN）</label>
@@ -103,13 +101,8 @@
       const errorEl = document.getElementById('error')
       const form = document.getElementById('form')
       const submit = document.getElementById('submit')
+      const server = 'https://139.155.78.241:8710'
       const secure = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SecureStore
-
-      function normalize(value) {
-        const text = String(value || '').trim().replace(/\/+$/, '')
-        if (!/^https?:\/\/\S+$/i.test(text)) throw new Error('地址要以 http:// 或 https:// 开头')
-        return text
-      }
 
       async function readToken() {
         if (secure) {
@@ -150,8 +143,7 @@
       }
 
       async function boot() {
-        const savedServer = localStorage.getItem(SERVER_KEY) || ''
-        if (!reset && savedServer) {
+        if (!reset) {
           const token = await readToken()
           if (token) {
             sessionStorage.setItem(TOKEN_KEY, token)
@@ -159,7 +151,6 @@
             return
           }
         }
-        document.getElementById('server').value = savedServer
       }
 
       document.getElementById('reset').addEventListener('click', () => {
@@ -173,7 +164,6 @@
         errorEl.textContent = ''
         submit.disabled = true
         try {
-          const server = normalize(document.getElementById('server').value)
           const user = document.getElementById('user').value.trim() || 'admin'
           const password = document.getElementById('token').value
           if (!password) throw new Error('密码不能为空')
@@ -187,7 +177,6 @@
           const login = await res.json().catch(() => ({}))
           const token = typeof login.token === 'string' ? login.token : ''
           if (!token) throw new Error('登录响应缺少 token')
-          localStorage.setItem(SERVER_KEY, server)
           await saveToken(token)
           const notifications = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications
           if (notifications) void notifications.requestPermissions().catch(() => undefined)
