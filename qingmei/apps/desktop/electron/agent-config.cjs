@@ -71,6 +71,15 @@ function setupAgent({ target, settings, home = os.homedir(), env = process.env, 
           name: `${hostname} (Windows)`,
           deviceId: `dev-${hostname.replace(/[^a-zA-Z0-9]+/g, '-')}-${Math.random().toString(36).slice(2, 8)}`,
           dshCommand: 'dsh',
+          zcodeAcpCommand: 'zcode-acp-server server',
+          zcodeBin: (() => {
+            const candidate = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs')
+            return existsSync(candidate) ? candidate : ''
+          })(),
+          zcodeNode: (() => {
+            const candidate = process.env.ZCODE_NODE || 'C:\\\\Program Files\\\\nodejs\\\\node.exe'
+            return existsSync(candidate) ? candidate : ''
+          })(),
         },
         null,
         2,

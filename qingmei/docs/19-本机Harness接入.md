@@ -54,7 +54,7 @@ pnpm worker -- `
 
 - 自动检测 `dsh`/`zcode` 命令，注册 `platform=process.platform`。
 - 每 3 秒领取任务；用 `AcpClient` 启动 `dsh --profile acp`。
-- 需要 ZCode ACP 时，把 `--zcode-acp-command` 指向可用的 ACP bridge；
+- 需要 ZCode ACP 时，把 `--zcode-acp-command "zcode-acp-server server"`，并用 `--zcode-bin` 指向 ZCode 的 `zcode.cjs`；
   未验证的 GUI ZCode 不能被 ACP 直接控制。
 - 配置默认保存到 `~/.qingmei/worker.json`。
 - 本机没有 `dsh` CLI 时，worker 会明确报“没有检测到可用的 dsh/zcode”，不会假装执行。`dsh` CLI 还需要 `DEEPSEEK_API_KEY`（或 DSH 已登录的凭据）；worker 从启动环境继承。
@@ -77,7 +77,7 @@ DSH 用户配置：项目根 `.agents/mcp.json`，并安装 MCP 客户端插件�
 
 - Windows worker + 本机 `dsh --profile acp`：任务 `done:OK`。
 - DSH `acp` profile + `dsh-mcp-autoload` + 项目 `.agents/mcp.json`：模型实际调用 `mcp__qingmei__memory_recall`，结果 `MCP_OK`。
-- ZCode 只有 GUI，没有可用 ACP bridge；`zcode-acp` 在 Windows 安装失败，因此 ZCode 当前只接 MCP，不接 worker ACP。
+- ZCode：安装 `zcode-acp-server` 后 worker 可启动 ACP；必须同时配 `ZCODE_BIN`（桌面版 `zcode.cjs`）和 `ZCODE_NODE`（支持 `node:sqlite` 的 Node）。实测已领任务并启动 ZCode 后端；当前 Start Plan 需要桌面验证码，需换 GLM Coding Plan 或桌面登录。
 
 ## 6. 边界
 

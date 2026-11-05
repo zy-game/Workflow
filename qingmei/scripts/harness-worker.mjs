@@ -42,6 +42,8 @@ function loadConfig(args) {
     harness: String(args.harness ?? stored.harness ?? 'dsh'),
     dshCommand: String(args['dsh-command'] ?? stored.dshCommand ?? 'dsh'),
     zcodeAcpCommand: String(args['zcode-acp-command'] ?? stored.zcodeAcpCommand ?? ''),
+    zcodeBin: String(args['zcode-bin'] ?? stored.zcodeBin ?? ''),
+    zcodeNode: String(args['zcode-node'] ?? stored.zcodeNode ?? ''),
     mcpUrl: String(args['mcp-url'] ?? stored.mcpUrl ?? ''),
     mcpToken: String(args['mcp-token'] ?? stored.mcpToken ?? ''),
     workdir: path.resolve(args.workdir ?? stored.workdir ?? path.join(ROOT, 'workspaces')),
@@ -89,7 +91,7 @@ async function runDsh(config, task) {
   const command = task.harness === 'zcode' ? config.zcodeAcpCommand : config.dshCommand
   if (!command) throw new Error(`没有配置 ${task.harness} 的 ACP 命令`)
   const [executable, ...args] = command.split(/\s+/)
-  const cwd = path.join(config.workdir, task.id.replace(/[^a-zA-Z0-9_-]/g, '_'))
+  const cwd = task.harness === 'zcode' ? config.workdir : path.join(config.workdir, task.id.replace(/[^a-zA-Z0-9_-]/g, '_'))
   mkdirSync(cwd, { recursive: true })
   const mcpServers = config.mcpUrl
     ? [{ type: 'http', name: 'qingmei', url: config.mcpUrl, ...(config.mcpToken ? { headers: { Authorization: `Bearer ${config.mcpToken}` } } : {}) }]
@@ -108,6 +110,12 @@ async function runDsh(config, task) {
       }
     },
     shell: process.platform === 'win32',
+    onStderr: (text) => console.error([] ),
+    env: {
+      ...process.env,
+      ...(task.harness === 'zcode' && config.zcodeBin ? { ZCODE_BIN: config.zcodeBin } : {}),
+      ...(task.harness === 'zcode' && config.zcodeNode ? { ZCODE_NODE: config.zcodeNode } : {}),
+    },
     onPermissionRequest: async (event) => {
       const option = event.options?.find((item) => item.kind === 'allow_once' || item.kind === 'allow_always')
       return option?.optionId ?? null
