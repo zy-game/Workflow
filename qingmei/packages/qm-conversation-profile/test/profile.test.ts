@@ -251,3 +251,65 @@ test('标签建议：拒绝后不再出现', async () => {
     await h.dispose()
   }
 })
+
+test('群策略：预览不改配置，历史可回滚上一标签', async () => {
+  const h = await setup()
+  try {
+    const first = await h.call({
+      method: 'POST',
+      path: '/api/v1/conversations/configure',
+      query: {},
+      headers: {},
+      body: { channel: 'feishu', conversationId: 'oc_group', tags: ['work'], title: '测试群' },
+    })
+    assert.equal(first.status, 200)
+
+    const second = await h.call({
+      method: 'POST',
+      path: '/api/v1/conversations/configure',
+      query: {},
+      headers: {},
+      body: { channel: 'feishu', conversationId: 'oc_group', tags: ['casual'], title: '测试群' },
+    })
+    assert.equal(second.status, 200)
+
+    const preview = await h.call({
+      method: 'GET',
+      path: '/api/v1/conversations/preview',
+      query: { tags: 'work,casual' },
+      headers: {},
+    })
+    assert.equal(preview.status, 200)
+    assert.equal((preview.body as { policy: { maxChars: number } }).policy.maxChars, 100)
+
+    const history = await h.call({
+      method: 'GET',
+      path: '/api/v1/conversations/history',
+      query: { channel: 'feishu', conversationId: 'oc_group' },
+      headers: {},
+    })
+    assert.equal(history.status, 200)
+    assert.equal((history.body as { items: unknown[] }).items.length, 1)
+
+    const rolled = await h.call({
+      method: 'POST',
+      path: '/api/v1/conversations/rollback',
+      query: {},
+      headers: {},
+      body: { channel: 'feishu', conversationId: 'oc_group' },
+    })
+    assert.equal(rolled.status, 200)
+    assert.deepEqual((rolled.body as { profile: { tags: string[] } }).profile.tags, ['work'])
+
+    const empty = await h.call({
+      method: 'POST',
+      path: '/api/v1/conversations/rollback',
+      query: {},
+      headers: {},
+      body: { channel: 'feishu', conversationId: 'oc_group' },
+    })
+    assert.equal(empty.status, 404)
+  } finally {
+    await h.dispose()
+  }
+})

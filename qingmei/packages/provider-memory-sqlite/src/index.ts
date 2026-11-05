@@ -385,12 +385,21 @@ export class SqliteMemory extends MemoryService {
 
     // ① 种子：关键词命中；分数 = 相似度 + 激活 + 置信度 + 时效 + 显著度
     const candidates = new Map<string, number>()
+    const reasons = new Map<string, string[]>()
+    const addReason = (id: string, reason: string): void => {
+      const list = reasons.get(id) ?? []
+      if (!list.includes(reason)) list.push(reason)
+      reasons.set(id, list)
+    }
     for (const row of visible) {
       const lexical = similarity(row, tokens)
       const vector = row.embedding_json ? cosine(queryVector, parseVector(row.embedding_json)) : 0
       const score = lexical > 0 ? lexical * 0.7 + vector * 0.3 : vector * 0.35
       if (score <= 0.02) continue
       const deviceBoost = query.device && row.device === query.device ? 0.1 : 0
+      if (lexical > 0) addReason(row.id, '关键词 ' + Math.round(lexical * 100) + '%')
+      if (vector > 0) addReason(row.id, '语义 ' + Math.round(vector * 100) + '%')
+      if (deviceBoost > 0) addReason(row.id, '同设备')
       candidates.set(row.id, scoreOf(row, score + deviceBoost, now))
     }
 
@@ -402,7 +411,10 @@ export class SqliteMemory extends MemoryService {
         const row = byId.get(id)
         if (!row) continue
         const boosted = WORKING_BOOST * decayed * scoreOf(row, 1, now)
-        if (boosted > (candidates.get(id) ?? 0)) candidates.set(id, boosted)
+        if (boosted > (candidates.get(id) ?? 0)) {
+          candidates.set(id, boosted)
+          addReason(id, '工作记忆')
+        }
       }
     }
 
@@ -434,6 +446,7 @@ export class SqliteMemory extends MemoryService {
           const spread = SPREAD * current.activation * edge.weight
           if (spread <= (candidates.get(edge.to) ?? 0)) continue
           candidates.set(edge.to, spread)
+          addReason(edge.to, '关联扩散')
           const depth = current.depth + 1
           if (depth < (bestDepth.get(edge.to) ?? Infinity)) {
             bestDepth.set(edge.to, depth)
@@ -443,11 +456,38 @@ export class SqliteMemory extends MemoryService {
       }
     }
 
-    const scored = [...candidates.entries()]
+    const limit = query.limit ?? this.limit
+    const ranked = [...candidates.entries()]
       .filter(([, score]) => score > MIN_SCORE)
       .sort((a, b) => b[1] - a[1])
-      .slice(0, query.limit ?? this.limit)
-      .map(([id, score]) => ({ row: byId.get(id)!, score }))
+      .map(([id, score]) => {
+        const row = byId.get(id)!
+        const vector = row.embedding_json
+          ? parseVector(row.embedding_json)
+          : localEmbedding(`${row.subject}${row.predicate}${row.object}`)
+        return { row, score, vector }
+      })
+
+    // ③ 多样性重排：分数减去与已选项的最大余弦相似度，避免一次召回全是同义事实
+    const selected: typeof ranked = []
+    while (selected.length < limit && ranked.length > 0) {
+      let bestIndex = 0
+      let bestValue = -Infinity
+      for (let index = 0; index < ranked.length; index += 1) {
+        const item = ranked[index]!
+        let similarityPenalty = 0
+        for (const chosen of selected) {
+          similarityPenalty = Math.max(similarityPenalty, cosine(item.vector, chosen.vector))
+        }
+        const value = item.score - similarityPenalty * 0.15
+        if (value > bestValue) {
+          bestValue = value
+          bestIndex = index
+        }
+      }
+      selected.push(ranked.splice(bestIndex, 1)[0]!)
+    }
+    const scored = selected
 
     // ③ 更新工作记忆：本轮点亮的前 N 个节点留给下一轮
     if (query.sessionId && scored.length > 0) {
@@ -474,6 +514,7 @@ export class SqliteMemory extends MemoryService {
       origin: { kind: row.origin_kind as MemoryRecord['origin']['kind'], id: row.origin_id },
       createdAt: new Date(row.created_at),
       validTo: null,
+      reasons: reasons.get(row.id) ?? [],
     }))
     const text = facts.map((fact) => `- ${fact.subject}${fact.predicate}${fact.object}`).join('\n')
     return { facts, text }

@@ -45,6 +45,14 @@ const LABELS: Record<GroupTag, string> = {
   temp: '临时群',
 }
 
+interface HistoryRow extends Row {
+  profile_id: string
+  tags_json: string
+  title: string
+  status: string
+  at: number
+}
+
 interface StatsRow extends Row {
   channel: string
   platform_conversation_id: string
@@ -82,6 +90,7 @@ class SqliteConversationProfile extends ConversationProfileService {
   private readonly suggestAfter: number
   private readonly stats
   private readonly suggestions
+  private readonly historyRows
   private queue: Promise<unknown> = Promise.resolve()
 
   constructor(ctx: Context, pendingReply: string, channel: ChannelService, suggestAfter: number) {
@@ -94,6 +103,7 @@ class SqliteConversationProfile extends ConversationProfileService {
     this.collection = store.collection<ProfileRow>(COLLECTION)
     this.stats = store.collection<StatsRow>('qm_conversation_stats')
     this.suggestions = store.collection<SuggestionRow>('qm_conversation_suggestion')
+    this.historyRows = store.collection<HistoryRow>('qm_conversation_profile_history')
   }
 
   /** 启动时把已有画像读进缓存，让「未配置」判断不必等异步查询 */
@@ -144,6 +154,18 @@ class SqliteConversationProfile extends ConversationProfileService {
       const existing = await this.collection.get(id)
       const now = Date.now()
       if (existing) {
+        await this.historyRows.insert({
+          id: uid('snap'),
+          profile_id: id,
+          tags_json: existing.tags_json,
+          title: existing.title,
+          status: existing.status,
+          at: now,
+        })
+        const older = (await this.historyRows.find({ where: { profile_id: id } }))
+          .sort((a, b) => b.at - a.at)
+          .slice(20)
+        for (const row of older) await this.historyRows.delete(row.id)
         await this.collection.update(id, {
           tags_json: JSON.stringify(tags),
           status: 'configured',
@@ -177,6 +199,18 @@ class SqliteConversationProfile extends ConversationProfileService {
       const existing = this.cache.get(id)
       const now = Date.now()
       if (existing) {
+        await this.historyRows.insert({
+          id: uid('snap'),
+          profile_id: id,
+          tags_json: existing.tags_json,
+          title: existing.title,
+          status: existing.status,
+          at: now,
+        })
+        const older = (await this.historyRows.find({ where: { profile_id: id } }))
+          .sort((a, b) => b.at - a.at)
+          .slice(20)
+        for (const row of older) await this.historyRows.delete(row.id)
         await this.collection.update(id, { last_active_at: now })
         existing.lastActiveAt = new Date(now)
         return existing
@@ -204,8 +238,8 @@ class SqliteConversationProfile extends ConversationProfileService {
     })
   }
 
-  policy(profile: ConversationProfile): ConversationPolicy {
-    const policies = profile.tags.map((tag) => GROUP_TAG_POLICIES[tag]).filter(Boolean)
+  policyTags(tags: GroupTag[]): ConversationPolicy {
+    const policies = tags.map((tag) => GROUP_TAG_POLICIES[tag]).filter(Boolean)
     if (policies.length === 0) return GROUP_TAG_POLICIES.temp
     return {
       audiences: [],
@@ -218,6 +252,42 @@ class SqliteConversationProfile extends ConversationProfileService {
       proactive: policies.every((policy) => policy.proactive),
       forbiddenTopics: [...new Set(policies.flatMap((policy) => policy.forbiddenTopics))],
     }
+  }
+
+  policy(profile: ConversationProfile): ConversationPolicy {
+    return this.policyTags(profile.tags)
+  }
+
+  async history(profileId: string): Promise<{ at: Date; tags: GroupTag[]; title: string; status: string }[]> {
+    const rows = await this.historyRows.find({ where: { profile_id: profileId } })
+    return rows
+      .sort((a, b) => b.at - a.at)
+      .map((row) => ({
+        at: new Date(row.at),
+        tags: JSON.parse(row.tags_json) as GroupTag[],
+        title: row.title,
+        status: row.status,
+      }))
+  }
+
+  async rollback(profileId: string): Promise<ConversationProfile | null> {
+    return this.serialize(async () => {
+      const rows = (await this.historyRows.find({ where: { profile_id: profileId } })).sort((a, b) => b.at - a.at)
+      const snapshot = rows[0]
+      if (!snapshot) return null
+      await this.collection.update(profileId, {
+        tags_json: snapshot.tags_json,
+        title: snapshot.title,
+        status: snapshot.status,
+        last_active_at: Date.now(),
+      })
+      await this.historyRows.delete(snapshot.id)
+      const row = await this.collection.get(profileId)
+      if (!row) return null
+      const profile = toProfile(row)
+      this.cache.set(profileId, profile)
+      return profile
+    })
   }
 
   note(profile: ConversationProfile): string {
@@ -529,6 +599,63 @@ export function apply(ctx: Context, config: ConversationProfileConfig = {}): voi
         } catch (error) {
           res.status(400).send({ ok: false, error: error instanceof Error ? error.message : String(error) })
         }
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/conversations/preview',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const raw = typeof req.query.tags === 'string' ? req.query.tags : ''
+        const tags = raw
+          .split(',')
+          .map((tag) => tag.trim())
+          .filter((tag): tag is GroupTag => TAGS.includes(tag as GroupTag))
+        res.status(200).send({ ok: true, tags, policy: profiles.policyTags(tags) })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/conversations/history',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const channelId = typeof req.query.channel === 'string' ? req.query.channel.trim() : ''
+        const conversationId =
+          typeof req.query.conversationId === 'string' ? req.query.conversationId.trim() : ''
+        if (!channelId || !conversationId) {
+          res.status(400).send({ ok: false, error: 'channel 和 conversationId 必填' })
+          return
+        }
+        res.status(200).send({
+          ok: true,
+          items: await profiles.history(keyOf(channelId as ChannelId, conversationId)),
+        })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/conversations/rollback',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const channelId = typeof body.channel === 'string' ? body.channel.trim() : ''
+        const conversationId = typeof body.conversationId === 'string' ? body.conversationId.trim() : ''
+        if (!channelId || !conversationId) {
+          res.status(400).send({ ok: false, error: 'channel 和 conversationId 必填' })
+          return
+        }
+        const profile = await profiles.rollback(keyOf(channelId as ChannelId, conversationId))
+        if (!profile) {
+          res.status(404).send({ ok: false, error: '没有可回滚的历史' })
+          return
+        }
+        res.status(200).send({ ok: true, profile, policy: profiles.policy(profile) })
       },
     }),
   )

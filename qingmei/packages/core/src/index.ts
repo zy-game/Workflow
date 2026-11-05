@@ -607,6 +607,8 @@ export interface MemoryRecord {
 
 export interface RecalledFact extends MemoryRecord {
   id: string
+  /** 召回解释：命中的信号，用于调试与记忆页展示 */
+  reasons?: string[]
   createdAt: Date
   /** 失效时间；召回只取 null 的 */
   validTo?: Date | null

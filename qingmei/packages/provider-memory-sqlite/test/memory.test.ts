@@ -525,3 +525,16 @@ test('情节巩固：同会话跨日相似情节按 embedding 合并', async () 
     await dispose()
   }
 })
+
+test('召回解释：fact 带命中信号，便于记忆页解释', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([fact('主人', '养了', '一只叫豆豆的狗')])
+    const result = await ctx.memory.recall({ text: '豆豆' })
+    assert.ok(result.facts.length > 0)
+    assert.ok((result.facts[0]!.reasons ?? []).length > 0)
+    assert.ok(result.facts[0]!.reasons!.some((reason) => reason.startsWith('关键词')))
+  } finally {
+    await dispose()
+  }
+})

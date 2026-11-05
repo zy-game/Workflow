@@ -9,6 +9,7 @@ Group=ubuntu
 WorkingDirectory=/opt/qingmei
 EnvironmentFile=/etc/qingmei/env
 ExecStart=/opt/node24/bin/node /opt/qingmei/current/apps/server/src/index.ts --config /opt/qingmei/qingmei.yml
+ReadOnlyPaths=/opt/qingmei/current /opt/qingmei/releases
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
