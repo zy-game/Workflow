@@ -182,7 +182,7 @@ test('POST /api/v1/tasks：建 run、派给 harness、正常收尾为 done', asy
     const sent = h.harness!.requests[0]!
     assert.equal(sent.conversationId, `task_${run.id}`)
     assert.match(sent.text, new RegExp(`runId 是 ${run.id}`))
-    assert.match(sent.text, /qm_report_progress/)
+    assert.match(sent.text, /worker\/ACP/)
     assert.match(sent.text, /把测试跑一遍/)
     assert.equal(sent.cwd, path.resolve(done.cwd))
     assert.equal(done.sessionId, 'sess_fake', 'harness 侧 sessionId 应回填进账本')

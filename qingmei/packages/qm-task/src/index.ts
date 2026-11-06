@@ -3,11 +3,11 @@
  *
  * 职责边界（docs/07）：青梅决定「做什么、什么时候」；harness 决定「怎么做」。
  * 本插件做三件事：
- *   - 提供 `taskRunner` 服务：把某个 run 交给 harness（对话车道可以通过 MCP 工具调用它）
+ *   - 提供 `taskRunner` 服务：把某个 run 交给 harness（worker/ACP 负责执行与回传）
  *   - `POST /api/v1/tasks` 建 run 并派发；`GET /api/v1/tasks[?id=]` 查询
  *   - 把任务状态变化推给 SSE（task-started / task-progress / task-finished）
  *
- * 执行期间子 agent 通过 MCP 工具 `qm_report_progress` / `qm_finish_task` 把进度写回账本。
+ * 执行结果由 worker/ACP 回传；子 agent 不依赖 MCP 工具。
  * 子 agent 没汇报也不会卡住：会话正常结束就把累计文本当结论收尾。
  */
 import { mkdir } from 'node:fs/promises'
@@ -322,7 +322,7 @@ export class TaskRunner extends TaskRunnerService {
       this.controllers.delete(run.id)
       clearTimeout(timer)
       const current = await task.get(run.id)
-      // 子 agent 可能已经用 qm_finish_task 收尾；那样就不再覆盖
+      // 子 agent 可能已经由 worker 收尾；那样就不再覆盖
       if (current && current.finishedAt === null) {
         if (budgetExceeded) {
           await task.finish(run.id, { status: 'failed', error: failure ?? 'token 预算超限' })
@@ -531,8 +531,8 @@ function taskPrompt(run: TaskRun, cwd: string): string {
   return [
     '你是青梅派出的执行子 agent。',
     `本次运行的 runId 是 ${run.id}，工作目录是 ${cwd}。`,
-    '过程中请用 MCP 工具 qm_report_progress 上报进度（参数 runId、phase、note，percent 可选）；',
-    '任务结束时调用 qm_finish_task（参数 runId、status、summary）收尾，再用一句话给出结论。',
+    '直接执行任务，结束时用一句话给出结论。',
+    '进度和结果由 worker/ACP 自动记录。',
     '',
     `任务：${run.prompt}`,
   ].join('\n')
