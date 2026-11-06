@@ -31,8 +31,7 @@ test('preload 只暴露最小 API', () => {
   assert.match(preload, /getSettings/)
   assert.match(preload, /saveSettings/)
   assert.match(preload, /popupMenu/)
-  assert.match(preload, /setupAgent/)
-  assert.match(preload, /installDshMcp/)
+  assert.match(preload, /writeWorkerConfig/)
   assert.match(preload, /startWorker/)
   assert.doesNotMatch(preload, /require\('node:fs'\)/)
 })
@@ -53,10 +52,7 @@ test('界面元素齐全', () => {
     'settings-modal',
     'settings-server',
     'settings-token',
-    'settings-mcp-token',
-    'settings-setup-zcode',
-    'settings-setup-dsh',
-    'settings-install-dsh',
+    'settings-setup-worker',
     'settings-start-worker',
     'settings-setup-worker',
     'settings-agent-status',

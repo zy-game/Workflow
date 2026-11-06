@@ -209,9 +209,8 @@ export class DshHarness extends HarnessService {
     const existing = this.sessions.get(conversationId)
     if (existing) return existing
     const base = path.resolve(cwd ?? this.config.cwd ?? process.cwd())
-    // 有 mcp 服务就把青梅自己的工具注入会话；没有则退回纯对话
-    const mcp = this.ctx.reflect.get('mcp', false) as { servers(): unknown[] } | undefined
-    const mcpServers = allowTools ? (mcp?.servers() ?? []) : []
+    // 青梅主路径不再注入 MCP；ACP 会话由 worker/GUI 自带记忆与任务协议
+    const mcpServers: unknown[] = []
     let sessionId: string | undefined
     if (resumeSessionId) {
       sessionId = await client.loadSession(resumeSessionId, base, mcpServers).catch(() => undefined)

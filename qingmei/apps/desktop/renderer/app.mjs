@@ -9,8 +9,7 @@ import {
 const desktop = window.qmDesktop ?? {
   getSettings: async () => ({ serverUrl: 'http://127.0.0.1:7410', token: '' }),
   saveSettings: async () => ({ ok: true }),
-  setupAgent: async () => ({ ok: false, error: '仅桌面端支持' }),
-  installDshMcp: async () => ({ ok: false, error: '仅桌面端支持' }),
+  writeWorkerConfig: async () => ({ ok: false, error: '仅桌面端支持' }),
   startWorker: async () => ({ ok: false, error: '仅桌面端支持' }),
   popupMenu: async () => undefined,
   quit: () => undefined,
@@ -58,10 +57,7 @@ const el = {
   settingsForm: document.getElementById('settings-form'),
   settingsServer: document.getElementById('settings-server'),
   settingsToken: document.getElementById('settings-token'),
-  settingsMcpToken: document.getElementById('settings-mcp-token'),
-  settingsSetupZcode: document.getElementById('settings-setup-zcode'),
-  settingsSetupDsh: document.getElementById('settings-setup-dsh'),
-  settingsInstallDsh: document.getElementById('settings-install-dsh'),
+
   settingsStartWorker: document.getElementById('settings-start-worker'),
   settingsSetupWorker: document.getElementById('settings-setup-worker'),
   settingsAgentStatus: document.getElementById('settings-agent-status'),
@@ -73,7 +69,6 @@ const el = {
 const settings = {
   serverUrl: '',
   token: '',
-  mcpToken: '',
   scale: 1,
   sound: true,
   autoStart: false,
@@ -89,6 +84,7 @@ let typingTimer = 0
 let stateResetTimer = 0
 let sending = false
 let historyLoaded = false
+let workerSessionId = null
 
 const KIND_LABEL = { message: '青梅', approval: '审批', error: '故障', pet: '青梅' }
 const PET_LINES = [
@@ -270,7 +266,6 @@ async function init() {
   const saved = await desktop.getSettings()
   settings.serverUrl = saved.serverUrl || 'http://127.0.0.1:7410'
   settings.token = saved.token || ''
-  settings.mcpToken = saved.mcpToken || ''
   settings.scale = Number(saved.scale) || 1
   settings.fontScale = Number(saved.fontScale) || 1
   settings.sound = saved.sound !== false
@@ -722,6 +717,66 @@ async function sendImage(file) {
     finishThinking()
   }
 }
+async function sendViaWorker(text) {
+  try {
+    if (!workerSessionId) {
+      const created = await fetch('http://127.0.0.1:7431/session/new', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ harness: 'dsh' }),
+        signal: AbortSignal.timeout(1500),
+      })
+      if (!created.ok) return false
+      const detail = await created.json()
+      workerSessionId = detail.sessionId
+    }
+    const res = await fetch('http://127.0.0.1:7431/session/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: workerSessionId, text, stream: true }),
+      signal: AbortSignal.timeout(120000),
+    })
+    if (!res.ok) {
+      workerSessionId = null
+      return false
+    }
+    if (!String(res.headers.get('content-type') || '').includes('text/event-stream')) {
+      const detail = await res.json()
+      finishThinking()
+      appendLine('assistant', detail.output || '（本机 ACP 没有返回文本）')
+      return true
+    }
+    const reader = res.body?.getReader()
+    if (!reader) return false
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let output = ''
+    let closed = false
+    finishThinking()
+    while (!closed) {
+      const read = await reader.read()
+      if (read.done) break
+      buffer += decoder.decode(read.value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const payload = JSON.parse(line.slice(6))
+        if (payload.text) {
+          output += payload.text
+          appendChunk(JSON.stringify({ text: payload.text }))
+        }
+        if (payload.output && !payload.text) output = payload.output
+        if (payload.stopReason) closed = true
+      }
+    }
+    finishAssistant(output || '（本机 ACP 没有返回文本）')
+    return true
+  } catch {
+    workerSessionId = null
+    return false
+  }
+}
 async function sendMessage(event) {
   event.preventDefault()
   const text = el.chatInput.value.trim()
@@ -744,6 +799,12 @@ async function sendMessage(event) {
   }
   appendLine('user', text)
   startThinking()
+  if (await sendViaWorker(text)) {
+    sending = false
+    el.chatSend.disabled = false
+    el.chatInput.focus()
+    return
+  }
   try {
     const res = await fetch(`${base}/api/v1/messages`, {
       method: 'POST',
@@ -793,7 +854,6 @@ async function registerDevice() {
 function openSettings() {
   el.settingsServer.value = settings.serverUrl
   el.settingsToken.value = settings.token
-  if (el.settingsMcpToken) el.settingsMcpToken.value = settings.mcpToken
   el.settingsScale.value = String(settings.scale)
   if (el.settingsFontScale) el.settingsFontScale.value = String(settings.fontScale)
   if (el.settingsFontScaleValue) el.settingsFontScaleValue.textContent = Math.round(settings.fontScale * 100) + '%'
@@ -827,15 +887,15 @@ async function testConnection() {
   }
 }
 
-async function installDshMcp() {
+async function writeWorkerConfig() {
   if (!el.settingsAgentStatus) return
   el.settingsAgentStatus.hidden = false
-  el.settingsAgentStatus.textContent = '正在安装 DSH MCP 插件…'
+  el.settingsAgentStatus.textContent = '正在写入 Worker 配置…'
   try {
-    const result = await desktop.installDshMcp()
-    el.settingsAgentStatus.textContent = result?.ok ? result.message : result?.error || '安装失败'
+    const result = await desktop.writeWorkerConfig()
+    el.settingsAgentStatus.textContent = result?.ok ? result.message : result?.error || '配置失败'
   } catch (error) {
-    el.settingsAgentStatus.textContent = error instanceof Error ? error.message : '安装失败'
+    el.settingsAgentStatus.textContent = error instanceof Error ? error.message : '配置失败'
   }
 }
 
@@ -851,22 +911,10 @@ async function startWorker() {
   }
 }
 
-async function setupAgent(target) {
-  if (!el.settingsAgentStatus) return
-  el.settingsAgentStatus.hidden = false
-  el.settingsAgentStatus.textContent = '正在写入配置…'
-  try {
-    const result = await desktop.setupAgent(target)
-    el.settingsAgentStatus.textContent = result?.ok ? result.message : result?.error || '配置失败'
-  } catch (error) {
-    el.settingsAgentStatus.textContent = error instanceof Error ? error.message : '配置失败'
-  }
-}
 async function saveSettings(event) {
   event.preventDefault()
   const base = normalizeServerUrl(el.settingsServer.value)
   const token = el.settingsToken.value.trim()
-  const mcpToken = (el.settingsMcpToken?.value ?? '').trim()
   const hideOnFullscreen = el.settingsHideFullscreen.checked
   if (!base) {
     showError('服务器地址必须是 http(s) URL')
@@ -883,10 +931,9 @@ async function saveSettings(event) {
     const autoStart = el.settingsAutostart.checked
     const notifyHidden = el.settingsNotifyHidden.checked
     const character = el.settingsCharacter.value === 'orb' ? 'orb' : 'qingmei'
-    await desktop.saveSettings({ serverUrl: base, token, mcpToken, scale, fontScale, sound, autoStart, notifyHidden, hideOnFullscreen, character })
+    await desktop.saveSettings({ serverUrl: base, token, scale, fontScale, sound, autoStart, notifyHidden, hideOnFullscreen, character })
     settings.serverUrl = base
     settings.token = token
-    settings.mcpToken = mcpToken
     settings.scale = scale
     settings.fontScale = fontScale
     settings.sound = sound
@@ -1045,11 +1092,8 @@ function bind() {
     void sendImage(file)
   })
   el.settingsForm.addEventListener('submit', (event) => void saveSettings(event))
-  el.settingsSetupZcode?.addEventListener('click', () => void setupAgent('zcode'))
-  el.settingsSetupDsh?.addEventListener('click', () => void setupAgent('dsh'))
-  el.settingsInstallDsh?.addEventListener('click', () => void installDshMcp())
   el.settingsStartWorker?.addEventListener('click', () => void startWorker())
-  el.settingsSetupWorker?.addEventListener('click', () => void setupAgent('worker'))
+  el.settingsSetupWorker?.addEventListener('click', () => void writeWorkerConfig())
   el.onboardingStart.addEventListener('click', () => {
     el.onboarding.hidden = true
     localStorage.setItem('qm.onboarded', '1')

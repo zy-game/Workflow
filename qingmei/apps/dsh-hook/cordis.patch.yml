@@ -1,0 +1,5 @@
+- insert:
+    - id: qingmei-hook
+      name: "@qingmei/dsh-hook"
+      config:
+        endpoint: http://127.0.0.1:7431/session/ingest

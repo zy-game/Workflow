@@ -18,7 +18,6 @@
     "@qingmei/qm-history": "workspace:*",
     "@qingmei/qm-reminder": "workspace:*",
     "@qingmei/provider-schedule-sqlite": "workspace:*",
-    "@qingmei/host-mcp": "workspace:*",
     "@qingmei/qm-memory-extract": "workspace:*",
     "@qingmei/provider-memory-sqlite": "workspace:*",
     "@qingmei/provider-permission-static": "workspace:*",
@@ -49,6 +48,7 @@
     "@qingmei/service-persona": "workspace:*",
     "@qingmei/provider-embedding-openai": "workspace:*",
     "@qingmei/qm-thread": "workspace:*",
-    "@qingmei/qm-device": "workspace:*"
+    "@qingmei/qm-device": "workspace:*",
+    "@qingmei/qm-content": "workspace:*"
   }
 }

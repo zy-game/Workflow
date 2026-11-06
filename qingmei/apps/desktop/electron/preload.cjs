@@ -3,8 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('qmDesktop', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
-  setupAgent: (target) => ipcRenderer.invoke('agent:setup', target),
-  installDshMcp: () => ipcRenderer.invoke('agent:install-dsh'),
+  writeWorkerConfig: () => ipcRenderer.invoke('agent:worker-config'),
   startWorker: () => ipcRenderer.invoke('agent:worker-start'),
   popupMenu: () => ipcRenderer.invoke('menu:popup'),
   quit: () => ipcRenderer.send('app:quit'),

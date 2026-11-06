@@ -1116,19 +1116,6 @@ export abstract class ApprovalService extends Service {
   abstract wait(id: string, timeoutMs: number): Promise<ApprovalRequest | null>
 }
 
-// ────────────────────────────────────────────── MCP
-
-/**
- * 把青梅自己的能力以 MCP 服务器形式暴露给外部 agent runtime。
- * harness 在 session/new 时读取 servers() 注入声明。
- */
-export abstract class McpService extends Service {
-  constructor(ctx: Context) {
-    super(ctx, 'mcp')
-  }
-  /** ACP 的 mcpServers 数组，形如 [{type:'http',name,url,headers}] */
-  abstract servers(): unknown[]
-}
 
 // ────────────────────────────────────────────── 工具函数
 

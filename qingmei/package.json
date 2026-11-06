@@ -6,8 +6,10 @@
   "packageManager": "pnpm@10.13.1",
   "engines": { "node": ">=24" },
   "scripts": {
-    "start": "node apps/server/src/index.ts",
-    "dev": "node --watch apps/server/src/index.ts",
+    "start": "pnpm web:build && node apps/server/src/index.ts",
+    "dev": "pnpm web:build && node --watch apps/server/src/index.ts",
+    "web:build": "pnpm --filter @qingmei/web build",
+    "web:dev": "pnpm --filter @qingmei/web dev",
     "qm": "node apps/server/src/cli.ts",
     "serve": "node apps/server/src/cli.ts serve",
     "doctor": "node apps/server/src/cli.ts doctor",

@@ -12,6 +12,8 @@
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import { fileURLToPath } from 'node:url'
 import { homedir, hostname } from 'node:os'
 import path from 'node:path'
 import { AcpClient } from '../packages/provider-dsh-acp/src/acp-client.ts'
@@ -44,9 +46,9 @@ function loadConfig(args) {
     zcodeAcpCommand: String(args['zcode-acp-command'] ?? stored.zcodeAcpCommand ?? ''),
     zcodeBin: String(args['zcode-bin'] ?? stored.zcodeBin ?? ''),
     zcodeNode: String(args['zcode-node'] ?? stored.zcodeNode ?? ''),
-    mcpUrl: String(args['mcp-url'] ?? stored.mcpUrl ?? ''),
-    mcpToken: String(args['mcp-token'] ?? stored.mcpToken ?? ''),
     workdir: path.resolve(args.workdir ?? stored.workdir ?? path.join(ROOT, 'workspaces')),
+    localPort: Number(args.port ?? stored.localPort ?? 7431),
+    zcodeSync: process.argv.includes('--zcode-sync') || stored.zcodeSync === true,
   }
   if (!config.token) throw new Error('缺少 QM_TOKEN：用 --token 或配置 token')
   if (!config.deviceId) config.deviceId = `dev-${hostname().replace(/[^a-zA-Z0-9]+/g, '-')}-${Math.random().toString(36).slice(2, 8)}`
@@ -66,9 +68,9 @@ function which(command) {
 
 function capabilities(config) {
   const items = []
-  if (which(String(config.dshCommand).split(/\\s+/)[0])) items.push({ kind: 'dsh', acp: true, mcp: Boolean(config.mcpUrl) })
+  if (which(String(config.dshCommand).split(/\\s+/)[0])) items.push({ kind: 'dsh', acp: true, mcp: false })
   if (config.zcodeAcpCommand && which(config.zcodeAcpCommand.split(/\s+/)[0])) {
-    items.push({ kind: 'zcode', acp: true, mcp: Boolean(config.mcpUrl) })
+    items.push({ kind: 'zcode', acp: true, mcp: false })
   }
   return items
 }
@@ -93,9 +95,7 @@ async function runDsh(config, task) {
   const [executable, ...args] = command.split(/\s+/)
   const cwd = task.harness === 'zcode' ? config.workdir : path.join(config.workdir, task.id.replace(/[^a-zA-Z0-9_-]/g, '_'))
   mkdirSync(cwd, { recursive: true })
-  const mcpServers = config.mcpUrl
-    ? [{ type: 'http', name: 'qingmei', url: config.mcpUrl, ...(config.mcpToken ? { headers: { Authorization: `Bearer ${config.mcpToken}` } } : {}) }]
-    : []
+  const mcpServers = []
   let output = ''
   const client = new AcpClient({
     command: executable,
@@ -110,7 +110,7 @@ async function runDsh(config, task) {
       }
     },
     shell: process.platform === 'win32',
-    onStderr: (text) => console.error([] ),
+    onStderr: (text) => console.error('[' + task.harness + '] ' + text),
     env: {
       ...process.env,
       ...(task.harness === 'zcode' && config.zcodeBin ? { ZCODE_BIN: config.zcodeBin } : {}),
@@ -132,6 +132,171 @@ async function runDsh(config, task) {
   }
 }
 
+const sessions = new Map()
+
+function sendJson(res, status, value) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
+  res.end(JSON.stringify(value))
+}
+
+async function readJsonBody(req) {
+  let body = ''
+  for await (const chunk of req) body += chunk
+  if (!body) return {}
+  return JSON.parse(body)
+}
+
+function sessionCommand(config, harness) {
+  const command = harness === 'zcode' ? config.zcodeAcpCommand : config.dshCommand
+  if (!command) throw new Error(`没有配置 ${harness} 的 ACP 命令`)
+  return command.split(/\s+/)
+}
+
+async function createAcpSession(config, input) {
+  const harness = input.harness === 'zcode' ? 'zcode' : 'dsh'
+  const [executable, ...args] = sessionCommand(config, harness)
+  const cwd = path.resolve(input.cwd || path.join(config.workdir, `session-${Date.now().toString(36)}`))
+  mkdirSync(cwd, { recursive: true })
+  const id = `sess_${Math.random().toString(36).slice(2, 10)}`
+  const state = { id, harness, cwd, config, client: null, acpSessionId: null, turns: [], events: [], output: '', stream: null }
+  const client = new AcpClient({
+    command: executable,
+    args: args.length > 0 ? args : ['--profile', 'acp'],
+    cwd,
+    shell: process.platform === 'win32',
+    env: {
+      ...process.env,
+      ...(harness === 'zcode' && config.zcodeBin ? { ZCODE_BIN: config.zcodeBin } : {}),
+      ...(harness === 'zcode' && config.zcodeNode ? { ZCODE_NODE: config.zcodeNode } : {}),
+    },
+    onUpdate: (event) => {
+      state.events.push(event)
+      const update = event.update ?? {}
+      if (String(update.sessionUpdate ?? '') === 'agent_message_chunk') {
+        const content = update.content
+        if (content && typeof content === 'object' && content.type === 'text') {
+          state.output += content.text ?? ''
+          if (state.stream) state.stream.write('data: ' + JSON.stringify({ text: content.text ?? '' }) + '\\n\\n')
+        }
+      }
+    },
+    onPermissionRequest: async (event) => {
+      const option = event.options?.find((item) => item.kind === 'allow_once' || item.kind === 'allow_always')
+      return option?.optionId ?? null
+    },
+  })
+  await client.start()
+  state.client = client
+  state.acpSessionId = await client.newSession(cwd, [])
+  sessions.set(id, state)
+  return state
+}
+
+async function memoryContext(config, text) {
+  try {
+    const result = await request(config, 'GET', '/api/v1/memory?q=' + encodeURIComponent(text) + '&limit=5')
+    return typeof result?.text === 'string' ? result.text.trim() : ''
+  } catch {
+    return ''
+  }
+}
+async function promptSession(state, text) {
+  state.turns.push({ role: 'user', text, at: Date.now() })
+  const context = await memoryContext(state.config, text)
+  const prompt = context ? '【青梅记忆】\\n' + context + '\\n\\n【用户】\\n' + text : text
+  state.output = ''
+  const result = await state.client.prompt(state.acpSessionId, prompt)
+  const output = state.output.trim()
+  state.turns.push({ role: 'assistant', text: output, at: Date.now() })
+  return { output, stopReason: result.stopReason, turns: state.turns, events: state.events.slice(-50) }
+}
+
+function startLocalServer(config) {
+  const port = Number(config.localPort)
+  if (!Number.isFinite(port) || port <= 0) return
+  const server = createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+      if (req.method === 'POST' && url.pathname === '/session/new') {
+        const input = await readJsonBody(req)
+        const state = await createAcpSession(config, input)
+        sendJson(res, 200, { ok: true, sessionId: state.id, cwd: state.cwd, harness: state.harness })
+        return
+      }
+      if (req.method === 'POST' && url.pathname === '/session/prompt') {
+        const input = await readJsonBody(req)
+        const state = sessions.get(String(input.sessionId ?? ''))
+        if (!state) return sendJson(res, 404, { ok: false, error: '没有这个会话' })
+        if (input.stream === true) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+          })
+          state.stream = res
+          try {
+            const result = await promptSession(state, String(input.text ?? ''))
+            res.write('event: done\ndata: ' + JSON.stringify(result) + '\n\n')
+          } catch (error) {
+            res.write('event: error\ndata: ' + JSON.stringify({ error: error instanceof Error ? error.message : String(error) }) + '\n\n')
+          } finally {
+            state.stream = null
+            res.end()
+          }
+          return
+        }
+        const result = await promptSession(state, String(input.text ?? ''))
+        sendJson(res, 200, { ok: true, ...result })
+        return
+      }
+      if (req.method === 'GET' && url.pathname === '/session/state') {
+        const state = sessions.get(String(url.searchParams.get('sessionId') ?? ''))
+        if (!state) return sendJson(res, 404, { ok: false, error: '没有这个会话' })
+        sendJson(res, 200, { ok: true, sessionId: state.id, harness: state.harness, cwd: state.cwd, turns: state.turns, events: state.events.slice(-50) })
+        return
+      }
+      if (req.method === 'POST' && url.pathname === '/session/cancel') {
+        const input = await readJsonBody(req)
+        const state = sessions.get(String(input.sessionId ?? ''))
+        if (!state) return sendJson(res, 404, { ok: false, error: '没有这个会话' })
+        state.client.cancel(state.acpSessionId)
+        sendJson(res, 200, { ok: true })
+        return
+      }      if (req.method === 'POST' && url.pathname === '/session/close') {
+        const input = await readJsonBody(req)
+        const state = sessions.get(String(input.sessionId ?? ''))
+        if (!state) return sendJson(res, 404, { ok: false, error: '没有这个会话' })
+        await state.client.closeSession(state.acpSessionId).catch(() => undefined)
+        state.client.stop()
+        await request(config, 'POST', '/api/v1/devices/ingest', {
+          deviceId: config.deviceId,
+          sessionId: state.id,
+          summary: state.turns.filter((turn) => turn.role === 'assistant').map((turn) => turn.text).join('\\n'),
+          turns: state.turns,
+          facts: [],
+          lessons: [],
+        }).catch(() => undefined)
+        sessions.delete(state.id)
+        sendJson(res, 200, { ok: true })
+        return
+      }
+      if (req.method === 'POST' && url.pathname === '/session/ingest') {
+        const input = await readJsonBody(req)
+        const dir = path.join(ROOT, 'sessions')
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(path.join(dir, `${String(input.sessionId ?? 'unknown')}.json`), JSON.stringify(input, null, 2), 'utf8')
+        const remote = await request(config, 'POST', '/api/v1/devices/ingest', { ...input, deviceId: config.deviceId })
+        sendJson(res, 200, { ok: true, remote: Boolean(remote) })
+        return
+      }
+      sendJson(res, 404, { ok: false, error: 'not found' })
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+    }
+  })
+  server.listen(port, '127.0.0.1', () => console.log(`[worker] 本地会话 API：http://127.0.0.1:${port}`))
+  server.unref?.()
+}
 async function main() {
   const config = loadConfig(parseArgs(process.argv.slice(2)))
   const caps = capabilities(config)
@@ -147,6 +312,13 @@ async function main() {
   })
   console.log(`[worker] 已注册：${registered.device.id} (${registered.device.platform}/${registered.device.arch})`)
   console.log(`[worker] harness：${caps.map((item) => `${item.kind}(acp=${item.acp})`).join('、')}`)
+  startLocalServer(config)
+  if (config.zcodeSync) {
+    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'zcode-session-sync.mjs')
+    const tick = () => spawn(process.execPath, [script], { stdio: 'ignore', env: process.env }).unref()
+    setTimeout(tick, 10000)
+    setInterval(tick, 60000).unref?.()
+  }
   let running = true
   process.on('SIGINT', () => {
     running = false

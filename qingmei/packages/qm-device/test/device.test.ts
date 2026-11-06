@@ -151,3 +151,34 @@ test('未知设备拒绝入队', async () => {
     await h.dispose()
   }
 })
+
+test('会话提炼落盘：同一 device/session 幂等', async () => {
+  const h = await setup()
+  try {
+    await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/register',
+      query: {},
+      headers: {},
+      body: { id: 'dev_i', platform: 'windows', harnesses: [{ kind: 'dsh', acp: true }] },
+    })
+    const first = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/ingest',
+      query: {},
+      headers: {},
+      body: { deviceId: 'dev_i', sessionId: 's1', summary: '完成', turns: [{ role: 'user', text: 'x' }], facts: [], lessons: [] },
+    })
+    assert.equal(first.status, 200)
+    const again = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/ingest',
+      query: {},
+      headers: {},
+      body: { deviceId: 'dev_i', sessionId: 's1', summary: '更新', turns: [], facts: [], lessons: [] },
+    })
+    assert.equal(again.status, 200)
+  } finally {
+    await h.dispose()
+  }
+})

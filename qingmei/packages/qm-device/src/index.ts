@@ -10,6 +10,9 @@ import {
   type GatewayRequest,
   type GatewayResponse,
   type GatewayService,
+  type LlmService,
+  type MemoryRecord,
+  type MemoryService,
   type Row,
   type StoreService,
 } from '@qingmei/core'
@@ -38,6 +41,17 @@ interface DeviceRow extends Row {
   status: string
   last_seen: number
   created_at: number
+}
+
+interface DigestRow extends Row {
+  device_id: string
+  session_id: string
+  summary: string
+  turns_json: string
+  facts_json: string
+  lessons_json: string
+  distilled_json: string
+  at: number
 }
 
 interface DeviceTaskRow extends Row {
@@ -76,6 +90,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   if (!gateway) throw new Error('[qm-device] 缺少 gateway 服务')
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
   const tasks = store.collection<DeviceTaskRow>(TASK_COLLECTION)
+  const digests = store.collection<DigestRow>('qm_session_digest')
   const staleMs = Math.max(10_000, config.staleMs ?? 90_000)
   const keepTasks = Math.max(20, config.keepTasks ?? 200)
   let queue: Promise<unknown> = Promise.resolve()
@@ -244,6 +259,95 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     }),
   )
 
+  async function distill(input: { summary: string; turns: unknown[]; facts: unknown[] }): Promise<MemoryRecord[]> {
+    const llm = ctx.reflect.get('llm', false) as LlmService | undefined
+    const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
+    if (!llm || !memory || input.facts.length > 0) return []
+    const transcript = [input.summary, JSON.stringify(input.turns).slice(0, 4000)].join('\n').slice(0, 5000)
+    if (transcript.trim().length < 10) return []
+    const { text } = await llm.complete({
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是一个知识提炼器。从会话记录中抽取值得长期记住的事实、决策和教训，只输出 JSON 数组。' +
+            '元素形如 {"subject":"项目","predicate":"使用","object":"pnpm","confidence":0.9}；没有就输出 []。',
+        },
+        { role: 'user', content: transcript },
+      ],
+    })
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim())
+    } catch {
+      return []
+    }
+    if (!Array.isArray(parsed)) return []
+    const records: MemoryRecord[] = []
+    for (const item of parsed.slice(0, 8)) {
+      if (!item || typeof item !== 'object') continue
+      const value = item as Record<string, unknown>
+      const subject = String(value.subject ?? '').trim()
+      const predicate = String(value.predicate ?? '').trim()
+      const object = String(value.object ?? '').trim()
+      if (!subject || !predicate || !object) continue
+      records.push({
+        kind: 'fact',
+        subject,
+        predicate,
+        object,
+        confidence: Math.min(1, Math.max(0, Number(value.confidence) || 0.7)),
+        sensitivity: 'private',
+        origin: { kind: 'harness', id: 'device-worker' },
+      })
+    }
+    if (records.length > 0) await memory.ingest(records)
+    return records
+  }
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/devices/ingest',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const deviceId = String(body.deviceId ?? '').trim()
+        const sessionId = String(body.sessionId ?? '').trim()
+        if (!deviceId || !sessionId) {
+          res.status(400).send({ ok: false, error: 'deviceId 和 sessionId 必填' })
+          return
+        }
+        const id = `${deviceId}:${sessionId}`
+        const existing = await digests.get(id)
+        const row: DigestRow = {
+          id,
+          device_id: deviceId,
+          session_id: sessionId,
+          summary: String(body.summary ?? '').slice(0, 20_000),
+          turns_json: JSON.stringify(Array.isArray(body.turns) ? body.turns.slice(-200) : []),
+          facts_json: JSON.stringify(Array.isArray(body.facts) ? body.facts.slice(0, 50) : []),
+          lessons_json: JSON.stringify(Array.isArray(body.lessons) ? body.lessons.slice(0, 50) : []),
+          distilled_json: existing?.distilled_json ?? '[]',
+          at: Date.now(),
+        }
+        if (existing) await digests.update(id, row)
+        else await digests.insert(row)
+        let distilled: MemoryRecord[] = []
+        try {
+          distilled = await distill({
+            summary: row.summary,
+            turns: JSON.parse(row.turns_json) as unknown[],
+            facts: JSON.parse(row.facts_json) as unknown[],
+          })
+        } catch {
+          distilled = []
+        }
+        if (distilled.length > 0) {
+          await digests.update(id, { distilled_json: JSON.stringify(distilled) })
+        }
+        res.status(200).send({ ok: true, id, distilled: distilled.length })
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'POST',

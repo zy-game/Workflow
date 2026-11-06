@@ -27,9 +27,9 @@ async function withYaml<T>(source: string, run: (file: string) => Promise<T>): P
   }
 }
 
-test('仓库自带的 qingmei.yml：三十五项插件，端口与数据库路径来自配置', () => {
+test('仓库自带的 qingmei.yml：三十八项插件，端口与数据库路径来自配置', () => {
   const entries = readPluginList(DEFAULT_CONFIG)
-  assert.equal(entries.length, 35)
+  assert.equal(entries.length, 38)
   assert.deepEqual(
     entries.map((entry) => entry.name),
     [
@@ -46,13 +46,16 @@ test('仓库自带的 qingmei.yml：三十五项插件，端口与数据库路�
       '@qingmei/provider-audit-sqlite',
       '@qingmei/provider-approval-sqlite',
       '@qingmei/provider-task-sqlite',
+      '@qingmei/provider-schedule-sqlite',
       '@qingmei/service-persona',
       '@qingmei/qm-agent',
       '@qingmei/qm-history',
+      '@qingmei/qm-reminder',
       '@qingmei/qm-task',
       '@qingmei/qm-device',
       '@qingmei/qm-thread',
       '@qingmei/qm-approval',
+      '@qingmei/qm-content',
       '@qingmei/qm-audit',
       '@qingmei/qm-autonomy',
       '@qingmei/qm-consolidate',
@@ -74,7 +77,7 @@ test('仓库自带的 qingmei.yml：三十五项插件，端口与数据库路�
   assert.equal(store?.config?.path, './data/qm.db')
   const host = entries.find((entry) => entry.name === '@qingmei/host-gateway')
   assert.equal(host?.config?.port, 7410)
-  assert.equal(host?.config?.webRoot, './apps/web/public')
+  assert.equal(host?.config?.webRoot, './apps/web/dist')
 })
 
 test('readPluginList：顶层必须是数组', async () => {

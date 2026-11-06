@@ -8,7 +8,7 @@ const { app, BrowserWindow, Notification, ipcMain, Menu, safeStorage, screen, sh
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
-const { setupAgent: setupAgentConfig } = require('./agent-config.cjs')
+const { writeWorkerConfig } = require('./agent-config.cjs')
 const { execFile, execFileSync, spawn } = require('node:child_process')
 const { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed, loginCommand } = require('./layout.cjs')
 
@@ -217,18 +217,6 @@ function startWorker() {
   })
   child.unref()
   return { ok: true, message: 'Worker 已启动；配置来自 ~/.qingmei/worker.json' }
-}
-function installDshMcp() {
-  const command = process.platform === 'win32' ? 'dsh plugin --profile web add dsh-mcp-autoload && dsh plugin --profile acp add dsh-mcp-autoload' : 'dsh plugin --profile web add dsh-mcp-autoload && dsh plugin --profile acp add dsh-mcp-autoload'
-  try {
-    execFileSync(process.platform === 'win32' ? 'cmd.exe' : 'sh', process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command], {
-      encoding: 'utf8',
-      timeout: 120000,
-    })
-    return { ok: true, message: '已安装 dsh-mcp-autoload 到 web/acp；重启 DSH 生效' }
-  } catch (error) {
-    return { ok: false, error: `安装 DSH MCP 插件失败：${error instanceof Error ? error.message : String(error)}` }
-  }
 }
 function createTray() {
   try {
@@ -521,16 +509,10 @@ if (!gotLock) {
       return { ok: true, scale }
     })
 
-    ipcMain.handle('agent:install-dsh', () => installDshMcp())
-    ipcMain.handle('agent:worker-start', () => startWorker())
-
-    ipcMain.handle('agent:setup', (_event, target) =>
-      setupAgentConfig({
-        target: String(target ?? ''),
-        settings: readSettings(),
-        home: app.getPath('home'),
-      }),
+    ipcMain.handle('agent:worker-config', () =>
+      writeWorkerConfig({ settings: readSettings(), home: app.getPath('home') }),
     )
+    ipcMain.handle('agent:worker-start', () => startWorker())
     ipcMain.handle('menu:popup', () => {
       Menu.buildFromTemplate([
         { label: '摸摸头', click: () => win?.webContents.send('pet-action', 'pet') },

@@ -27,7 +27,7 @@
     limit: 8
     minConfidence: 0.6
 
-# 工具调用的准入与留痕：host-mcp 每次 tools/call 都过这里
+# 权限与审计：worker/ACP 的敏感动作仍走这里
 - name: '@qingmei/provider-permission-static'
 
 - name: '@qingmei/provider-audit-sqlite'
@@ -35,7 +35,7 @@
 # 待人确认的审批队列：permission 判 ask、或子 agent 请求权限时落一条
 - name: '@qingmei/provider-approval-sqlite'
 
-# 任务账本：qm-task 派发、子 agent 经 MCP 上报进度
+# 任务账本：qm-task 派发、子 agent 经 ACP 回传结果
 - name: '@qingmei/provider-task-sqlite'
   config:
     workspaceRoot: './data/workspaces'
@@ -67,7 +67,7 @@
 # qm_message 的唯一写入方：对话、提醒、以后所有主动消息都经它落库
 - name: '@qingmei/qm-history'
 
-# 把任务派给 harness（POST /api/v1/tasks），进度经 MCP 回到账本
+# 把任务派给 harness（POST /api/v1/tasks），进度经 ACP 回到账本
 - name: '@qingmei/qm-task'
   config:
     workspaceRoot: './data/workspaces'
@@ -106,11 +106,14 @@
 
 - name: '@qingmei/qm-reminder'
 
-- name: '@qingmei/host-mcp'
+# 内容层（账号运维 docs/18）：content_item / variant / action 账本 + 人审状态机
+# 平台连接器未实现，connected 全 false；发布一律被闸门挡住，不会假装成功
+- name: '@qingmei/qm-content'
   config:
-    host: '127.0.0.1'
-    port: 7420
-    token: { $env: 'QM_MCP_TOKEN' }
+    daily: { publish: 2, reply: 20, mention: 10 }
+    quietStart: 23
+    quietEnd: 8
+    connected: { blog: false, weibo: false, bilibili: false, zhihu: false }
 
 - name: '@qingmei/qm-memory-extract'
   config:
@@ -168,6 +171,6 @@
     token: { $env: 'QM_TOKEN' }
     adminUser: 'admin'
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
-    webRoot: '/opt/qingmei/current/apps/web/public'
+    webRoot: '/opt/qingmei/current/apps/web/dist'
 
 

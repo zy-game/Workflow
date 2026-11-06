@@ -1,6 +1,7 @@
 packages:
   - 'packages/*'
   - 'apps/server'
+  - 'apps/web'
   - 'apps/desktop'
   - 'apps/mobile'
 
