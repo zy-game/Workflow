@@ -11,12 +11,14 @@ const devices = ref([])
 const deviceTasks = ref([])
 const deviceId = ref('')
 const workspaceId = ref('')
+const harness = ref('')
 const devicePrompt = ref('')
 const deviceError = ref('')
 const error = ref('')
 const loading = ref(false)
 const selectedDevice = computed(() => devices.value.find((device) => device.id === deviceId.value))
 const workspaces = computed(() => selectedDevice.value?.workspaces ?? [])
+const harnesses = computed(() => selectedDevice.value?.harnesses ?? [])
 let unsubscribers = []
 
 async function load() {
@@ -38,6 +40,9 @@ async function load() {
     if (!workspaceId.value || !workspaces.value.some((workspace) => workspace.id === workspaceId.value)) {
       workspaceId.value = workspaces.value[0]?.id ?? ''
     }
+    if (!harness.value || !harnesses.value.some((item) => item.kind === harness.value)) {
+      harness.value = harnesses.value[0]?.kind ?? 'dsh'
+    }
     error.value = ''
   } catch (err) {
     error.value = err instanceof TypeError ? '无法连接服务' : err.message || '读取任务失败'
@@ -48,6 +53,7 @@ async function load() {
 
 watch(deviceId, () => {
   workspaceId.value = workspaces.value[0]?.id ?? ''
+  harness.value = harnesses.value[0]?.kind ?? 'dsh'
 })
 
 async function dispatchDevice() {
@@ -65,7 +71,7 @@ async function dispatchDevice() {
         cwd: workspaces.value.find((workspace) => workspace.id === workspaceId.value)?.path,
         prompt: devicePrompt.value.trim(),
         title: devicePrompt.value.trim().slice(0, 40),
-        harness: selectedDevice.value?.harnesses?.[0]?.kind ?? 'dsh',
+        harness: harness.value || 'dsh',
       },
     })
     devicePrompt.value = ''
@@ -125,6 +131,9 @@ onBeforeUnmount(() => {
           <option v-for="device in devices" :key="device.id" :value="device.id">
             {{ device.name }} · {{ device.systemType || device.platform }}/{{ device.arch }} · {{ device.deviceClass || 'desktop' }} · {{ device.online ? '在线' : '离线' }}
           </option>
+        </select>
+        <select v-model="harness" class="input" :disabled="harnesses.length <= 1">
+          <option v-for="item in harnesses" :key="item.kind" :value="item.kind">{{ item.kind }}</option>
         </select>
         <select v-model="workspaceId" class="input" :disabled="workspaces.length === 0">
           <option value="">选择工作区</option>
