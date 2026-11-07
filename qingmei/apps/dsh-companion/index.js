@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 
 export const name = 'qingmei-dsh-companion'
-export const inject = ['agents', 'workspaceRegistry', 'agentDefaultModel']
+export const inject = ['agents', 'workspaceRegistry', 'agentDefaultModel', 'sessionController']
 
 function textOf(value) {
   if (typeof value === 'string') return value
@@ -137,19 +137,25 @@ export function apply(ctx, config = {}) {
       if (task.workspaceId && !targetWorkspace) throw new Error('任务指定的工作区不在 DSH 中')
       const cwd = realpathSync(task.cwd || targetWorkspace?.path || workspacePath)
       const selection = ctx.agentDefaultModel?.currentSelection?.()
-      handle = await ctx.agents.create({
+      const created = await ctx.sessionController.create({
         sessionId,
-        meta: { cwd },
-        ...(selection
-          ? {
-              agentOptions: {
-                provider: selection.provider,
-                model: selection.model,
-                ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
-              },
-            }
-          : {}),
+        cwd,
+        agentPreset: String(config.agentPreset || 'standard'),
       })
+      sessionId = String(created?.sessionId ?? sessionId)
+      if (selection) {
+        await ctx.sessionController
+          .selectModel?.({
+            sessionId,
+            provider: selection.provider,
+            model: selection.model,
+            ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
+          })
+          .catch(() => undefined)
+      }
+      const agent = ctx.agents.get(sessionId)
+      if (!agent) throw new Error('sessionController 创建后找不到 live agent')
+      handle = { agent }
       const workspace = await ctx.workspaceRegistry.create(cwd)
       await workspace.attachSession(sessionId)
       state = { task, sessionId, output: '', turns: [], events: [] }
