@@ -367,12 +367,13 @@ async function main() {
       }).catch(() => undefined)
       try {
         const result = await runDsh(config, task)
+        const failed = /Request failed:|model_request_failed|Turn execution failed|Network error, retrying/i.test(result.result)
         await request(config, 'POST', '/api/v1/devices/finish', {
           taskId: task.id,
-          status: 'done',
-          result: result.result,
+          status: failed ? 'failed' : 'done',
+          ...(failed ? { error: result.result } : { result: result.result }),
         })
-        console.log(`[worker] 任务完成 ${task.id}`)
+        console.log(`${failed ? '[worker] 任务失败' : '[worker] 任务完成'} ${task.id}`)
       } catch (error) {
         await request(config, 'POST', '/api/v1/devices/finish', {
           taskId: task.id,
