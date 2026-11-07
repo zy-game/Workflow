@@ -1,4 +1,7 @@
-# 07 · Harness 协作协议
+<!-- MCP 已从主路径移除；涉及 MCP 的段落是历史设计，当前以 docs/19 为准。 -->
+# 07 · Harness 协作协议（历史设计，MCP 数据面已移除）
+
+> 2026-11-06：主路径改为 worker + ACP；本文 MCP 数据面保留为历史设计，不再部署。
 
 > 青梅是脑，harness 是子 agent。本文定义两者之间怎么说话、谁控制谁、边界在哪。
 > 这一版取代 [06](06-基于DSH的复用方案.md) 的「青梅是 DSH 插件」假设：青梅独立部署，
@@ -116,8 +119,9 @@ interface NewSessionOptions {
 | `qm_report_capability` | 会话开始时声明自己能做什么 | 写入 harness 注册表 |
 | `qm_ask_human` | 卡住时向 owner 提问（可选阻塞） | 经渠道推送问题，等待回答 |
 | `qm_request_approval` | 危险操作前要授权 | 走 permission + 渠道确认 |
-| `qm_memory_recall` / `qm_memory_remember` | 读写青梅记忆 | 受敏感度策略约束 |
-| `qm_schedule_query` / `qm_schedule_add` | 查/加日程提醒 | 写日程表 |
+| `memory_recall` / `memory_remember` | 读写青梅记忆；召回结果带记忆 id | 受敏感度策略约束 |
+| `memory_list` / `memory_update` / `memory_forget` | 盘点记忆、按 id 修正内容、按 id 让记忆失效 | 写记忆库；群聊禁改禁删 |
+| `schedule_list` / `schedule_create` / `schedule_update` / `schedule_cancel` / `schedule_pause` / `schedule_resume` | 查/加/改/停日程提醒 | 写日程表 |
 | `qm_project_status` | 汇总项目最近 run/进度/产物/阻塞（项目审问的读取面） | 只读账本；数据过期时派只读盘点 run |
 | `qm_publish_artifact` | 交付产物（文件、链接、摘要） | 存 blob + 关联 TaskRun |
 | `qm_finish_task` | 收尾：结论、状态、未完成项、**结构化任务记忆** | 关闭 TaskRun + 写入记忆 |
@@ -129,10 +133,12 @@ interface NewSessionOptions {
 `qm_finish_task` 携带的 `memory` 字段是跨端记忆的主要来源：PC 工作区做完的事，通过它变成
 手机可召回的事实与教训。格式与合并规则见 [10 · 跨端统一记忆](10-跨端统一记忆.md) §5.1。
 
-> **当前落地（2026-11-02）**：上表是「子 agent 任务数据面」的目标工具集。已实现
+> **当前落地（2026-11-06）**：上表是「子 agent 任务数据面」的目标工具集。已实现
 > `qm_dispatch_task` / `qm_report_progress` / `qm_publish_artifact` / `qm_finish_task` /
 > `qm_project_status`（项目审问的读取面：按项目汇总最近 run，标注数据截止，超过 2 小时提示）
 > 与对话车道的 `memory_*` / `schedule_*`（尚未统一 `qm_` 前缀）。
+> 记忆已形成闭环：`memory_recall` 返回带 id 的条目，`memory_list` 盘点，`memory_update`
+> 按 id 改内容，`memory_forget` 按 id 软删除；三者都已在权限表登记，群聊里禁止改删。
 > 另一条前提：ACP 的文件与命令工具需要客户端**声明能力并实现方法**
 > （`fs/*`、`terminal/*`），且 DSH profile 里不能 `disabled` 掉 `tool-fs` / `tool-bash`；
 > 细节见仓库的 `deploy/README.md`。这两处没配好时，模型会声称「自己没有文件权限」。
@@ -143,7 +149,8 @@ interface NewSessionOptions {
 { "phase": "跑测试", "percent": 60, "note": "3 个用例失败，正在修" }
 ```
 
-`percent` 可省略；青梅更信 `phase` + `note`，因为模型给的百分比通常不准。
+`percent` 可省略；青梅更信 `phase` + 
+ote`，因为模型给的百分比通常不准。
 
 ## 5. 任务模型
 
