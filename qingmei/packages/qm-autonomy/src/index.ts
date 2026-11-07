@@ -65,6 +65,18 @@ export interface AutonomyConfig {
   digestAfter?: number
   /** 每天几点发摘要（本地小时） */
   digestHour?: number
+  /** 主动消息路由：work 默认飞书，casual 默认 QQ */
+  notify?: {
+    default?: NotifyRoute
+    work?: NotifyRoute
+    casual?: NotifyRoute
+    digest?: NotifyRoute
+  }
+}
+
+export interface NotifyRoute {
+  channel: string
+  conversationId: string
 }
 
 export const name = 'qm-autonomy'
@@ -387,11 +399,12 @@ class AutonomyRunner extends AutonomyService {
     })
   }
 
-  private async notify(text: string): Promise<{ ok: boolean; error?: string }> {
+  private async notify(text: string, kind: 'work' | 'casual' | 'digest' = 'casual'): Promise<{ ok: boolean; error?: string }> {
     try {
+      const route = this.config.notify?.[kind] ?? this.config.notify?.default
       const result = await this.channel.send({
-        channel: 'web',
-        conversationId: 'owner',
+        channel: route?.channel ?? 'web',
+        conversationId: route?.conversationId ?? 'owner',
         blocks: [{ type: 'text', text }],
       })
       return result.ok ? { ok: true } : { ok: false, ...(result.error ? { error: result.error } : {}) }

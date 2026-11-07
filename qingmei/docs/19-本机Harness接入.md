@@ -148,6 +148,41 @@ DSH 重启后 companion/hook 生效。
 - 412/412 串行测试通过
 - 桌宠 0.1.2 安装包已构建并上传
 
+## 7. 语音输入与主动推送
+
+### 语音输入
+
+Web/桌宠对话页使用浏览器 `SpeechRecognition`：
+
+- 支持时显示「语音」按钮，识别中文并填入输入框。
+- 需要 HTTPS 或 localhost；Electron 已放行 `media` 权限。
+- Android WebView 对 Web Speech API 支持不稳定，移动端需要 Capacitor 原生语音插件；
+  如果需要离线/隐私，改用本地 Whisper 服务接收 MediaRecorder 音频。
+
+### 主动推送
+
+`qm-autonomy` 的 `notify()` 现在支持路由：
+
+```yaml
+qm-autonomy:
+  notify:
+    work:
+      channel: feishu
+      conversationId: <飞书 chat_id>
+    casual:
+      channel: qq
+      conversationId: "dm:<openid>"   # 或 group:<group_openid>
+    digest:
+      channel: feishu
+      conversationId: <飞书 chat_id>
+```
+
+- 任务/工作类建议走 `work`（飞书）。
+- 闲聊/状态/升级提示走 `casual`（QQ）。
+- 每日摘要走 `digest`。
+- 未配置时回退 `web/owner`。
+
+`conversationId` 必须是渠道入站时真实出现过的会话 id；QQ 的 `dm:`/`group:` 前缀不能丢。
 ## 7. 边界
 
 - 只支持 DSH；ZCode 已从项目移除，不再注册、不安装 hook、不做 DB 同步。

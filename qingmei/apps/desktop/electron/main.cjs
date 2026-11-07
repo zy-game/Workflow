@@ -4,7 +4,7 @@
  * 透明、无边框、置顶、跳过任务栏；渲染层只通过 preload 暴露的最小 API
  * 读写设置与退出，不直接拿 Node。
  */
-const { app, BrowserWindow, Notification, ipcMain, Menu, safeStorage, screen, shell, Tray, nativeImage } = require('electron')
+const { app, BrowserWindow, Notification, ipcMain, Menu, safeStorage, screen, session, shell, Tray, nativeImage } = require('electron')
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
@@ -370,6 +370,10 @@ if (!gotLock) {
   app.whenReady().then(() => {
     if (process.platform === 'darwin') app.dock?.hide()
     Menu.setApplicationMenu(null)
+    session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
+      callback(permission === 'media')
+    })
+    session.defaultSession.setPermissionCheckHandler((_contents, permission) => permission === 'media')
     createWindow()
     setFullscreenWatch(readSettings().hideOnFullscreen)
     applyAutoStart(readSettings().autoStart)

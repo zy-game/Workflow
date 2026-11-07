@@ -19,11 +19,14 @@ const sending = ref(false)
 const failed = ref(false)
 const retryAt = ref(0)
 const noticeText = ref('')
+const listening = ref(false)
+const voiceSupported = computed(() => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition))
 let retryTimer = 0
 let counter = 0
 let current = null
 let historyLoaded = false
 let unsubscribers = []
+let recognition = null
 
 const overlayAvailable = computed(() => Boolean(window.Capacitor?.Plugins?.PetOverlay))
 const sendDisabled = computed(() => !hasAuth() || sending.value || Date.now() < retryAt.value)
@@ -166,6 +169,38 @@ async function sendMessage(text) {
   }
 }
 
+function toggleVoice() {
+  if (listening.value) {
+    recognition?.stop()
+    return
+  }
+  const Speech = window.SpeechRecognition || window.webkitSpeechRecognition
+  if (!Speech) {
+    appendNotice('当前环境不支持系统语音识别；桌面/安卓需要用原生语音插件')
+    return
+  }
+  recognition = new Speech()
+  recognition.lang = 'zh-CN'
+  recognition.interimResults = true
+  recognition.continuous = false
+  recognition.onstart = () => { listening.value = true }
+  recognition.onend = () => { listening.value = false }
+  recognition.onerror = (event) => {
+    listening.value = false
+    appendNotice(`语音识别失败：${event.error || 'unknown'}`)
+  }
+  recognition.onresult = (event) => {
+    let text = ''
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      text += event.results[index][0]?.transcript ?? ''
+    }
+    if (text) {
+      input.value = text
+      resize()
+    }
+  }
+  recognition.start()
+}
 function submit() {
   if (sendDisabled.value) return
   const text = input.value.trim()
@@ -231,6 +266,7 @@ watch(
 onBeforeUnmount(() => {
   for (const off of unsubscribers) off()
   clearTimeout(retryTimer)
+  recognition?.stop()
 })
 </script>
 
@@ -272,6 +308,9 @@ onBeforeUnmount(() => {
         @keydown="onKeydown"
         @input="resize"
       ></textarea>
+      <button v-if="voiceSupported" class="mic" :class="{ listening }" type="button" :aria-label="listening ? '停止语音输入' : '语音输入'" @click="toggleVoice">
+        {{ listening ? '听…' : '语音' }}
+      </button>
       <button class="send" type="submit" :disabled="sendDisabled">{{ sendText }}</button>
     </form>
   </section>
