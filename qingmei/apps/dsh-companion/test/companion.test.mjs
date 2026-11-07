@@ -34,11 +34,17 @@ test('companion 领 DSH 任务并创建 GUI 会话', async () => {
       cleanup = callback()
     },
     agents: {
+      get(id) {
+        return id === createdSessionId ? agent : undefined
+      },
+    },
+    sessionController: {
       async create(options) {
         createdSessionId = String(options.sessionId)
         calls.push({ kind: 'create', options })
-        return { agent, dispose: async () => {} }
+        return { sessionId: createdSessionId }
       },
+      async selectModel() {},
     },
     workspaceRegistry: {
       async create(path) {
