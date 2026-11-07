@@ -103,7 +103,8 @@ spawn dsh --profile acp / zcode-acp-server server
 - DSH companion：任务按 workspaceId 进入 `E:/Workflow`，prompt 注入相关记忆，digest 记录 turns/events；工具失败任务实测生成 3 条 lessons。
 - 设备列表能返回 `systemType/deviceClass/workspaces`。
 - ZCode headless + `builtin:bigmodel-start-plan/GLM-5.3-Flash` 实测仍被 Start Plan 验证码拦截，不能作为无人值守模型。
-- 桌宠安装包已构建，`resources/dsh-plugins` 包含 companion/hook；临时 profile 安装测试通过。
+- 桌宠安装包已构建，`resources/dsh-plugins` 包含 companion/hook，`resources/worker` 包含 worker + AcpClient；临时 profile 安装测试通过。
+- ZCode modelId 必须使用 `providerId\\\\modelId`（反斜杠），但 Start Plan 仍被 captcha 拦截。
 
 ## 9. 已验证
 
