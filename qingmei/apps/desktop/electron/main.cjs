@@ -119,13 +119,15 @@ function persist(settings) {
 }
 
 function startWorker() {
-  const script = path.join(here, '..', '..', 'scripts', 'harness-worker.mjs')
+  const script = app.isPackaged
+    ? path.join(process.resourcesPath, 'worker', 'scripts', 'harness-worker.mjs')
+    : path.join(here, '..', '..', 'scripts', 'harness-worker.mjs')
   if (!existsSync(script)) return { ok: false, error: '找不到 scripts/harness-worker.mjs' }
   const child = spawn(process.execPath, [script], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    cwd: path.join(here, '..', '..'),
+    cwd: app.isPackaged ? path.join(process.resourcesPath, 'worker') : path.join(here, '..', '..'),
   })
   child.unref()
   return { ok: true, message: 'Worker 已启动；配置来自 ~/.qingmei/worker.json' }
