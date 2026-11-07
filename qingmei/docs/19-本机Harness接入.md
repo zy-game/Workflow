@@ -180,7 +180,7 @@ qm-autonomy:
 - 任务/工作类建议走 `work`（飞书）。
 - 闲聊/状态/升级提示走 `casual`（QQ）。
 - 每日摘要走 `digest`。
-- 未配置时回退 `web/owner`。
+- 未配置时自动读取 `qm_channel_target` 里最近一次飞书/QQ 入站会话；没有目标才回退 `web/owner`。
 
 `conversationId` 必须是渠道入站时真实出现过的会话 id；QQ 的 `dm:`/`group:` 前缀不能丢。
 ## 7. 边界
