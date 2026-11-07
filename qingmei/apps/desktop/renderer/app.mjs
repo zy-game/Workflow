@@ -1119,7 +1119,7 @@ function bind() {
   window.addEventListener('mousemove', (event) => {
     const target = document.elementFromPoint(event.clientX, event.clientY)
     const interactive = Boolean(
-      target?.closest('#pet, #bubble, #chat, #drag-handle, #chat-button, #settings-button, #settings-modal'),
+      target?.closest('#pet, #bubble, #chat, #drag-handle, #chat-button, #settings-button, #settings-modal, #onboarding, #onboarding-skip, #onboarding-start'),
     )
     const next = !interactive
     if (next !== ignoringMouse) {
