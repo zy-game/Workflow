@@ -29,6 +29,7 @@ function writeWorkerConfig({ settings, home = os.homedir(), hostname = os.hostna
     localPort: 7431,
     zcodeSync: true,
     zcodeAcpCommand: 'zcode-acp-server server',
+    zcodeModel: 'builtin:bigmodel-start-plan/GLM-5.3-Flash',
     zcodeBin: existsSync(zcodeBin) ? zcodeBin : '',
     zcodeNode: existsSync(zcodeNode) ? zcodeNode : '',
   }

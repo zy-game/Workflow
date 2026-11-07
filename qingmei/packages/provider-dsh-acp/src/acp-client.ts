@@ -144,6 +144,11 @@ export class AcpClient {
     this.write({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } })
   }
 
+  /** ZCode ACP extension: choose the per-session provider/model. */
+  async setModel(sessionId: string, modelId: string): Promise<void> {
+    await this.request('session/setModel', { sessionId, modelId })
+  }
+
   stop(): void {
     for (const [, terminal] of this.terminals) {
       if (terminal.child.exitCode === null && terminal.child.signalCode === null) terminal.child.kill()

@@ -182,3 +182,53 @@ test('会话提炼落盘：同一 device/session 幂等', async () => {
     await h.dispose()
   }
 })
+
+test('设备工作区：上报系统类型、工作区和任务定向', async () => {
+  const h = await setup()
+  try {
+    const reg = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/register',
+      query: {},
+      headers: {},
+      body: {
+        id: 'dev-workspace',
+        platform: 'win32',
+        arch: 'x64',
+        workspaces: [{ id: 'ws-1', title: 'Workflow', path: 'E:\\Workflow' }],
+        harnesses: [{ kind: 'dsh', acp: true }],
+      },
+    })
+    assert.equal(reg.body.device.systemType, 'windows')
+    assert.equal(reg.body.device.deviceClass, 'desktop')
+    assert.deepEqual(reg.body.device.workspaces, [{ id: 'ws-1', title: 'Workflow', path: 'E:\\Workflow' }])
+
+    const created = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/tasks',
+      query: {},
+      headers: {},
+      body: {
+        deviceId: 'dev-workspace',
+        harness: 'dsh',
+        workspaceId: 'ws-1',
+        prompt: '只回复 OK',
+      },
+    })
+    assert.equal(created.status, 201)
+    assert.equal(created.body.task.workspaceId, 'ws-1')
+    assert.equal(created.body.task.cwd, 'E:\\Workflow')
+
+    const claimed = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/claim',
+      query: {},
+      headers: {},
+      body: { deviceId: 'dev-workspace', harness: 'dsh' },
+    })
+    assert.equal(claimed.body.task.id, created.body.task.id)
+    assert.equal(claimed.body.task.cwd, 'E:\\Workflow')
+  } finally {
+    await h.dispose()
+  }
+})

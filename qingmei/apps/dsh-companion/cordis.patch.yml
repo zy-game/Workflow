@@ -1,0 +1,9 @@
+- insert:
+    - id: qingmei-dsh-companion
+      name: "@qingmei/dsh-companion"
+      config:
+        enabled: false
+        api: https://139.155.78.241:8710
+        deviceId: dev_dsh_companion
+        workspacePath: E:\Workflow
+        token: ""

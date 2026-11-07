@@ -27,6 +27,18 @@
     "asarUnpack": [
       "electron/fullscreen.exe"
     ],
+    "extraResources": [
+      {
+        "from": "../dsh-companion",
+        "to": "dsh-plugins/dsh-companion",
+        "filter": ["**/*", "!test/**", "!*.tgz"]
+      },
+      {
+        "from": "../dsh-hook",
+        "to": "dsh-plugins/dsh-hook",
+        "filter": ["**/*", "!test/**", "!*.tgz"]
+      }
+    ],
     "files": [
       "electron/**/*",
       "renderer/**/*",

@@ -46,6 +46,7 @@ function loadConfig(args) {
     zcodeAcpCommand: String(args['zcode-acp-command'] ?? stored.zcodeAcpCommand ?? ''),
     zcodeBin: String(args['zcode-bin'] ?? stored.zcodeBin ?? ''),
     zcodeNode: String(args['zcode-node'] ?? stored.zcodeNode ?? ''),
+    zcodeModel: String(args['zcode-model'] ?? stored.zcodeModel ?? 'builtin:bigmodel-start-plan/GLM-5.3-Flash'),
     workdir: path.resolve(args.workdir ?? stored.workdir ?? path.join(ROOT, 'workspaces')),
     localPort: Number(args.port ?? stored.localPort ?? 7431),
     zcodeSync: process.argv.includes('--zcode-sync') || stored.zcodeSync === true,
@@ -93,7 +94,11 @@ async function runDsh(config, task) {
   const command = task.harness === 'zcode' ? config.zcodeAcpCommand : config.dshCommand
   if (!command) throw new Error(`没有配置 ${task.harness} 的 ACP 命令`)
   const [executable, ...args] = command.split(/\s+/)
-  const cwd = task.harness === 'zcode' ? config.workdir : path.join(config.workdir, task.id.replace(/[^a-zA-Z0-9_-]/g, '_'))
+  const cwd = task.cwd
+    ? path.resolve(task.cwd)
+    : task.harness === 'zcode'
+      ? config.workdir
+      : path.join(config.workdir, task.id.replace(/[^a-zA-Z0-9_-]/g, '_'))
   mkdirSync(cwd, { recursive: true })
   const mcpServers = []
   let output = ''
@@ -124,6 +129,11 @@ async function runDsh(config, task) {
   try {
     await client.start()
     const sessionId = await client.newSession(cwd, mcpServers)
+    if (task.harness === 'zcode' && config.zcodeModel) {
+      await client.setModel(sessionId, config.zcodeModel).catch((error) => {
+        console.error('[zcode] setModel failed', error instanceof Error ? error.message : String(error))
+      })
+    }
     const result = await client.prompt(sessionId, task.prompt)
     await client.closeSession(sessionId).catch(() => undefined)
     return { result: output.trim() || `ACP 完成：${result.stopReason}`, usage: result.usage ?? null }
@@ -194,7 +204,11 @@ async function createAcpSession(config, input) {
 
 async function memoryContext(config, text) {
   try {
-    const result = await request(config, 'GET', '/api/v1/memory?q=' + encodeURIComponent(text) + '&limit=5')
+    const result = await request(config, 'POST', '/api/v1/devices/context', {
+      deviceId: config.deviceId,
+      text,
+      limit: 5,
+    })
     return typeof result?.text === 'string' ? result.text.trim() : ''
   } catch {
     return ''
@@ -308,6 +322,9 @@ async function main() {
     arch: process.arch,
     hostname: hostname(),
     harnesses: caps,
+    workspaces: Array.isArray(config.workspaces) && config.workspaces.length > 0
+      ? config.workspaces
+      : [{ id: 'workdir', title: path.basename(config.workdir), path: config.workdir }],
     workerVersion: '0.1.0',
   })
   console.log(`[worker] 已注册：${registered.device.id} (${registered.device.platform}/${registered.device.arch})`)
@@ -330,6 +347,9 @@ async function main() {
         platform: process.platform,
         arch: process.arch,
         harnesses: caps,
+        workspaces: Array.isArray(config.workspaces) && config.workspaces.length > 0
+          ? config.workspaces
+          : [{ id: 'workdir', title: path.basename(config.workdir), path: config.workdir }],
         workerVersion: '0.1.0',
       })
       const claimed = await request(config, 'POST', '/api/v1/devices/claim', { deviceId: config.deviceId })

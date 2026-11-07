@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ENDPOINTS } from '../lib/endpoints.js'
 import { apiJson, apiSend } from '../lib/api.js'
 import { on } from '../lib/bus.js'
@@ -10,10 +10,13 @@ const approvals = ref([])
 const devices = ref([])
 const deviceTasks = ref([])
 const deviceId = ref('')
+const workspaceId = ref('')
 const devicePrompt = ref('')
 const deviceError = ref('')
 const error = ref('')
 const loading = ref(false)
+const selectedDevice = computed(() => devices.value.find((device) => device.id === deviceId.value))
+const workspaces = computed(() => selectedDevice.value?.workspaces ?? [])
 let unsubscribers = []
 
 async function load() {
@@ -32,6 +35,9 @@ async function load() {
     devices.value = Array.isArray(deviceBody?.items) ? deviceBody.items : []
     deviceTasks.value = Array.isArray(deviceTaskBody?.items) ? deviceTaskBody.items : []
     if (!deviceId.value && devices.value.length > 0) deviceId.value = devices.value[0].id
+    if (!workspaceId.value || !workspaces.value.some((workspace) => workspace.id === workspaceId.value)) {
+      workspaceId.value = workspaces.value[0]?.id ?? ''
+    }
     error.value = ''
   } catch (err) {
     error.value = err instanceof TypeError ? '无法连接服务' : err.message || '读取任务失败'
@@ -39,6 +45,10 @@ async function load() {
     loading.value = false
   }
 }
+
+watch(deviceId, () => {
+  workspaceId.value = workspaces.value[0]?.id ?? ''
+})
 
 async function dispatchDevice() {
   deviceError.value = ''
@@ -49,7 +59,14 @@ async function dispatchDevice() {
   try {
     await apiSend(ENDPOINTS.deviceTasks, {
       method: 'POST',
-      body: { deviceId: deviceId.value, prompt: devicePrompt.value.trim(), title: devicePrompt.value.trim().slice(0, 40), harness: 'dsh' },
+      body: {
+        deviceId: deviceId.value,
+        workspaceId: workspaceId.value || undefined,
+        cwd: workspaces.value.find((workspace) => workspace.id === workspaceId.value)?.path,
+        prompt: devicePrompt.value.trim(),
+        title: devicePrompt.value.trim().slice(0, 40),
+        harness: selectedDevice.value?.harnesses?.[0]?.kind ?? 'dsh',
+      },
     })
     devicePrompt.value = ''
     await load()
@@ -106,7 +123,13 @@ onBeforeUnmount(() => {
         <select v-model="deviceId" class="input">
           <option value="">选择设备</option>
           <option v-for="device in devices" :key="device.id" :value="device.id">
-            {{ device.name }} · {{ device.platform }}/{{ device.arch }} · {{ device.online ? '在线' : '离线' }}
+            {{ device.name }} · {{ device.systemType || device.platform }}/{{ device.arch }} · {{ device.deviceClass || 'desktop' }} · {{ device.online ? '在线' : '离线' }}
+          </option>
+        </select>
+        <select v-model="workspaceId" class="input" :disabled="workspaces.length === 0">
+          <option value="">选择工作区</option>
+          <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">
+            {{ workspace.title }} · {{ workspace.path }}
           </option>
         </select>
         <input v-model="devicePrompt" class="input" placeholder="例如：把当前测试跑一遍，失败就修" />
@@ -118,7 +141,7 @@ onBeforeUnmount(() => {
           <div class="item-main">
             <p class="item-title">{{ task.title || task.prompt }}</p>
             <p class="item-meta">
-              {{ task.deviceId }} · {{ task.harness }} · {{ TASK_STATUS_TEXT[task.status] ?? task.status }}
+              {{ task.deviceId }} · {{ task.harness }} · {{ task.workspaceId || '默认工作区' }} · {{ TASK_STATUS_TEXT[task.status] ?? task.status }}
               · {{ formatWhen(task.createdAt, null) }}
             </p>
             <p v-if="task.result" class="item-note">{{ task.result.slice(0, 300) }}</p>

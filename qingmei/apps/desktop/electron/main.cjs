@@ -9,6 +9,7 @@ const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs'
 const path = require('node:path')
 const os = require('node:os')
 const { writeWorkerConfig } = require('./agent-config.cjs')
+const { installDshPlugins } = require('./dsh-install.cjs')
 const { execFile, execFileSync, spawn } = require('node:child_process')
 const { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed, loginCommand } = require('./layout.cjs')
 
@@ -61,7 +62,6 @@ function readSettings() {
   settingsCache = {
     serverUrl: typeof stored.serverUrl === 'string' ? stored.serverUrl : process.env.QM_SERVER_URL || 'http://127.0.0.1:7410',
     token: decryptToken(stored),
-    mcpToken: decryptMcpToken(stored),
     bounds: stored.bounds && typeof stored.bounds === 'object' ? stored.bounds : null,
     scale: clampScale(stored.scale),
     fontScale: clampFontScale(stored.fontScale),
@@ -82,18 +82,6 @@ function clampScale(value) {
 function clampFontScale(value) {
   const number = Number(value)
   return Number.isFinite(number) ? Math.min(1.3, Math.max(0.85, number)) : 1
-}
-
-function decryptMcpToken(stored) {
-  if (typeof stored.mcpTokenEnc === 'string' && stored.mcpTokenEnc) {
-    try {
-      return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(stored.mcpTokenEnc, 'base64')) : ''
-    } catch {
-      return ''
-    }
-  }
-  if (typeof stored.mcpTokenPlain === 'string') return stored.mcpTokenPlain
-  return process.env.QM_MCP_TOKEN || ''
 }
 
 function decryptToken(stored) {
@@ -126,86 +114,10 @@ function persist(settings) {
     if (safeStorage.isEncryptionAvailable()) payload.tokenEnc = safeStorage.encryptString(settings.token).toString('base64')
     else payload.tokenPlain = settings.token
   }
-  if (settings.mcpToken) {
-    if (safeStorage.isEncryptionAvailable()) payload.mcpTokenEnc = safeStorage.encryptString(settings.mcpToken).toString('base64')
-    else payload.mcpTokenPlain = settings.mcpToken
-  }
   writeFileSync(settingsPath(), JSON.stringify(payload, null, 2), 'utf8')
   settingsCache = settings
 }
 
-function mcpEndpoint(settings) {
-  const base = String(settings.serverUrl || '').replace(/\/+$/, '')
-  return process.env.QM_MCP_URL || `${base}/mcp`
-}
-
-function setupAgent(target) {
-  const settings = readSettings()
-  if (!settings.mcpToken) return { ok: false, error: '请先填写 MCP Token' }
-  const home = app.getPath('home')
-  const url = mcpEndpoint(settings)
-  const headers = { Authorization: `Bearer ${settings.mcpToken}` }
-  const zcodePath = path.join(home, '.zcode', 'cli', 'config.json')
-  const dshPath = path.join(home, '.dsh', 'mcp.servers.yml')
-  const agentsPath = path.join(home, '.agents', 'mcp.json')
-  const server = { type: 'http', url, headers }
-  if (target === 'zcode' || target === 'both') {
-    let config = {}
-    try {
-      if (existsSync(zcodePath)) config = JSON.parse(readFileSync(zcodePath, 'utf8'))
-    } catch {
-      config = {}
-    }
-    config.mcp = config.mcp && typeof config.mcp === 'object' ? config.mcp : {}
-    config.mcp.servers = config.mcp.servers && typeof config.mcp.servers === 'object' ? config.mcp.servers : {}
-    config.mcp.servers.qingmei = server
-    mkdirSync(path.dirname(zcodePath), { recursive: true })
-    writeFileSync(zcodePath, JSON.stringify(config, null, 2), 'utf8')
-  }
-  if (target === 'dsh' || target === 'both') {
-    mkdirSync(path.dirname(dshPath), { recursive: true })
-    writeFileSync(
-      dshPath,
-      ['qingmei:', '  type: http', `  url: ${url}`, '  headers:', `    Authorization: Bearer ${settings.mcpToken}`, ''].join('\n'),
-      'utf8',
-    )
-  }
-  if (target === 'zcode' || target === 'dsh' || target === 'both') {
-    let agents = { mcpServers: {} }
-    try {
-      if (existsSync(agentsPath)) agents = JSON.parse(readFileSync(agentsPath, 'utf8'))
-    } catch {
-      agents = { mcpServers: {} }
-    }
-    agents.mcpServers = agents.mcpServers && typeof agents.mcpServers === 'object' ? agents.mcpServers : {}
-    agents.mcpServers.qingmei = server
-    mkdirSync(path.dirname(agentsPath), { recursive: true })
-    writeFileSync(agentsPath, JSON.stringify(agents, null, 2), 'utf8')
-  }
-  if (target === 'worker') {
-    const workerPath = path.join(home, '.qingmei', 'worker.json')
-    mkdirSync(path.dirname(workerPath), { recursive: true })
-    writeFileSync(
-      workerPath,
-      JSON.stringify(
-        {
-          server: settings.serverUrl.replace(/\/+$/, ''),
-          token: settings.token,
-          mcpUrl: url,
-          mcpToken: settings.mcpToken,
-          name: `${os.hostname()} (Windows)`,
-          deviceId: `dev-${os.hostname().replace(/[^a-zA-Z0-9]+/g, '-')}-${Math.random().toString(36).slice(2, 8)}`,
-          dshCommand: 'dsh',
-        },
-        null,
-        2,
-      ),
-      'utf8',
-    )
-  }
-  const names = { zcode: 'ZCode', dsh: 'DSH', both: 'ZCode + DSH', worker: '本机 Worker' }
-  return { ok: true, message: `已配置 ${names[target] || target} 的 MCP；地址 ${url}` }
-}
 function startWorker() {
   const script = path.join(here, '..', '..', 'scripts', 'harness-worker.mjs')
   if (!existsSync(script)) return { ok: false, error: '找不到 scripts/harness-worker.mjs' }
@@ -459,6 +371,19 @@ if (!gotLock) {
     createWindow()
     setFullscreenWatch(readSettings().hideOnFullscreen)
     applyAutoStart(readSettings().autoStart)
+    const startupSettings = readSettings()
+    if (startupSettings.token) {
+      try {
+        installDshPlugins({
+          home: app.getPath('home'),
+          token: startupSettings.token,
+          api: startupSettings.serverUrl,
+          workspacePath: process.env.QINGMEI_WORKSPACE,
+        })
+      } catch {
+        // DSH 未安装或 profile 不可写时不影响桌宠启动
+      }
+    }
     setupUpdates()
 
     ipcMain.handle('settings:get', () => {
@@ -466,7 +391,6 @@ if (!gotLock) {
       return {
         serverUrl: settings.serverUrl,
         token: settings.token,
-        mcpToken: settings.mcpToken,
         hasToken: Boolean(settings.token),
         scale: settings.scale,
         fontScale: settings.fontScale,
@@ -481,7 +405,6 @@ if (!gotLock) {
     ipcMain.handle('settings:save', (_event, incoming) => {
       const serverUrl = typeof incoming?.serverUrl === 'string' ? incoming.serverUrl.trim() : ''
       const token = typeof incoming?.token === 'string' ? incoming.token.trim() : ''
-      const mcpToken = typeof incoming?.mcpToken === 'string' ? incoming.mcpToken.trim() : current.mcpToken
       if (!/^https?:\/\/\S+$/i.test(serverUrl)) throw new Error('服务器地址必须是 http(s) URL')
       const current = readSettings()
       const scale = clampScale(incoming?.scale ?? current.scale)
@@ -490,7 +413,6 @@ if (!gotLock) {
         ...current,
         serverUrl,
         token,
-        mcpToken,
         scale,
         fontScale,
         sound: incoming?.sound !== false,
@@ -506,12 +428,37 @@ if (!gotLock) {
       persist(settings)
       applyAutoStart(settings.autoStart)
       setFullscreenWatch(settings.hideOnFullscreen)
+      if (settings.token) {
+        try {
+          installDshPlugins({
+            home: app.getPath('home'),
+            token: settings.token,
+            api: settings.serverUrl,
+            workspacePath: process.env.QINGMEI_WORKSPACE,
+          })
+        } catch {
+          // DSH 未安装或 profile 不可写时不影响保存
+        }
+      }
       return { ok: true, scale }
     })
 
-    ipcMain.handle('agent:worker-config', () =>
-      writeWorkerConfig({ settings: readSettings(), home: app.getPath('home') }),
-    )
+    ipcMain.handle('agent:worker-config', () => {
+      const settings = readSettings()
+      const result = writeWorkerConfig({ settings, home: app.getPath('home') })
+      if (!result.ok) return result
+      const plugins = installDshPlugins({
+        home: app.getPath('home'),
+        token: settings.token,
+        api: settings.serverUrl,
+        workspacePath: process.env.QINGMEI_WORKSPACE,
+      })
+      return {
+        ...result,
+        message: `${result.message}${plugins.ok && !plugins.skipped ? `；${plugins.message}` : ''}`,
+        plugins,
+      }
+    })
     ipcMain.handle('agent:worker-start', () => startWorker())
     ipcMain.handle('menu:popup', () => {
       Menu.buildFromTemplate([
