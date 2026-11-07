@@ -314,6 +314,28 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     }),
   )
 
+  async function optimize(summary: string, events: unknown[]): Promise<string[]> {
+    const llm = ctx.reflect.get('llm', false) as LlmService | undefined
+    if (!llm || events.length === 0) return []
+    const transcript = `${summary}\n${JSON.stringify(events).slice(0, 6000)}`
+    const { text } = await llm.complete({
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是自优化分析器。阅读会话和工具事件，提炼可复用的失败教训、重试模式或流程改进。' +
+            '只输出 JSON 字符串数组，每项不超过 120 字；没有就输出 []。',
+        },
+        { role: 'user', content: transcript.slice(0, 8000) },
+      ],
+    })
+    try {
+      const parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim())
+      return Array.isArray(parsed) ? parsed.map((item) => String(item).slice(0, 240)).slice(0, 10) : []
+    } catch {
+      return []
+    }
+  }
   async function distill(input: { summary: string; turns: unknown[]; facts: unknown[] }): Promise<MemoryRecord[]> {
     const llm = ctx.reflect.get('llm', false) as LlmService | undefined
     const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
@@ -449,7 +471,16 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
         if (distilled.length > 0) {
           await digests.update(id, { distilled_json: JSON.stringify(distilled) })
         }
-        res.status(200).send({ ok: true, id, distilled: distilled.length })
+        let lessons: string[] = []
+        try {
+          lessons = await optimize(row.summary, JSON.parse(row.events_json) as unknown[])
+        } catch {
+          lessons = []
+        }
+        if (lessons.length > 0) {
+          await digests.update(id, { lessons_json: JSON.stringify(lessons) })
+        }
+        res.status(200).send({ ok: true, id, distilled: distilled.length, lessons: lessons.length })
       },
     }),
   )
