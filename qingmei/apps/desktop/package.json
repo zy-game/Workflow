@@ -82,7 +82,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "perMachine": false,
-      "allowElevation": false
+      "allowElevation": false,
+      "include": "build/nsis.nsh"
     }
   },
   "dependencies": {
