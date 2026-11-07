@@ -46,7 +46,7 @@ function loadConfig(args) {
     zcodeAcpCommand: String(args['zcode-acp-command'] ?? stored.zcodeAcpCommand ?? ''),
     zcodeBin: String(args['zcode-bin'] ?? stored.zcodeBin ?? ''),
     zcodeNode: String(args['zcode-node'] ?? stored.zcodeNode ?? ''),
-    zcodeModel: String(args['zcode-model'] ?? stored.zcodeModel ?? 'builtin:bigmodel-start-plan/GLM-5.3-Flash'),
+    zcodeModel: String(args['zcode-model'] ?? stored.zcodeModel ?? 'builtin:bigmodel-start-plan\\GLM-5.3-Flash'),
     workdir: path.resolve(args.workdir ?? stored.workdir ?? path.join(ROOT, 'workspaces')),
     localPort: Number(args.port ?? stored.localPort ?? 7431),
     zcodeSync: process.argv.includes('--zcode-sync') || stored.zcodeSync === true,
