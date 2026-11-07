@@ -78,8 +78,7 @@
       "artifactName": "qingmei-desktop-${version}-${arch}.${ext}"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
       "createDesktopShortcut": true,
       "perMachine": false,
       "allowElevation": false
