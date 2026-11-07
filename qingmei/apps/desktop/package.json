@@ -80,7 +80,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "perMachine": false,
+      "allowElevation": false
     }
   },
   "dependencies": {
