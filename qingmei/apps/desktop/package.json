@@ -1,5 +1,5 @@
 {
-  "name": "@qingmei/desktop",
+  "name": "qingmei-desktop",
   "version": "0.1.2",
   "private": true,
   "type": "module",
@@ -82,8 +82,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "perMachine": false,
-      "allowElevation": false,
-      "include": "build/nsis.nsh"
+      "allowElevation": false
     }
   },
   "dependencies": {
