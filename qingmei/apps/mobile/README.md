@@ -35,6 +35,19 @@ APK：`apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`。
 
 Gradle wrapper 默认指向腾讯镜像；离线时可把 `distributionUrl` 改为本地 zip 的 `file:///` 地址。
 
+## 应用内更新（Android）
+
+启动时拉 `https://<服务器>/updates/android/latest.json`，与本机 `versionCode` 比较；有新版弹出提示，
+点「立即更新」后由原生插件下载 APK、校验 sha256，再拉起系统安装器。
+
+- 原生：`QmUpdaterPlugin`（getInfo / downloadAndInstall）+ `REQUEST_INSTALL_PACKAGES` 权限
+- 前端：`apps/web/src/lib/updater.js` + `UpdatePrompt.vue`（只在 Capacitor Android 下生效）
+- 首次更新会要求允许「安装未知应用」；拒绝后可在系统设置里开启
+- 更新源目录 `/opt/qingmei/updates/android/` 需要 CORS（见 `deploy/nginx-updates.conf`）
+
+发布流程：升 `versionCode`/`versionName` → `pnpm cap:sync` → `gradlew assembleDebug` → 上传 APK 与
+`latest.json`（含 `versionCode`、`url`、`sha256`）。旧版本没有更新器，需要手动安装一次带更新器的包。
+
 ## 连接
 
 1. 安装 APK，打开青梅

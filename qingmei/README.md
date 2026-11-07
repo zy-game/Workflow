@@ -47,7 +47,7 @@
 内核 Kernel       cordis：Context · Plugin · Fiber · Effect · Service · inject
 ```
 
-harness（DSH / ZCode / Claude Code…）通过 **ACP** 被青梅拉起和调度，通过 **MCP** 回调上报进度、
+harness（DSH / ZCode / Claude Code…）通过 **ACP** 被 worker 拉起和调度，结果经 worker 回传，
 申请审批；青梅不越界去改它们的界面。见 [07](docs/07-Harness协作协议.md)。
 
 ## 文档地图
@@ -61,7 +61,7 @@ harness（DSH / ZCode / Claude Code…）通过 **ACP** 被青梅拉起和调度
 | [04 记忆数据与隐私](docs/04-记忆数据与隐私.md) | 数据表、记忆四层、写入/召回/遗忘、敏感度出网矩阵 |
 | [05 落地路线](docs/05-落地路线.md) | M0–M6 里程碑、验收标准、测试策略、ADR、风险与待决问题 |
 | [06 基于 DSH 的复用方案](docs/06-基于DSH的复用方案.md) | 能不能拿 DeepSeek Harness 当底座、能省哪些轮子、spike 验证清单（已被 07 取代，保留作事实参考） |
-| [07 Harness 协作协议](docs/07-Harness协作协议.md) | 青梅为脑、harness 为子 agent：ACP/MCP 双平面、任务模型、watch 渠道 |
+| [07 Harness 协作协议](docs/07-Harness协作协议.md) | 青梅为脑、harness 为子 agent：ACP/worker 主路径；MCP 历史、任务模型、watch 渠道 |
 | [08 自进化与自修复](docs/08-自进化与自修复.md) | 分级自改、诊断→提案→确认→换版→回滚、playbook 沉淀 |
 | [09 神经元记忆核心](docs/09-神经元记忆核心.md) | 神经元/突触模型、激活动力学、召回与巩固、人格化三层 |
 | [10 跨端统一记忆](docs/10-跨端统一记忆.md) | 一个记忆多个视口、幂等写入、多源合并、任务缝合、群聊隔离 |
@@ -72,6 +72,7 @@ harness（DSH / ZCode / Claude Code…）通过 **ACP** 被青梅拉起和调度
 | [15 任务督促与强制措施](docs/15-任务督促与强制措施.md) | 任务合同、事实清单、L0–L4 升级阶梯、可行性与伦理 |
 | [16 Future 与硬件依赖](docs/16-Future与硬件依赖.md) | 暂缓项的前置条件与触发条件 |
 | [17 DSH 接入](docs/17-DSH接入.md) | DSH 升级到 0.2.1、模型路由到 sub2api、ACP 会话验证记录 |
+| [18 账号运维](docs/18-账号运维.md) | 让青梅自己运维一批平台账号（博客 / B站 / 微博 / 知乎）：内容层账本与四平台形态已落地，平台连接器与发布待账号接入 |
 
 建议阅读顺序：**[总体方案](docs/00-总体方案.md) → 架构总览 → 规则分层 → 神经元记忆核心 → 跨端统一记忆 → 群画像 → Harness 协作 → 主动性 → 落地路线**。
 09 定义"它怎么记得"，10 定义"多端怎么不分裂"，11 定义"群里怎么说话"，08 定义"它怎么变好"，12 定义"什么该写成代码"，13 定义"它什么时候该出现"。

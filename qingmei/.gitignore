@@ -1,5 +1,6 @@
 node_modules/
 data/
+config-snapshots/
 *.log
 dist/
 .pnpm-store/

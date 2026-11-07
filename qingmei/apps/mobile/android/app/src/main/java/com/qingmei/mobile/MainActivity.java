@@ -11,6 +11,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(SecureStorePlugin.class);
         registerPlugin(PetOverlayPlugin.class);
+        registerPlugin(QmUpdaterPlugin.class);
         super.onCreate(savedInstanceState);
         routeIntent(getIntent());
     }

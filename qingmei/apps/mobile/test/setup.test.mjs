@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 
@@ -27,7 +27,12 @@ test('主界面直接聊天，并提供悬浮入口', () => {
   execFileSync(process.execPath, [join(root, 'scripts', 'sync-web.mjs')], { cwd: root })
   const html = readFileSync(join(root, 'www', 'index.html'), 'utf8')
   assert.match(html, /app\/index\.html/)
-  const app = readFileSync(join(root, 'www', 'app', 'app.js'), 'utf8')
-  assert.match(app, /overlay-toggle/)
+  // Vue 构建产物按视图分包；悬浮入口在打包后的字符串里，扫全部 js 块
+  const assets = join(root, 'www', 'app', 'assets')
+  const app = readdirSync(assets)
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => readFileSync(join(assets, name), 'utf8'))
+    .join('\n')
   assert.match(app, /PetOverlay/)
+  assert.match(app, /悬浮到桌面/)
 })

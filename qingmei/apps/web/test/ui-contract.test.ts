@@ -1,120 +1,134 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ENDPOINTS } from '../src/lib/endpoints.js'
 
-// 前端零构建、没有类型检查，所以这里用静态断言守住两处最容易静默失效的契约：
-// app.js 引用的 DOM id 必须真的存在于 index.html；请求的接口必须真的被网关注册。
+// 前端改为 Vue 3 后依然没有类型检查，这里继续用静态断言守住两处最容易静默失效的契约：
+// 页面请求的接口必须真的被网关注册；导航与 SSE 订阅必须真的覆盖后端事件。
 const here = path.dirname(fileURLToPath(import.meta.url))
-const PUBLIC = path.resolve(here, '../public')
-const GATEWAY = path.resolve(here, '../../../packages/host-gateway/src/index.ts')
-const QM_TASK = path.resolve(here, '../../../packages/qm-task/src/index.ts')
-const QM_APPROVAL = path.resolve(here, '../../../packages/qm-approval/src/index.ts')
-const QM_AUTONOMY = path.resolve(here, '../../../packages/qm-autonomy/src/index.ts')
-const QM_PROFILE = path.resolve(here, '../../../packages/qm-conversation-profile/src/index.ts')
+const SRC = path.resolve(here, '../src')
+const REPO = path.resolve(here, '../../..')
+const GATEWAY = path.join(REPO, 'packages/host-gateway/src/index.ts')
+const QM_CONTENT = path.join(REPO, 'packages/qm-content/src/index.ts')
 
-async function readPublic(name: string): Promise<string> {
-  return readFile(path.join(PUBLIC, name), 'utf8')
+async function readSource(name: string): Promise<string> {
+  return readFile(path.join(SRC, name), 'utf8')
 }
 
-test('app.js 引用的每个 DOM id 都存在于 index.html', async () => {
-  const script = await readPublic('app.js')
-  const html = await readPublic('index.html')
-
-  const ids = [...script.matchAll(/getElementById\('([^']+)'\)/g)].map((match) => match[1]!)
-  assert.ok(ids.length >= 10, `app.js 的 getElementById 数量异常：${ids.length}`)
-
-  for (const id of new Set(ids)) {
-    assert.match(html, new RegExp(`id="${id}"`), `index.html 缺少 #${id}`)
+test('ENDPOINTS 覆盖核心面板与账号运维内容层', () => {
+  const expected = {
+    schedules: './api/v1/schedules',
+    tasks: './api/v1/tasks',
+    approvals: './api/v1/approvals',
+    autonomy: './api/v1/autonomy',
+    conversations: './api/v1/conversations',
+    incidents: './api/v1/incidents',
+    review: './api/v1/review',
+    audit: './api/v1/audit',
+    persona: './api/v1/persona',
+    content: './api/v1/content',
+    contentItem: './api/v1/content/item',
+    contentStatus: './api/v1/content/status',
+    contentTransition: './api/v1/content/transition',
+    contentRender: './api/v1/content/render',
+    contentPublish: './api/v1/content/publish',
+  }
+  for (const [key, value] of Object.entries(expected)) {
+    assert.equal(ENDPOINTS[key], value, `ENDPOINTS.${key} 应为 ${value}`)
   }
 })
 
-test('app.js 请求的日程接口与网关注册的路由一致', async () => {
-  const script = await readPublic('app.js')
+test('qm-content 注册了内容层的全部路由并推送 content-updated', async () => {
+  const plugin = await readFile(QM_CONTENT, 'utf8')
+  for (const route of [
+    '/api/v1/content',
+    '/api/v1/content/item',
+    '/api/v1/content/status',
+    '/api/v1/content/update',
+    '/api/v1/content/transition',
+    '/api/v1/content/render',
+    '/api/v1/content/publish',
+  ]) {
+    assert.ok(plugin.includes(`'${route}'`), `qm-content 应注册 ${route}`)
+  }
+  assert.match(plugin, /'content-updated'/, 'qm-content 应把内容变更推到 SSE')
+})
+
+test('导航与路由表一致：11 个面板都能落到视图文件', async () => {
+  const router = await readSource('router.js')
+  const nav = [
+    ['/', 'ChatView.vue'],
+    ['/tasks', 'TasksView.vue'],
+    ['/schedules', 'SchedulesView.vue'],
+    ['/memories', 'MemoriesView.vue'],
+    ['/autonomy', 'AutonomyView.vue'],
+    ['/conversations', 'ConversationsView.vue'],
+    ['/review', 'ReviewView.vue'],
+    ['/incidents', 'IncidentsView.vue'],
+    ['/audit', 'AuditView.vue'],
+    ['/content', 'ContentView.vue'],
+    ['/settings', 'SettingsView.vue'],
+  ]
+  for (const [route, view] of nav) {
+    assert.ok(router.includes(`'${route}'`), `router.js 缺少路由 ${route}`)
+    assert.ok(router.includes(view), `router.js 缺少视图 ${view}`)
+    await access(path.join(SRC, 'views', view))
+  }
+  assert.equal((router.match(/name: '/g) ?? []).length, nav.length, '每条导航都应有对应的具名路由')
+})
+
+test('SSE 订阅覆盖任务、审批、主动与内容事件', async () => {
+  const sse = await readSource('lib/sse.js')
+  for (const event of ['task-started', 'task-progress', 'task-finished', 'approval-requested', 'approval-decided', 'autonomy-tick', 'content-updated']) {
+    assert.ok(sse.includes(`'${event}'`), `sse.js 应订阅 ${event}`)
+  }
+  assert.match(sse, /searchParams\.set\('token'/, 'EventSource 的令牌应走 query')
+})
+
+test('内容控制台订阅真实接口：渲染、状态迁移与发布闸门', async () => {
+  const view = await readSource('views/ContentView.vue')
+  for (const key of ['contentStatus', 'contentItem', 'contentUpdate', 'contentTransition', 'contentRender', 'contentPublish']) {
+    assert.ok(view.includes(`ENDPOINTS.${key}`), `ContentView 应调用 ENDPOINTS.${key}`)
+  }
+  assert.match(view, /素材分级|source/, 'ContentView 应有素材分级入口')
+  assert.match(view, /账号未接入|未接入/, 'ContentView 应明确平台未接入的闸门状态')
+})
+
+
+test('网关仍提供登录、会话与事件流入口', async () => {
   const gateway = await readFile(GATEWAY, 'utf8')
-
-  assert.match(script, /schedules: '\.\/api\/v1\/schedules'/, 'app.js 应把日程接口写在 ENDPOINTS 里')
-  assert.match(script, /method: 'DELETE'/, '取消日程应使用 DELETE')
-  assert.match(script, /method: 'PATCH'/, '编辑日程应使用 PATCH')
-  assert.match(script, /'pause' : 'resume'/, '暂停/继续应打到 /pause 与 /resume')
-  assert.match(gateway, /pathname === '\/api\/v1\/schedules'/, '网关应注册 GET /api/v1/schedules')
-  assert.match(gateway, /pathname\.startsWith\('\/api\/v1\/schedules\/'\) && method === 'PATCH'/, '网关应注册 PATCH')
-  assert.match(gateway, /pathname\.startsWith\('\/api\/v1\/schedules\/'\) && method === 'DELETE'/, '网关应注册 DELETE')
-  assert.match(gateway, /\(pause\|resume\)/, '网关应识别 /pause 与 /resume')
+  assert.match(gateway, /pathname === '\/api\/v1\/login'/, '网关应提供 POST /api/v1/login')
+  assert.match(gateway, /pathname === '\/api\/v1\/session'/, '网关应提供 GET /api/v1/session')
+  assert.match(gateway, /pathname === '\/api\/v1\/events'/, '网关应提供 SSE /api/v1/events')
 })
 
-test('任务面板与 qm-task 的路由/事件对得上', async () => {
-  const script = await readPublic('app.js')
-  const taskPlugin = await readFile(QM_TASK, 'utf8')
+test('移动端菜单收进抽屉：青梅开关、遮罩与菜单项都能收起', async () => {
+  const app = await readSource('App.vue')
+  assert.match(app, /class="topbar"/, 'App.vue 应有移动端顶栏')
+  assert.match(app, /drawer-trigger/, '顶栏「青梅」应是抽屉开关')
+  assert.match(app, /:aria-expanded="drawerOpen"/, '开关应暴露抽屉展开状态')
+  assert.match(app, /class="drawer-scrim"/, '抽屉应有空白遮罩')
+  assert.match(app, /@click="closeDrawer\(\)"/, '遮罩与菜单项应能收起抽屉')
 
-  assert.match(script, /tasks: '\.\/api\/v1\/tasks'/, 'app.js 应把任务接口写在 ENDPOINTS 里')
-  assert.match(script, /task-progress/, '任务面板应订阅 SSE 的 task-progress')
-  assert.match(script, /TASK_STATUS_TEXT/, '任务面板应有状态文案')
-
-  assert.match(taskPlugin, /path: '\/api\/v1\/tasks'/, 'qm-task 应注册 /api/v1/tasks')
-  assert.match(taskPlugin, /'task-started'/, 'qm-task 应把 run-started 推到 SSE')
-  assert.match(taskPlugin, /'task-progress'/, 'qm-task 应把 progress 推到 SSE')
-  assert.match(taskPlugin, /'task-finished'/, 'qm-task 应把 finished 推到 SSE')
+  const css = await readSource('style.css')
+  assert.match(css, /\.drawer-open \.sidebar/, '移动端应有抽屉展开样式')
+  assert.match(css, /\.drawer-open \.drawer-scrim/, '移动端应有遮罩显隐样式')
 })
 
-test('待确认区与 qm-approval 的路由/事件对得上', async () => {
-  const script = await readPublic('app.js')
-  const approvalPlugin = await readFile(QM_APPROVAL, 'utf8')
+test('入口契约：Vue 挂载点、config.js 与登录门都在', async () => {
+  const index = await readFile(path.join(REPO, 'apps/web/index.html'), 'utf8')
+  assert.match(index, /id="app"/, 'index.html 应有 Vue 挂载点')
+  assert.match(index, /src="\/config.js"/, 'index.html 应加载移动端配置')
+  assert.match(index, /src="\/src\/main.js"/, 'index.html 应加载 Vue 入口')
 
-  assert.match(script, /approvals: '\.\/api\/v1\/approvals'/, 'app.js 应把审批接口写在 ENDPOINTS 里')
-  assert.match(script, /approval-requested/, '面板应订阅 approval-requested')
-  assert.match(script, /approvalDecide/, '批准/拒绝应打到 decide 接口')
+  const app = await readSource('App.vue')
+  assert.match(app, /router-view/, 'App.vue 应渲染路由视图')
+  assert.match(app, /LoginModal/, 'App.vue 应包含登录门')
+  assert.match(app, /connect\(\)/, 'App.vue 启动后应连接 SSE')
 
-  assert.match(approvalPlugin, /path: '\/api\/v1\/approvals'/, 'qm-approval 应注册 GET /api/v1/approvals')
-  assert.match(approvalPlugin, /path: '\/api\/v1\/approvals\/decide'/, 'qm-approval 应注册 decide')
-  assert.match(approvalPlugin, /'approval-requested'/, 'qm-approval 应把请求推到 SSE')
-  assert.match(approvalPlugin, /'approval-decided'/, 'qm-approval 应把判定推到 SSE')
-})
-
-test('主动面板与 qm-autonomy 的路由/事件对得上', async () => {
-  const script = await readPublic('app.js')
-  const autonomyPlugin = await readFile(QM_AUTONOMY, 'utf8')
-
-  assert.match(script, /autonomy: '\.\/api\/v1\/autonomy'/, 'app.js 应把自主循环接口写在 ENDPOINTS 里')
-  assert.match(script, /autonomy-tick/, '主动面板应订阅 SSE 的 autonomy-tick')
-  assert.match(script, /autonomy\/tick/, '应有「立即巡一次」的入口')
-  assert.match(script, /autonomyComplaint: '\.\/api\/v1\/autonomy\/complaint'/, '应有投诉入口')
-  assert.match(script, /autonomy-complain/, '主动面板应有「这条没用」按钮')
-  assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy\/complaint'/, 'qm-autonomy 应注册投诉路由')
-  assert.match(script, /autonomyRollback: '\.\/api\/v1\/autonomy\/rollback'/, '应有回滚入口')
-  assert.match(script, /autonomy-rollback/, '主动面板应有「回滚动作」按钮')
-  assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy\/rollback'/, 'qm-autonomy 应注册回滚路由')
-  assert.match(script, /autonomyTrust: '\.\/api\/v1\/autonomy\/trust'/, '应有显式级别切换入口')
-  assert.match(script, /autonomy-level/, '应有 A0/A1/A2 级别按钮')
-  assert.match(script, /autonomyDigest: '\.\/api\/v1\/autonomy\/digest'/, '应有发摘要入口')
-  assert.match(script, /autonomy-digest/, '面板应有发摘要按钮')
-
-  assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy'/, 'qm-autonomy 应注册 GET /api/v1/autonomy')
-  assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy\/tick'/, 'qm-autonomy 应注册 tick')
-  assert.match(autonomyPlugin, /path: '\/api\/v1\/autonomy\/trust'/, 'qm-autonomy 应注册 trust')
-  assert.match(autonomyPlugin, /'autonomy-tick'/, 'qm-autonomy 应把每次 tick 推到 SSE')
-})
-
-test('群组面板与 qm-conversation-profile 的路由对得上', async () => {
-  const script = await readPublic('app.js')
-  const html = await readPublic('index.html')
-  const profilePlugin = await readFile(QM_PROFILE, 'utf8')
-
-  assert.match(script, /conversations: '\.\/api\/v1\/conversations'/, 'app.js 应有群组列表接口')
-  assert.match(script, /conversationsConfigure: '\.\/api\/v1\/conversations\/configure'/, 'app.js 应有群标签保存接口')
-  assert.match(html, /id="conversations"/, 'index.html 应有群组面板')
-  assert.match(html, /id="conversations-list"/, 'index.html 应有群组列表容器')
-  assert.match(html, /id="conversations-suggestions"/, 'index.html 应有标签建议容器')
-  assert.match(script, /conversationSuggestions: '\.\/api\/v1\/conversations\/suggestions'/, 'app.js 应有建议列表接口')
-  assert.match(profilePlugin, /path: '\/api\/v1\/conversations\/suggestions'/, '应注册建议列表路由')
-  assert.match(profilePlugin, /path: '\/api\/v1\/conversations\/suggestions\/accept'/, '应注册建议采纳路由')
-  assert.match(html, /id="incidents"/, 'index.html 应有故障面板')
-  assert.match(script, /incidents: '\.\/api\/v1\/incidents'/, 'app.js 应有故障接口')
-  assert.match(script, /incidentDispatch: '\.\/api\/v1\/incidents\/dispatch'/, 'app.js 应有派诊断接口')
-  assert.match(html, /id="review"/, 'index.html 应有复盘面板')
-  assert.match(script, /review: '\.\/api\/v1\/review'/, 'app.js 应有复盘接口')
-  assert.match(script, /reviewScore: '\.\/api\/v1\/review\/score'/, 'app.js 应有评分接口')
-  assert.match(profilePlugin, /path: '\/api\/v1\/conversations'/, '应注册群组列表路由')
-  assert.match(profilePlugin, /path: '\/api\/v1\/conversations\/configure'/, '应注册群标签配置路由')
+  const session = await readSource('lib/session.js')
+  assert.match(session, /qm\.token/, '令牌键名应与旧版一致')
+  assert.match(session, /__QM_PERSIST_TOKEN__/, '持久化开关应与旧版一致')
 })

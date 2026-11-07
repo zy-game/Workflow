@@ -1,3 +1,44 @@
+### 账号运维内容层 + 前端迁移 Vue 3（2026-11-06）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `apps/web/*` | 前端从零构建单文件迁到 Vue 3 + Vite：`src/App.vue` 壳（桌面侧栏 / 移动端抽屉导航）、hash 路由、11 个视图（含「账号运维」）、`src/lib/*`（endpoints / api / session / sse / format / bus）；登录门支持管理员密码与访问令牌；`?token=` 与 SSE、Capacitor 兼容保持不变。视图全部静态导入（避免服务重启后懒加载分包失败），hash base 只用 `pathname`（不能把 `?token=` 算进 base）。构建产物 `apps/web/dist` 由网关托管 |
+| `packages/qm-content/*`（新） | 内容层账本：`qm_content_item` / `qm_content_variant` / `qm_content_action`；状态机（docs/18 §6）、四平台 render（blog / weibo / bilibili / zhihu，纯函数 + 截断与长度提示 + 跨平台重复句检查）、预算与静默闸门、`GET/POST /api/v1/content*`、SSE `content-updated`、审计留痕；发布接口一律 409「平台连接器未实现」，不假装成功 |
+| `packages/host-mcp/src/index.ts` | 新增 `content_draft` / `content_variants` / `content_status` 三个工具（失败返回 `{ ok:false, reason, retryable }`） |
+| `packages/provider-permission-static/src/index.ts` | 三个新工具登记风险等级（draft=write，variants/status=read） |
+| `qingmei.yml` / `qingmei.prod.yml` | 挂载 `qm-content`；webRoot 改到 `apps/web/dist`；dev 清单补 `provider-schedule-sqlite` 与 `qm-reminder`（原本缺失导致 `qm-autonomy` 永久 PENDING、启动 15 秒后整体失败） |
+| `apps/mobile/*` | 同步脚本改为同步 Vite 产物并保留 139 配置；测试改扫打包后的 js 块 |
+| `apps/server/test/config.test.ts` | 清单计数与 webRoot 断言更新 |
+| 测试 | 445 全绿（含 qm-content 10 条、ui-contract 8 条）；本地冒烟：创建 → 人审 → 批准 → 四平台 render → publish 409，动作流水 8 条 |
+
+> 未做：平台连接器（微博 / B站 / 知乎 / 博客 publish 全未实现）、登录态检测、评论与 @ 回复、视频链路；账号接入前不进入发布。
+
+**已部署（2026-11-06）**：生产 release `2026-11-06T03-00-40-971Z`（supervisor shell 切换，healthz 200，webRoot 指向 `apps/web/dist`，`qm-content` 路由已生效）。
+Windows 0.1.1（NSIS + latest.yml）与 Android 0.1.1（versionCode 2，APK）已上传 `/opt/qingmei/updates/`，两端更新源外部可访问。
+Android 没有应用内更新器，需要手动下载安装；桌面 0.1.1 无功能改动，属更新通道验证。
+部署踩坑：打包时必须排除 `config-snapshots/`（root 解包会改属主，服务启动写快照 EACCES）。
+
+**Android 应用内更新（2026-11-06 晚）**：新增 `QmUpdaterPlugin`（版本查询 / 下载 / sha256 校验 / 拉起安装器）
++ `REQUEST_INSTALL_PACKAGES`；前端 `updater.js` + `UpdatePrompt.vue` 在启动时比对
+`/updates/android/latest.json`。已发布 0.1.2（versionCode 3，带更新器的引导包）与 0.1.3
+（versionCode 4，更新目标）；`/updates/` 补了 CORS 头（WebView 跨域拉清单）。
+旧版本需手动安装一次 0.1.2，之后才会自动提示。
+
+**Android 0.1.4（2026-11-06 17:10）**：移动端顶部菜单改为左侧抽屉（青梅开关 / 遮罩点击 / 菜单项点击 / Esc 收起），
+桌面侧栏不变；APK 与 `latest.json` 已上传更新源，外部下载 sha256 校验通过。
+
+### MCP 记忆闭环：recall 带 id，新增盘点/修正/遗忘
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/host-mcp/src/index.ts` | `memory_recall` 改为按 `facts` 渲染，输出带 id、置信度、来源；新增 `memory_forget` / `memory_update` / `memory_list`；`memory_list` 在工具层挡掉 secret |
+| `packages/provider-permission-static/src/index.ts` | 三个新工具登记风险等级（list=read，update/forget=write）；群聊拒绝改/删记忆并给人话理由 |
+| `packages/host-mcp/test/mcp.test.ts` | 假服务补 listFacts/updateFact/forget；新增 4 条用例（recall 带 id、forget 三种命中、update 三种校验、list 过滤 secret） |
+| `packages/provider-permission-static/test/permission.test.ts` | 私聊放行全部新工具；群聊改/删记忆的拒绝理由 |
+| 测试 | 433 全绿；smoke 通过 |
+
+> 未做：硬删（仍是软删 + 移 FTS）、TTL 过期（`expires_at`）、纠错复核队列；`listFacts` 本身不排除 secret 的既存口径未改，只在 MCP 工具层挡住。线上未发布——`provider-permission-static` 属 L3，需人工发版。
+
 ### 主线收口：外壳/评分卡/市场
 
 - P5：current -> releases/<id> 外壳已在生产启用，supervisor 先写 release 再切；watchdog 5 次失败回滚
@@ -147,8 +188,8 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 
 1. **没有 tsc**：仓库只有 cordis 依赖，类型正确性靠审阅；若要补，加 typescript 并跑 `tsc --noEmit`。
 2. **tick 是全表扫描**：每秒 `find()` 一遍 `qm_schedule` 再在 JS 里比时间，日程多了要按 `next_at` 建索引或缩小查询。
-3. **前端没有构建与类型检查**：`apps/web/public/app.js` 是零构建原生模块，只靠
-   `apps/web/test/ui-contract.test.ts` 守 DOM id 与接口路径。
+3. **前端已有构建、仍无类型检查**：`apps/web` 是 Vue 3 + Vite（`pnpm web:build`），
+   `apps/web/test/ui-contract.test.ts` 继续守接口、路由与 SSE 契约；补 TS 检查要等仓库加 typescript。
 4. **历史表没有索引**：`qm_message` 每次 `find()` 都是全表扫（store 是通用 JSON 表），
    长对话后要按 `session_id + created_at` 建真实列或加二级索引 —— 与第 2 节第 3 条一起做。
 5. **MCP 工具命名未统一**：对话车道是 `memory_*` / `schedule_*`，任务数据面已经是 `qm_*`；

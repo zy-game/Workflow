@@ -1,3 +1,5 @@
 .agents/
 *.log
 worker-*.json
+*.apk
+*.tgz

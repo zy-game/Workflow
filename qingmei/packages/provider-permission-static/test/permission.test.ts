@@ -33,6 +33,9 @@ test('私聊里当前全部日程/记忆工具都放行', async () => {
   for (const tool of [
     'memory_recall',
     'memory_remember',
+    'memory_list',
+    'memory_update',
+    'memory_forget',
     'schedule_create',
     'schedule_update',
     'schedule_cancel',
@@ -57,6 +60,12 @@ test('群聊里拒绝日程与写记忆，并给出人话理由', async () => {
 
   const remember = await permission.check(request('tool.invoke:memory_remember', 'group'))
   assert.equal(remember.effect === 'deny' && remember.reason, '群聊里不能写入你的记忆')
+
+  const update = await permission.check(request('tool.invoke:memory_update', 'group'))
+  assert.equal(update.effect === 'deny' && update.reason, '群聊里不能改你的记忆')
+
+  const forget = await permission.check(request('tool.invoke:memory_forget', 'group'))
+  assert.equal(forget.effect === 'deny' && forget.reason, '群聊里不能删你的记忆')
 
   const recall = await permission.check(request('tool.invoke:memory_recall', 'group'))
   assert.equal(recall.effect, 'allow', '群聊里仍可召回公共记忆')

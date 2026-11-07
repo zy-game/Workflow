@@ -31,8 +31,11 @@ export const inject: string[] = []
 /** 当前 MCP 工具的风险分级。新增工具忘了登记时会被默认拒绝，这是有意的 */
 const DEFAULT_TOOL_RISK: Record<string, 'read' | 'write' | 'dangerous'> = {
   memory_recall: 'read',
-  schedule_list: 'read',
+  memory_list: 'read',
   memory_remember: 'write',
+  memory_update: 'write',
+  memory_forget: 'write',
+  schedule_list: 'read',
   schedule_create: 'write',
   schedule_update: 'write',
   schedule_cancel: 'write',
@@ -46,14 +49,25 @@ const DEFAULT_TOOL_RISK: Record<string, 'read' | 'write' | 'dangerous'> = {
   qm_report_progress: 'write',
   qm_publish_artifact: 'write',
   qm_finish_task: 'write',
+  // 账号运维内容层（docs/18 §10）：写草稿是写操作，看形态与闸门是读操作
+  content_draft: 'write',
+  content_variants: 'read',
+  content_status: 'read',
 }
 
-const DEFAULT_DENY_IN_GROUP = ['tool.invoke:schedule_', 'tool.invoke:memory_remember']
+const DEFAULT_DENY_IN_GROUP = [
+  'tool.invoke:schedule_',
+  'tool.invoke:memory_remember',
+  'tool.invoke:memory_update',
+  'tool.invoke:memory_forget',
+]
 
 /** 群聊拒绝要给出人话，而不是「权限不足」 */
 const GROUP_REASONS: { prefix: string; text: string }[] = [
   { prefix: 'tool.invoke:schedule_', text: '群聊里不能读或改你的日程' },
   { prefix: 'tool.invoke:memory_remember', text: '群聊里不能写入你的记忆' },
+  { prefix: 'tool.invoke:memory_update', text: '群聊里不能改你的记忆' },
+  { prefix: 'tool.invoke:memory_forget', text: '群聊里不能删你的记忆' },
 ]
 
 export class StaticPermission extends PermissionService {
