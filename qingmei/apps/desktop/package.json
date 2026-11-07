@@ -50,8 +50,7 @@
         "from": "../../scripts",
         "to": "worker/scripts",
         "filter": [
-          "harness-worker.mjs",
-          "zcode-session-sync.mjs"
+          "harness-worker.mjs"
         ]
       },
       {

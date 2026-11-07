@@ -124,7 +124,7 @@ onBeforeUnmount(() => {
 
     <div class="card">
       <h3 class="card-title">本机设备任务</h3>
-      <p class="view-sub">任务直接进目标设备的 worker 队列，由本机 ACP 拉起 DSH/ZCode。</p>
+      <p class="view-sub">任务直接进目标设备的 worker 队列，由本机 ACP 拉起 DSH。</p>
       <div class="form-row">
         <select v-model="deviceId" class="input">
           <option value="">选择设备</option>

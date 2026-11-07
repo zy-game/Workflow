@@ -3,7 +3,7 @@
  * 本机 harness worker。
  *
  * 在用户电脑上运行：注册设备（平台/架构/可用 harness），轮询青梅任务，
- * 领取后用本机 dsh --profile acp（或配置的 ZCode ACP bridge）执行，
+ * 领取后用本机 dsh --profile acp 执行，
  * 通过 HTTP 回传进度与结果。
  *
  * 用法：
@@ -13,7 +13,6 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-import { fileURLToPath } from 'node:url'
 import { homedir, hostname } from 'node:os'
 import path from 'node:path'
 import { AcpClient } from '../packages/provider-dsh-acp/src/acp-client.ts'
@@ -41,15 +40,10 @@ function loadConfig(args) {
     token: String(args.token ?? stored.token ?? ''),
     name: String(args.name ?? stored.name ?? `${hostname()} (Windows)`),
     deviceId: String(args['device-id'] ?? stored.deviceId ?? ''),
-    harness: String(args.harness ?? stored.harness ?? 'dsh'),
+    harness: 'dsh',
     dshCommand: String(args['dsh-command'] ?? stored.dshCommand ?? 'dsh'),
-    zcodeAcpCommand: String(args['zcode-acp-command'] ?? stored.zcodeAcpCommand ?? ''),
-    zcodeBin: String(args['zcode-bin'] ?? stored.zcodeBin ?? ''),
-    zcodeNode: String(args['zcode-node'] ?? stored.zcodeNode ?? ''),
-    zcodeModel: String(args['zcode-model'] ?? stored.zcodeModel ?? 'builtin:bigmodel-start-plan\\GLM-5.3-Flash'),
     workdir: path.resolve(args.workdir ?? stored.workdir ?? path.join(ROOT, 'workspaces')),
     localPort: Number(args.port ?? stored.localPort ?? 7431),
-    zcodeSync: process.argv.includes('--zcode-sync') || stored.zcodeSync === true,
   }
   if (!config.token) throw new Error('缺少 QM_TOKEN：用 --token 或配置 token')
   if (!config.deviceId) config.deviceId = `dev-${hostname().replace(/[^a-zA-Z0-9]+/g, '-')}-${Math.random().toString(36).slice(2, 8)}`
@@ -69,10 +63,7 @@ function which(command) {
 
 function capabilities(config) {
   const items = []
-  if (which(String(config.dshCommand).split(/\\s+/)[0])) items.push({ kind: 'dsh', acp: true, mcp: false })
-  if (config.zcodeAcpCommand && which(config.zcodeAcpCommand.split(/\s+/)[0])) {
-    items.push({ kind: 'zcode', acp: true, mcp: false })
-  }
+  if (which(String(config.dshCommand).split(/\s+/)[0])) items.push({ kind: 'dsh', acp: true, mcp: false })
   return items
 }
 
@@ -91,16 +82,11 @@ async function request(config, method, pathname, body) {
 }
 
 async function runDsh(config, task) {
-  const command = task.harness === 'zcode' ? config.zcodeAcpCommand : config.dshCommand
-  if (!command) throw new Error(`没有配置 ${task.harness} 的 ACP 命令`)
+  const command = config.dshCommand
+  if (!command) throw new Error('没有配置 dsh ACP 命令')
   const [executable, ...args] = command.split(/\s+/)
-  const cwd = task.cwd
-    ? path.resolve(task.cwd)
-    : task.harness === 'zcode'
-      ? config.workdir
-      : path.join(config.workdir, task.id.replace(/[^a-zA-Z0-9_-]/g, '_'))
+  const cwd = task.cwd ? path.resolve(task.cwd) : config.workdir
   mkdirSync(cwd, { recursive: true })
-  const mcpServers = []
   let output = ''
   const client = new AcpClient({
     command: executable,
@@ -115,12 +101,8 @@ async function runDsh(config, task) {
       }
     },
     shell: process.platform === 'win32',
-    onStderr: (text) => console.error('[' + task.harness + '] ' + text),
-    env: {
-      ...process.env,
-      ...(task.harness === 'zcode' && config.zcodeBin ? { ZCODE_BIN: config.zcodeBin } : {}),
-      ...(task.harness === 'zcode' && config.zcodeNode ? { ZCODE_NODE: config.zcodeNode } : {}),
-    },
+    onStderr: (text) => console.error('[dsh] ' + text),
+    env: { ...process.env },
     onPermissionRequest: async (event) => {
       const option = event.options?.find((item) => item.kind === 'allow_once' || item.kind === 'allow_always')
       return option?.optionId ?? null
@@ -128,12 +110,7 @@ async function runDsh(config, task) {
   })
   try {
     await client.start()
-    const sessionId = await client.newSession(cwd, mcpServers)
-    if (task.harness === 'zcode' && config.zcodeModel) {
-      await client.setModel(sessionId, config.zcodeModel).catch((error) => {
-        console.error('[zcode] setModel failed', error instanceof Error ? error.message : String(error))
-      })
-    }
+    const sessionId = await client.newSession(cwd, [])
     const result = await client.prompt(sessionId, task.prompt)
     await client.closeSession(sessionId).catch(() => undefined)
     return { result: output.trim() || `ACP 完成：${result.stopReason}`, usage: result.usage ?? null }
@@ -156,15 +133,14 @@ async function readJsonBody(req) {
   return JSON.parse(body)
 }
 
-function sessionCommand(config, harness) {
-  const command = harness === 'zcode' ? config.zcodeAcpCommand : config.dshCommand
-  if (!command) throw new Error(`没有配置 ${harness} 的 ACP 命令`)
-  return command.split(/\s+/)
+function sessionCommand(config) {
+  if (!config.dshCommand) throw new Error('没有配置 dsh ACP 命令')
+  return config.dshCommand.split(/\s+/)
 }
 
 async function createAcpSession(config, input) {
-  const harness = input.harness === 'zcode' ? 'zcode' : 'dsh'
-  const [executable, ...args] = sessionCommand(config, harness)
+  const harness = 'dsh'
+  const [executable, ...args] = sessionCommand(config)
   const cwd = path.resolve(input.cwd || path.join(config.workdir, `session-${Date.now().toString(36)}`))
   mkdirSync(cwd, { recursive: true })
   const id = `sess_${Math.random().toString(36).slice(2, 10)}`
@@ -174,11 +150,7 @@ async function createAcpSession(config, input) {
     args: args.length > 0 ? args : ['--profile', 'acp'],
     cwd,
     shell: process.platform === 'win32',
-    env: {
-      ...process.env,
-      ...(harness === 'zcode' && config.zcodeBin ? { ZCODE_BIN: config.zcodeBin } : {}),
-      ...(harness === 'zcode' && config.zcodeNode ? { ZCODE_NODE: config.zcodeNode } : {}),
-    },
+    env: { ...process.env },
     onUpdate: (event) => {
       state.events.push(event)
       const update = event.update ?? {}
@@ -314,7 +286,7 @@ function startLocalServer(config) {
 async function main() {
   const config = loadConfig(parseArgs(process.argv.slice(2)))
   const caps = capabilities(config)
-  if (caps.length === 0) throw new Error('本机没有检测到可用的 dsh/zcode')
+  if (caps.length === 0) throw new Error('本机没有检测到可用的 dsh')
   const registered = await request(config, 'POST', '/api/v1/devices/register', {
     id: config.deviceId,
     name: config.name,
@@ -330,12 +302,6 @@ async function main() {
   console.log(`[worker] 已注册：${registered.device.id} (${registered.device.platform}/${registered.device.arch})`)
   console.log(`[worker] harness：${caps.map((item) => `${item.kind}(acp=${item.acp})`).join('、')}`)
   startLocalServer(config)
-  if (config.zcodeSync) {
-    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'zcode-session-sync.mjs')
-    const tick = () => spawn(process.execPath, [script], { stdio: 'ignore', env: process.env }).unref()
-    setTimeout(tick, 10000)
-    setInterval(tick, 60000).unref?.()
-  }
   let running = true
   process.on('SIGINT', () => {
     running = false

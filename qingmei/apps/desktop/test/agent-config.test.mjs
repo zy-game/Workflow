@@ -21,7 +21,6 @@ test('Worker：写入本机 ACP 配置，不写 MCP', () => {
   assert.equal(worker.server, 'https://qingmei.test:8710')
   assert.equal(worker.token, 'gateway-token')
   assert.equal(worker.dshCommand, 'dsh')
-  assert.equal(worker.zcodeAcpCommand, 'zcode-acp-server server')
   assert.equal(worker.mcpUrl, undefined)
   assert.match(worker.deviceId, /^dev-MY-PC-/)
 })

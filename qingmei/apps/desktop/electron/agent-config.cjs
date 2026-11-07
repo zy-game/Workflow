@@ -2,7 +2,7 @@
  * 本机 worker 配置（纯 Node，便于测试）。
  * 不再写任何 MCP 配置：主链路是 worker → ACP。
  */
-const { existsSync, mkdirSync, writeFileSync } = require('node:fs')
+const { mkdirSync, writeFileSync } = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 
@@ -11,15 +11,6 @@ function writeWorkerConfig({ settings, home = os.homedir(), hostname = os.hostna
   if (!settings?.token) return { ok: false, error: '请先填写访问令牌' }
   const workerDir = path.join(home, '.qingmei')
   mkdirSync(workerDir, { recursive: true })
-  const zcodeBin = path.join(
-    process.env.LOCALAPPDATA || '',
-    'Programs',
-    'ZCode',
-    'resources',
-    'glm',
-    'zcode.cjs',
-  )
-  const zcodeNode = process.env.ZCODE_NODE || 'C:\\Program Files\\nodejs\\node.exe'
   const config = {
     server: settings.serverUrl.replace(/\/+$/, ''),
     token: settings.token,
@@ -27,11 +18,6 @@ function writeWorkerConfig({ settings, home = os.homedir(), hostname = os.hostna
     deviceId: `dev-${hostname.replace(/[^a-zA-Z0-9]+/g, '-')}-${Math.random().toString(36).slice(2, 8)}`,
     dshCommand: 'dsh',
     localPort: 7431,
-    zcodeSync: true,
-    zcodeAcpCommand: 'zcode-acp-server server',
-    zcodeModel: 'builtin:bigmodel-start-plan\\GLM-5.3-Flash',
-    zcodeBin: existsSync(zcodeBin) ? zcodeBin : '',
-    zcodeNode: existsSync(zcodeNode) ? zcodeNode : '',
   }
   const file = path.join(workerDir, 'worker.json')
   writeFileSync(file, JSON.stringify(config, null, 2), 'utf8')
