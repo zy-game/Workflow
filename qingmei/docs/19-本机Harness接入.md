@@ -98,24 +98,31 @@ spawn dsh --profile acp / zcode-acp-server server
 - `POST /api/v1/devices/ingest` 保存 turns/events；`GET /api/v1/devices/digests` 读取会话沉淀与工具事件。
 - 桌宠启动/保存/写 Worker 配置时检测 DSH，安装 companion/hook 到 desktop profile。
 
-## 8. 已验证
+## 8. 实测结论
+
+- DSH companion：任务按 workspaceId 进入 `E:/Workflow`，prompt 注入相关记忆，digest 记录 turns/events。
+- 设备列表能返回 `systemType/deviceClass/workspaces`。
+- ZCode headless + `builtin:bigmodel-start-plan/GLM-5.3-Flash` 实测仍被 Start Plan 验证码拦截，不能作为无人值守模型。
+- 桌宠安装包已构建，`resources/dsh-plugins` 包含 companion/hook；临时 profile 安装测试通过。
+
+## 9. 已验证
 
 - Windows worker + 本机 `dsh --profile acp`：任务 `done:OK`。
 - Windows worker + `zcode-acp-server`：任务已领取并启动 ZCode 后端；当前 Start Plan 需要桌面验证码。
 - 设备注册/入队/领取/完成 API 已生产验证。
 
-## 9. 手工会话 Hook 状态
+## 10. 手工会话 Hook 状态
 
 `apps/dsh-hook` 已实现 `session/event` 监听，并通过 npm tarball 安装进 DSH `web/acp` profile；实测手动/ACP 会话结束会生成 `~/.qingmei/sessions/*.json`，包含 user/assistant/tool turns。ZCode 侧新增 `apps/zcode-hook/hook.mjs` 作为 Stop hook；另有 `scripts/zcode-session-sync.mjs` 直接读 `~/.zcode/cli/db/db.sqlite` 的 session/message/part 做增量补偿（每次最多 5 个会话，状态在 `~/.qingmei/zcode-sync.json`）。
 
-## 10. 生产状态
+## 11. 生产状态
 
 - 设备/ingest 路由已部署，`/api/v1/devices/ingest` 返回 200。
 - MCP 端口/反代/插件不在生产。
 - DSH hook 以 npm tarball 安装到 `web/acp`；ZCode Stop hook 已写入 `~/.zcode/cli/config.json`。
 - Web 任务页新增「本机设备任务」，可选目标设备并调用 `/api/v1/devices/tasks`；对应 Vue 构建产物已同步到生产 static。
 
-## 11. 边界
+## 12. 边界
 
 - ACP 是客户端 spawn 子进程的 stdio 协议，**不能连接已经运行的 GUI ZCode/DSH 窗口**。
 - 要控制本机 GUI 客户端，必须有本机 worker/插件；当前 worker 不支持屏幕控制。
