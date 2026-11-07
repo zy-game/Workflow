@@ -1,6 +1,6 @@
 {
   "name": "@qingmei/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -31,12 +31,20 @@
       {
         "from": "../dsh-companion",
         "to": "dsh-plugins/dsh-companion",
-        "filter": ["**/*", "!test/**", "!*.tgz"]
+        "filter": [
+          "**/*",
+          "!test/**",
+          "!*.tgz"
+        ]
       },
       {
         "from": "../dsh-hook",
         "to": "dsh-plugins/dsh-hook",
-        "filter": ["**/*", "!test/**", "!*.tgz"]
+        "filter": [
+          "**/*",
+          "!test/**",
+          "!*.tgz"
+        ]
       }
     ],
     "files": [
