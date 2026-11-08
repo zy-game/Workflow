@@ -16,7 +16,12 @@ function dshInstalled() {
     encoding: 'utf8',
     timeout: 5000,
   })
-  return result.status === 0
+  if (result.status === 0) return true
+  const candidates = [
+    path.join(process.env.APPDATA || '', 'npm', process.platform === 'win32' ? 'dsh.cmd' : 'dsh'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'dsh', 'dsh.exe'),
+  ]
+  return candidates.some((candidate) => candidate && existsSync(candidate))
 }
 
 function copyPackage(source, target) {
