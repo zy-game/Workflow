@@ -813,7 +813,7 @@ async function sendMessage(event) {
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ text, conversationId: 'owner', deviceId: 'desktop', ...(images.length ? { images } : {}) }),
+      body: JSON.stringify({ text, conversationId: 'owner', deviceId: 'desktop' }),
     })
     if (!res.ok) {
       const detail = await res.json().catch(() => null)
