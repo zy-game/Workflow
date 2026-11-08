@@ -68,6 +68,16 @@ Task
   status
 ```
 
+## 4.0 Conversation session key
+
+会话在历史/线程里的规范 key 只由核心函数生成：
+
+```ts
+conversationSessionId(conversationId)   // s_<id>
+conversationIdFromSession(sessionId)    // 还原
+```
+
+`qm-agent`、`qm-history`、`host-gateway` 不再各自拼 `s_` 前缀。
 ## 4.1 TaskTarget
 
 服务器任务和设备任务共用：

@@ -28,6 +28,15 @@ export interface Conversation {
   title?: string
 }
 
+/** Conversation 在历史/线程里的规范 session key。 */
+export function conversationSessionId(conversationId: string): string {
+  return conversationId.startsWith('s_') ? conversationId : `s_${conversationId}`
+}
+
+/** 从 session key 还原 conversation id；兼容未加前缀的旧数据。 */
+export function conversationIdFromSession(sessionId: string): string {
+  return sessionId.startsWith('s_') ? sessionId.slice(2) : sessionId
+}
 export interface InboundMessage {
   /** 平台消息 id，用于幂等 */
   platformMessageId: string

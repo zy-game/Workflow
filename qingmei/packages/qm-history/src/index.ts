@@ -19,6 +19,7 @@
 import type { Context } from 'cordis'
 import {
   EVENTS,
+  conversationSessionId,
   textOf,
   uid,
   type Block,
@@ -70,7 +71,7 @@ class HistoryReader extends HistoryService {
   }
 
   async recent(conversationId: string, limit = 50): Promise<HistoryMessage[]> {
-    const wanted = conversationId.startsWith('s_') ? conversationId : `s_${conversationId}`
+    const wanted = conversationSessionId(conversationId)
     const rows = await this.collection.find({})
     return rows
       .filter((row) => row.session_id === conversationId || row.session_id === wanted)
@@ -196,7 +197,7 @@ export function apply(ctx: Context): void {
     // 编辑已发消息（如审批卡片点完变「已处理」）：更新原行，不新增
     if (outbound.editTarget) {
       await enqueue(async () => {
-        const sessionId = `s_${outbound.conversationId}`
+        const sessionId = conversationSessionId(outbound.conversationId)
         const rows = await collection.find({ session_id: sessionId, platform_message_id: outbound.editTarget })
         const row = rows[0]
         if (!row) return
@@ -209,7 +210,7 @@ export function apply(ctx: Context): void {
     }
 
     await enqueue(() => append({
-      sessionId: `s_${outbound.conversationId}`,
+      sessionId: conversationSessionId(outbound.conversationId),
       role: 'assistant',
       direction: 'out',
       blocks: outbound.blocks,

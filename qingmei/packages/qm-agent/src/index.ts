@@ -12,6 +12,8 @@
 import type { Context } from 'cordis'
 import {
   EVENTS,
+  conversationIdFromSession,
+  conversationSessionId,
   textOf,
   uid,
   type ChatMessage,
@@ -278,7 +280,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       const thread = threadService
       if (thread) {
         try {
-          const conversationId = sessionId.replace(/^s_/, '')
+          const conversationId = conversationIdFromSession(sessionId)
           const threads = await thread.list({ conversationId, limit: 3 })
           threadText = threads
             .filter((thread) => thread.summary)
@@ -473,7 +475,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
 }
 
 function sessionIdOf(message: InboundMessage): string {
-  return 's_' + message.conversation.id
+  return conversationSessionId(message.conversation.id)
 }
 
 function requirePersona(config: AgentConfig): string {
