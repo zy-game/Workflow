@@ -17,6 +17,7 @@
  * ChannelService.send，历史里就自动有记录。
  */
 import type { Context } from 'cordis'
+import * as threadPlugin from './thread.ts'
 import {
   EVENTS,
   conversationSessionId,
@@ -101,6 +102,7 @@ function parseBlocks(raw: string, text: string): Block[] {
 export function apply(ctx: Context): void {
   const store = ctx.store
   new HistoryReader(ctx)
+  ctx.plugin(threadPlugin)
   const collection = store.collection<StoredMessage>(MESSAGE_COLLECTION)
   const turns = store.collection<StoredTurn>(TURN_COLLECTION)
 
