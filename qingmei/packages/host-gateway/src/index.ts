@@ -76,7 +76,16 @@ interface Options {
   sessionSecret: string
 }
 
+interface ResourceServices {
+  store?: StoreService
+  persona?: PersonaService
+  memory?: MemoryService
+  schedule?: ScheduleService
+  channel?: ChannelService
+}
+
 interface HandlerDeps {
+  resources: ResourceServices
   ctx: Context
   gateway: GatewayHub
   options: Options
@@ -169,7 +178,13 @@ export const apply = (ctx: Context, config: Config = {}): Promise<void> => {
 
   const startedAt = Date.now()
   const clients = new Set<ServerResponse>()
-  const deps: HandlerDeps = { ctx, gateway, options, clients, startedAt }
+  const resources: ResourceServices = {}
+  ctx.inject(['store'], (sub) => { resources.store = sub.store })
+  ctx.inject(['persona'], (sub) => { resources.persona = sub.persona })
+  ctx.inject(['memory'], (sub) => { resources.memory = sub.memory })
+  ctx.inject(['schedule'], (sub) => { resources.schedule = sub.schedule })
+  ctx.inject(['channel'], (sub) => { resources.channel = sub.channel })
+  const deps: HandlerDeps = { resources, ctx, gateway, options, clients, startedAt }
   const server = createServer((req, res) => {
     void handleRequest(deps, req, res)
   })
@@ -283,7 +298,7 @@ async function routeRequest(
       ok: consumers !== 0,
       uptime: Math.floor((Date.now() - deps.startedAt) / 1000),
       agent: consumers,
-      channels: channelStatus(deps.ctx),
+      channels: channelStatus(deps.resources.channel),
     }
     if (method === 'HEAD') {
       const body = JSON.stringify(payload)
@@ -361,11 +376,11 @@ async function routeRequest(
     if (pathname === '/api/v1/messages' && method === 'GET') {
       const conversationId = url.searchParams.get('conversationId') ?? undefined
       const limit = parseLimit(url.searchParams.get('limit'))
-      sendJson(res, 200, await readHistory(deps.ctx, conversationId, limit))
+      sendJson(res, 200, await readHistory(deps.ctx, deps.resources.store, conversationId, limit))
       return
     }
     if (pathname === '/api/v1/memory/queue' && method === 'GET') {
-      const store = deps.ctx.reflect.get('store', false) as StoreService | undefined
+      const store = deps.resources.store
       if (!store) {
         sendJson(res, 200, { count: 0, items: [] })
         return
@@ -374,7 +389,7 @@ async function routeRequest(
       sendJson(res, 200, { count: rows.length, items: rows.map((row) => row as unknown as Record<string, unknown>) })
       return
     }    if (pathname === '/api/v1/persona' && (method === 'GET' || method === 'POST')) {
-      const persona = deps.ctx.reflect.get('persona', false) as PersonaService | undefined
+      const persona = deps.resources.persona
       if (!persona) {
         sendJson(res, 503, { ok: false, error: 'no persona service' })
         return
@@ -383,7 +398,7 @@ async function routeRequest(
       sendJson(res, 200, { persona: snapshot })
       return
     }    if (pathname === '/api/v1/memory/facts' && method === 'GET') {
-      const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
+      const memory = deps.resources.memory
       if (!memory) {
         sendJson(res, 503, { ok: false, error: 'no memory service' })
         return
@@ -393,7 +408,7 @@ async function routeRequest(
       return
     }
     if (pathname === '/api/v1/memory/summary' && method === 'GET') {
-      const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
+      const memory = deps.resources.memory
       if (!memory) {
         sendJson(res, 503, { ok: false, error: 'no memory service' })
         return
@@ -404,7 +419,7 @@ async function routeRequest(
       return
     }
     if (pathname.startsWith('/api/v1/memory/facts/') && (method === 'PATCH' || method === 'DELETE')) {
-      const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
+      const memory = deps.resources.memory
       if (!memory) {
         sendJson(res, 503, { ok: false, error: 'no memory service' })
         return
@@ -429,7 +444,7 @@ async function routeRequest(
       sendJson(res, 200, { ok: true })
       return
     }    if (pathname === '/api/v1/memory' && method === 'GET') {
-      const memory = deps.ctx.reflect.get('memory', false) as MemoryService | undefined
+      const memory = deps.resources.memory
       if (!memory) {
         sendJson(res, 503, { ok: false, error: 'no memory service' })
         return
@@ -443,7 +458,7 @@ async function routeRequest(
       return
     }
     if (pathname === '/api/v1/schedules' && method === 'GET') {
-      const schedule = deps.ctx.reflect.get('schedule', false) as ScheduleService | undefined
+      const schedule = deps.resources.schedule
       if (!schedule) {
         sendJson(res, 503, { ok: false, error: 'no schedule service' })
         return
@@ -453,7 +468,7 @@ async function routeRequest(
       return
     }
     if (pathname.startsWith('/api/v1/schedules/') && method === 'DELETE') {
-      const schedule = deps.ctx.reflect.get('schedule', false) as ScheduleService | undefined
+      const schedule = deps.resources.schedule
       if (!schedule) {
         sendJson(res, 503, { ok: false, error: 'no schedule service' })
         return
@@ -468,7 +483,7 @@ async function routeRequest(
       return
     }
     if (pathname.startsWith('/api/v1/schedules/') && method === 'PATCH') {
-      const schedule = deps.ctx.reflect.get('schedule', false) as ScheduleService | undefined
+      const schedule = deps.resources.schedule
       if (!schedule) {
         sendJson(res, 503, { ok: false, error: 'no schedule service' })
         return
@@ -497,7 +512,7 @@ async function routeRequest(
     if (method === 'POST') {
       const action = scheduleActionOf(pathname)
       if (action) {
-        const schedule = deps.ctx.reflect.get('schedule', false) as ScheduleService | undefined
+        const schedule = deps.resources.schedule
         if (!schedule) {
           sendJson(res, 503, { ok: false, error: 'no schedule service' })
           return
@@ -521,8 +536,7 @@ async function routeRequest(
   await serveStatic(res, deps.options.webRoot, pathname, method === 'HEAD')
 }
 
-function channelStatus(ctx: Context): { id: string; online: boolean }[] {
-  const channel = ctx.reflect.get('channel', true) as ChannelService | undefined
+function channelStatus(channel: ChannelService | undefined): { id: string; online: boolean }[] {
   if (!channel) return []
   try {
     return channel.status()
@@ -735,10 +749,10 @@ interface MessageRow extends Row {
 
 async function readHistory(
   ctx: Context,
+  store: StoreService | undefined,
   conversationId: string | undefined,
   limit: number,
 ): Promise<MessageRow[]> {
-  const store = ctx.reflect.get('store', true) as StoreService | undefined
   if (!store) return []
   try {
     // P1 的 store 只在 JS 侧做过滤/排序，这里取全量再裁剪，
