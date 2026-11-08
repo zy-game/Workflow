@@ -58,7 +58,6 @@
 - name: '@qingmei/qm-history'
 
 # 日程到点投递：订阅 qm/schedule/due
-- name: '@qingmei/qm-reminder'
 
 # 把任务派给 harness；没有 harness 时 POST /api/v1/tasks 返回 503
 - name: '@qingmei/qm-task'

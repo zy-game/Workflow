@@ -13,6 +13,7 @@ import {
   nextCronTime,
   systemTimeZone,
   type ChannelId,
+  type ChannelService,
   type MissedPolicy,
   type Row,
   type Scheduled,
@@ -310,8 +311,26 @@ function nextTrigger(cron: string, now: number, timezone?: string): number {
   }
 }
 
+function deliver(ctx: Context, channel: ChannelService, item: Scheduled): void {
+  void (async () => {
+    try {
+      const result = await channel.send({
+        channel: item.channel,
+        conversationId: item.conversationId,
+        blocks: [{ type: 'text', text: `⏰ 提醒：${item.text}` }],
+      })
+      if (!result.ok) ctx.logger.warn(`[qm-schedule] 投递失败：${result.error ?? '未知'}`)
+    } catch (error) {
+      ctx.logger.warn(`[qm-schedule] 投递异常：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })()
+}
+
 export function apply(ctx: Context, config: ScheduleConfig = {}): void {
   ctx.plugin(SqliteSchedule, config)
+  ctx.inject(['channel'], (sub) => {
+    sub.events.on(EVENTS.scheduleDue, (item: Scheduled) => deliver(sub, sub.channel, item))
+  })
 }
 
 export const defaultExport = { name, inject, apply }
