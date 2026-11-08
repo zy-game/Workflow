@@ -53,10 +53,9 @@ const SYSTEM_PROMPT = [
 ].join('\n')
 
 export function apply(ctx: Context, config: ExtractConfig = {}): void {
-  const llm = ctx.reflect.get('llm', false) as LlmService | undefined
-  const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  if (!llm || !memory || !store) return
+  const llm = ctx.llm
+  const memory = ctx.memory
+  const store = ctx.store
 
   const minConfidence = config.minConfidence ?? 0.6
   const maxFacts = config.maxFacts ?? 5

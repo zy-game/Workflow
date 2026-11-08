@@ -62,8 +62,7 @@ export class SqliteIdentity extends IdentityService {
 
   constructor(ctx: Context, config: IdentityConfig = {}) {
     super(ctx)
-    const store = ctx.reflect.get('store', false) as StoreService | undefined
-    if (!store) throw new Error('[qm-identity] 缺少 store 服务')
+    const store = ctx.store
     this.actors = store.collection<ActorRow>(ACTOR_COLLECTION)
     this.bindings = store.collection<BindingRow>(BINDING_COLLECTION)
     this.autoBindOwner = config.autoBindOwner !== false
@@ -181,8 +180,7 @@ export class SqliteIdentity extends IdentityService {
 }
 
 export function apply(ctx: Context, config: IdentityConfig = {}): void {
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!gateway) throw new Error('[qm-identity] 缺少 gateway 服务')
+  const gateway = ctx.gateway
   const identity = new SqliteIdentity(ctx, config)
 
   ctx.effect(() =>
@@ -225,7 +223,7 @@ export function apply(ctx: Context, config: IdentityConfig = {}): void {
     }),
   )
 
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
+  const store = ctx.store
   const verifies = store?.collection<VerifyRow>('qm_identity_verify')
 
   ctx.effect(() =>
