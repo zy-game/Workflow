@@ -170,16 +170,26 @@ export class DshHarness extends HarnessService {
    */
   private async requestPermission(request: AcpPermissionRequest): Promise<string | null> {
     const approval = this.ctx.reflect.get('approval', false) as ApprovalService | undefined
-    const title = request.toolCall?.title ?? request.toolCall?.name ?? '未知操作'
+    const tool = request.toolCall ?? {}
+    const title = tool.title ?? tool.name ?? (typeof tool.kind === 'string' ? tool.kind : '敏感工具调用')
+    const kind = typeof tool.kind === 'string' ? tool.kind : ''
     if (!approval) return null
 
     const conversationId = this.conversations.get(request.sessionId) ?? ''
     const runId = conversationId.startsWith('task_') ? conversationId.slice('task_'.length) : null
     const task = this.ctx.reflect.get('task', false) as TaskService | undefined
+    const run = runId && task ? await task.get(runId).catch(() => null) : null
+    const lines = [
+      `子 agent 请求执行：${title}`,
+      run?.title ? `任务：${run.title}` : '任务：未关联任务',
+      tool.name && tool.name !== title ? `工具：${tool.name}` : '',
+      tool.kind ? `类型：${tool.kind}` : '',
+      '请确认是否允许这个操作；不清楚时选「拒绝」。',
+    ].filter(Boolean)
 
     const record: ApprovalRequest = await approval.create({
       action: `acp:${title}`,
-      prompt: `子 agent 请求执行：${title}`,
+      prompt: lines.join('\n'),
       requester: 'harness:dsh',
       ...(runId ? { runId } : {}),
     })
