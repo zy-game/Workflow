@@ -690,20 +690,6 @@ select.input:focus {
   resize: none;
 }
 
-.mic {
-  flex: 0 0 auto;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  color: var(--fg);
-  background: var(--panel);
-  cursor: pointer;
-}
-
-.mic.listening {
-  border-color: var(--accent);
-  color: var(--accent);
-}
 .send {
   padding: 10px 18px;
   border: 1px solid var(--accent);

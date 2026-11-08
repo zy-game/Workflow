@@ -64,6 +64,8 @@ interface DigestRow extends Row {
 
 interface DeviceTaskRow extends Row {
   device_id: string
+  session_id: string | null
+  thread_id: string | null
   title: string
   prompt: string
   harness: string
@@ -144,6 +146,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     prompt: row.prompt,
     harness: row.harness,
     workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    threadId: row.thread_id,
     cwd: row.cwd,
     status: row.status,
     progress: JSON.parse(row.progress_json) as Record<string, unknown>[],
@@ -218,6 +222,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     title?: unknown
     harness?: unknown
     workspaceId?: unknown
+    sessionId?: unknown
+    threadId?: unknown
     cwd?: unknown
   }) {
     const deviceId = String(input.deviceId ?? '').trim()
@@ -230,6 +236,15 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     const workspace = requestedWorkspace ? workspaces.find((item) => item.id === requestedWorkspace) : undefined
     if (requestedWorkspace && !workspace) throw new Error('设备没有上报这个工作区')
     const cwd = String(input.cwd ?? workspace?.path ?? '').trim()
+    const requestedSession = String(input.sessionId ?? '').trim()
+    const threadId = String(input.threadId ?? '').trim()
+    let sessionId = requestedSession
+    if (!sessionId && threadId) {
+      const previous = (await tasks.find({ where: { device_id: deviceId, workspace_id: workspace?.id ?? null, thread_id: threadId } }))
+        .filter((row) => row.session_id)
+        .sort((a, b) => b.created_at - a.created_at)[0]
+      sessionId = previous?.session_id ?? null
+    }
     const now = Date.now()
     const task: DeviceTaskRow = {
       id: uid('dtask'),
@@ -238,6 +253,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       prompt: prompt.slice(0, 20_000),
       harness: String(input.harness ?? 'dsh').trim() || 'dsh',
       workspace_id: workspace?.id ?? null,
+      session_id: sessionId,
+      thread_id: threadId || null,
       cwd: cwd || null,
       status: 'queued',
       progress_json: '[]',
@@ -422,8 +439,28 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
           res.status(200).send({ ok: true, text: '', facts: [] })
           return
         }
+        const deviceId = String(body.deviceId ?? '').trim()
+        const sessionId = String(body.sessionId ?? '').trim()
+        let contextText = text
+        if (deviceId && sessionId) {
+          const digest = await digests.get(`${deviceId}:${sessionId}`)
+          if (digest) {
+            const turns = JSON.parse(digest.turns_json || '[]') as Array<{ role?: string; text?: string }>
+            const recent = turns
+              .slice(-6)
+              .map((turn) => `${turn.role ?? '?'}: ${String(turn.text ?? '').slice(0, 300)}`)
+              .join('\n')
+            contextText = [
+              text,
+              digest.summary ? `上一轮摘要：${digest.summary.slice(0, 2000)}` : '',
+              recent ? `最近会话：\n${recent}` : '',
+            ]
+              .filter(Boolean)
+              .join('\n\n')
+          }
+        }
         const result = await memory.recall({
-          text: text.slice(0, 2000),
+          text: contextText.slice(0, 6000),
           limit: Number.isFinite(Number(body.limit)) ? Math.min(20, Math.max(1, Number(body.limit))) : 8,
         })
         res.status(200).send({ ok: true, text: result.text, facts: result.facts })
@@ -570,6 +607,9 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
         const status = body.status === 'failed' ? 'failed' : 'done'
         await tasks.update(id, {
           status,
+          ...(typeof body.sessionId === 'string' && body.sessionId.trim()
+            ? { session_id: body.sessionId.trim().slice(0, 120) }
+            : {}),
           result: typeof body.result === 'string' ? body.result.slice(0, 20_000) : null,
           error: typeof body.error === 'string' ? body.error.slice(0, 2_000) : null,
           finished_at: Date.now(),

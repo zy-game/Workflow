@@ -148,6 +148,20 @@ DSH 重启后 companion/hook 生效。
 - 412/412 串行测试通过
 - 桌宠 0.1.2 安装包已构建并上传
 
+## 7. 任务会话延续
+
+设备任务支持 `threadId`：
+
+```text
+deviceId + harness + workspaceId + threadId + prompt
+```
+
+- 同一 `threadId` 下，服务端取该线程上一任务的真实 DSH `sessionId`。
+- companion 先用 `sessionController.resolveAgent(sessionId)` 恢复已有会话，恢复失败才新建。
+- 新任务会把上一轮摘要和最近 turns 传给 `/api/v1/devices/context`，再做记忆召回。
+- 任务完成后 `finish` 回写真实 `sessionId`。
+
+Web 任务页默认用工作区 id 作为 `threadId`，所以同一工作区的连续任务会延续同一个 DSH 会话。
 ## 7. 语音输入与主动推送
 
 ### 语音输入

@@ -67,6 +67,7 @@ async function dispatchDevice() {
       method: 'POST',
       body: {
         deviceId: deviceId.value,
+        threadId: workspaceId.value || deviceId.value,
         workspaceId: workspaceId.value || undefined,
         cwd: workspaces.value.find((workspace) => workspace.id === workspaceId.value)?.path,
         prompt: devicePrompt.value.trim(),

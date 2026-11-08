@@ -82,10 +82,11 @@ export function apply(ctx, config = {}) {
     return result?.task ?? null
   }
 
-  const contextFor = async (text) => {
+  const contextFor = async (text, sessionId) => {
     try {
       const result = await post('/api/v1/devices/context', {
         deviceId,
+        sessionId,
         text,
         limit: 5,
       })
@@ -98,12 +99,13 @@ export function apply(ctx, config = {}) {
     await post('/api/v1/devices/progress', { taskId, ...body }).catch(() => undefined)
   }
 
-  const finish = async (taskId, ok, result, error) => {
+  const finish = async (taskId, ok, result, error, sessionId) => {
     await post('/api/v1/devices/finish', {
       taskId,
       status: ok ? 'done' : 'failed',
       result: ok ? result : undefined,
       error: ok ? undefined : error,
+      ...(sessionId ? { sessionId } : {}),
     }).catch((failure) => {
       console.error('[qingmei-dsh] finish 上报失败', failure)
     })
@@ -130,19 +132,31 @@ export function apply(ctx, config = {}) {
     let handle
     let state
     try {
-      sessionId = `session-${randomUUID()}`
+      sessionId = String(task.sessionId || `session-${randomUUID()}`)
       const targetWorkspace = task.workspaceId
         ? workspaces().find((item) => item.id === task.workspaceId)
         : null
       if (task.workspaceId && !targetWorkspace) throw new Error('任务指定的工作区不在 DSH 中')
       const cwd = realpathSync(task.cwd || targetWorkspace?.path || workspacePath)
       const selection = ctx.agentDefaultModel?.currentSelection?.()
-      const created = await ctx.sessionController.create({
-        sessionId,
-        cwd,
-        agentPreset: String(config.agentPreset || 'standard'),
-      })
-      sessionId = String(created?.sessionId ?? sessionId)
+      let agent = null
+      if (task.sessionId) {
+        try {
+          const resolved = await ctx.sessionController.resolveAgent(sessionId)
+          agent = resolved?.agent ?? (resolved?.error ? null : resolved)
+        } catch {
+          agent = null
+        }
+      }
+      if (!agent) {
+        const created = await ctx.sessionController.create({
+          sessionId,
+          cwd,
+          agentPreset: String(config.agentPreset || 'standard'),
+        })
+        sessionId = String(created?.sessionId ?? sessionId)
+        agent = ctx.agents.get(sessionId)
+      }
       if (selection) {
         await ctx.sessionController
           .selectModel?.({
@@ -153,7 +167,6 @@ export function apply(ctx, config = {}) {
           })
           .catch(() => undefined)
       }
-      const agent = ctx.agents.get(sessionId)
       if (!agent) throw new Error('sessionController 创建后找不到 live agent')
       handle = { agent }
       const workspace = await ctx.workspaceRegistry.create(cwd)
@@ -162,7 +175,7 @@ export function apply(ctx, config = {}) {
       active.set(sessionId, state)
       await report(task.id, { phase: 'running', percent: 10, note: 'dsh companion 已创建 GUI 会话' })
 
-      const memory = await contextFor(String(task.prompt ?? ''))
+      const memory = await contextFor(String(task.prompt ?? ''), sessionId)
       const prompt = memory
         ? `【青梅记忆】\n${memory}\n\n【用户】\n${String(task.prompt ?? '')}`
         : String(task.prompt ?? '')
@@ -185,15 +198,15 @@ export function apply(ctx, config = {}) {
         lessons: [],
       }).catch(() => undefined)
       if (!output) {
-        await finish(task.id, false, undefined, 'DSH 会话没有返回 assistant 文本')
+        await finish(task.id, false, undefined, 'DSH 会话没有返回 assistant 文本', sessionId)
         return
       }
       await report(task.id, { phase: 'finished', percent: 100, note: 'dsh companion 完成' })
-      await finish(task.id, true, output)
+      await finish(task.id, true, output, undefined, sessionId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error('[qingmei-dsh] task failed', message)
-      await finish(task.id, false, undefined, message)
+      await finish(task.id, false, undefined, message, sessionId)
     } finally {
       if (sessionId) active.delete(sessionId)
       // 保留 agent/session，GUI 里仍可继续查看和接手；不 dispose。
