@@ -155,14 +155,13 @@ class AutonomyRunner extends AutonomyService {
   constructor(ctx: Context, config: AutonomyConfig = {}) {
     super(ctx)
     this.config = { ...DEFAULTS, ...config }
-    const store = ctx.reflect.get('store', false) as StoreService | undefined
-    if (!store) throw new Error('[qm-autonomy] 缺少 store 服务')
-    this.approval = ctx.reflect.get('approval', false) as ApprovalService
-    this.task = ctx.reflect.get('task', false) as TaskService
-    this.schedule = ctx.reflect.get('schedule', false) as ScheduleService
-    this.gateway = ctx.reflect.get('gateway', false) as GatewayService
-    this.channel = ctx.reflect.get('channel', false) as ChannelService
-    this.taskRunner = ctx.reflect.get('taskRunner', false) as TaskRunnerService
+    const store = ctx.store
+    this.approval = ctx.approval
+    this.task = ctx.task
+    this.schedule = ctx.schedule
+    this.gateway = ctx.gateway
+    this.channel = ctx.channel
+    this.taskRunner = ctx.taskRunner
     this.targets = store.collection<ChannelTargetRow>('qm_channel_target')
     this.traces = store.collection<TraceRow>(TRACE)
     this.states = store.collection<StateRow>(STATE)
@@ -778,7 +777,7 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
   }
 
   // 盘点任务收尾后把结论回推给主人：这是 A3 的「汇报」环节
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
+  const channel = ctx.channel
   if (channel) {
     ctx.events.on(EVENTS.taskFinished, (run: TaskRun) => {
       if (run.kind !== 'inventory') return
@@ -794,7 +793,7 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
     void runner.noteEngagement()
   })
 
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService
+  const gateway = ctx.gateway
   ctx.effect(() =>
     gateway.route({
       method: 'GET',

@@ -60,8 +60,7 @@ interface StoredTurn extends Row {
 }
 
 export function apply(ctx: Context): void {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  if (!store) throw new Error('[qm-history] 缺少 store 服务')
+  const store = ctx.store
   const collection = store.collection<StoredMessage>(MESSAGE_COLLECTION)
   const turns = store.collection<StoredTurn>(TURN_COLLECTION)
 

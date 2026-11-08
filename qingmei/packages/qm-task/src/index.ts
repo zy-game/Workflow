@@ -381,10 +381,8 @@ function normalizeContract(raw: unknown): TaskContract | undefined {
   }
 }
 export function apply(ctx: Context, config: TaskConfig = {}): void {
-  const task = ctx.reflect.get('task', false) as TaskService | undefined
-  if (!task) throw new Error('[qm-task] 缺少 task 服务')
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!gateway) throw new Error('[qm-task] 缺少 gateway 服务')
+  const task = ctx.task
+  const gateway = ctx.gateway
   /** harness 是可选依赖：开发环境可能没装 DSH，此时派发返回「没有可用的 harness」 */
   const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
 

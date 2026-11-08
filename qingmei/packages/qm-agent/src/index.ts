@@ -139,14 +139,14 @@ interface StoredMessage extends Row {
 export function apply(ctx: Context, config: AgentConfig): void {
   const personaService = ctx.reflect.get('persona', false) as { current: () => { prompt: string } } | undefined
   const persona = personaService?.current().prompt || requirePersona(config)
-  const llm = requireService<LlmService>(ctx, 'llm')
-  const store = requireService<StoreService>(ctx, 'store')
-  const channel = requireService<ChannelService>(ctx, 'channel')
-  const gateway = requireService<GatewayService>(ctx, 'gateway')
+  const llm = ctx.llm
+  const store = ctx.store
+  const channel = ctx.channel
+  const gateway = ctx.gateway
   /** harness 是可选车道：存在就优先用，不存在或不可用则回落 llm */
   const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
   /** 记忆是核心依赖（docs/02）：缺失时插件不会 ACTIVE，而不是静默降级成「没有记忆」 */
-  const memory = requireService<MemoryService>(ctx, 'memory')
+  const memory = ctx.memory
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()

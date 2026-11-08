@@ -21,10 +21,8 @@ const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 200
 
 export function apply(ctx: Context): void {
-  const audit = ctx.reflect.get('audit', false) as AuditService | undefined
-  if (!audit) throw new Error('[qm-audit] 缺少 audit 服务')
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!gateway) throw new Error('[qm-audit] 缺少 gateway 服务')
+  const audit = ctx.audit
+  const gateway = ctx.gateway
 
   ctx.effect(() =>
     gateway.route({

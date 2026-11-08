@@ -35,10 +35,10 @@ interface RunRow extends Row {
 }
 
 export function apply(ctx: Context, config: ConsolidateConfig = {}): void {
-  const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
+  const memory = ctx.memory
+  const channel = ctx.channel
+  const gateway = ctx.gateway
+  const store = ctx.store
   if (!memory) throw new Error('[qm-consolidate] 缺少 memory 服务')
   if (!channel) throw new Error('[qm-consolidate] 缺少 channel 服务')
   if (!gateway) throw new Error('[qm-consolidate] 缺少 gateway 服务')

@@ -102,10 +102,8 @@ export function deviceClassOf(platform: string): string {
 }
 
 export function apply(ctx: Context, config: DeviceConfig = {}): void {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!store) throw new Error('[qm-device] 缺少 store 服务')
-  if (!gateway) throw new Error('[qm-device] 缺少 gateway 服务')
+  const store = ctx.store
+  const gateway = ctx.gateway
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
   const tasks = store.collection<DeviceTaskRow>(TASK_COLLECTION)
   const digests = store.collection<DigestRow>('qm_session_digest')
