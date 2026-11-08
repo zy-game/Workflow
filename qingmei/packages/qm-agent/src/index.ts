@@ -243,6 +243,37 @@ export function apply(ctx: Context, config: AgentConfig): void {
     let tokensIn = 0
     let tokensOut = 0
 
+    // 显式记忆：不调用 LLM，用户说「记住/忘掉」就直接落库。
+    const memoryCommand = await handleMemoryCommand(userText, sessionId)
+    if (memoryCommand !== null) {
+      try {
+        const result = await channel.send({
+          channel: message.channel,
+          conversationId: message.conversation.id,
+          blocks: [{ type: 'text', text: memoryCommand }],
+          traceId,
+        })
+        if (!result.ok) problems.push(`渠道发送失败：${result.error ?? '未知原因'}`)
+      } catch (error) {
+        problems.push(`渠道发送失败：${messageOf(error)}`)
+      }
+      const end: TurnEnd = {
+        sessionId,
+        traceId,
+        ok: problems.length === 0,
+        text: memoryCommand,
+        userText,
+        latencyMs: Date.now() - startedAt,
+        deviceId: message.deviceId,
+        steps: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+      }
+      if (problems.length > 0) end.error = problems.join('；')
+      ctx.events.emit(EVENTS.turnEnd, end)
+      return
+    }
+
     // 视口决定能看到哪些记忆：群聊只注入该群的 public 事实（docs/05 M1 验收第 5 条）
     // 群视口带上渠道前缀：不同渠道的会话 id 即使撞了也不会互相看到
     const audience =
@@ -441,6 +472,36 @@ export function apply(ctx: Context, config: AgentConfig): void {
     }
     if (problems.length > 0) end.error = problems.join('；')
     ctx.events.emit(EVENTS.turnEnd, end)
+  }
+
+  async function handleMemoryCommand(text: string, sessionId: string): Promise<string | null> {
+    if (!memory) return null
+    const remember = /^记住[：:，,\s]*(.+)$/s.exec(text.trim())
+    if (remember?.[1]?.trim()) {
+      const object = remember[1].trim().slice(0, 500)
+      await memory.ingest([
+        {
+          kind: 'fact',
+          subject: '用户',
+          predicate: '记住',
+          object,
+          confidence: 0.95,
+          sensitivity: 'private',
+          audience: 'owner',
+          origin: { kind: 'channel', id: sessionId },
+        },
+      ])
+      return `记住了：${object}`
+    }
+    const forget = /^忘掉[：:，,\s]*(.+)$/s.exec(text.trim())
+    if (forget?.[1]?.trim()) {
+      const needle = forget[1].trim()
+      const facts = await memory.listFacts({ limit: 100 })
+      const ids = facts.filter((fact) => fact.object.includes(needle) || fact.predicate.includes(needle)).map((fact) => fact.id)
+      const removed = await memory.forget(ids)
+      return removed > 0 ? `忘掉了 ${removed} 条` : `没有找到「${needle}」`
+    }
+    return null
   }
 
   function enqueue(sessionId: string, task: () => Promise<void>): void {
