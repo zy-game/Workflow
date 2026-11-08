@@ -47,7 +47,6 @@ test('create：queued 状态、taskId 与 run 目录', async () => {
     const run = await h.task.create({ prompt: '  把测试跑一遍  ' })
     assert.equal(run.status, 'queued')
     assert.equal(run.prompt, '把测试跑一遍')
-    assert.equal(run.taskId, run.id)
     assert.equal(run.target.executorId, 'local')
     assert.match(run.target.cwd ?? '', /data\/workspaces\/run_/)
     assert.equal(run.progress, null)

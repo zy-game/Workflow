@@ -288,3 +288,41 @@ test('同一 thread 的第二条任务复用上一条 session', async () => {
     await h.dispose()
   }
 })
+
+test('设备 claim 复用 qm-task 的优先级调度', async () => {
+  const h = await setup()
+  try {
+    await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/register',
+      query: {},
+      headers: {},
+      body: { id: 'dev-priority', platform: 'windows', harnesses: [{ kind: 'dsh', acp: false }] },
+    })
+    const low = await h.call({
+      method: 'POST',
+      path: '/api/v1/tasks',
+      query: {},
+      headers: {},
+      body: { prompt: 'low', priority: 1, target: { executorId: 'device:dev-priority' } },
+    })
+    const high = await h.call({
+      method: 'POST',
+      path: '/api/v1/tasks',
+      query: {},
+      headers: {},
+      body: { prompt: 'high', priority: 9, target: { executorId: 'device:dev-priority' } },
+    })
+    const claimed = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/claim',
+      query: {},
+      headers: {},
+      body: { deviceId: 'dev-priority' },
+    })
+    assert.equal(claimed.body.task.id, high.body.run.id)
+    assert.notEqual(claimed.body.task.id, low.body.run.id)
+  } finally {
+    await h.dispose()
+  }
+})

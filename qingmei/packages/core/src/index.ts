@@ -885,7 +885,6 @@ export interface TaskTarget {
 
 export interface TaskRun {
   id: string
-  taskId: string
   title: string
   prompt: string
   /** 归属项目；老数据没有这一列，读取为 null */
@@ -1030,7 +1029,10 @@ export abstract class TaskRunnerService extends Service {
   constructor(ctx: Context) {
     super(ctx, 'taskRunner')
   }
-  abstract dispatch(run: TaskRun): void
+  abstract dispatch(run: TaskRun): void  /** 远程执行器领取任务；与本地 dispatch 共用同一套调度策略 */
+  async lease(_executorId: string): Promise<TaskRun | null> {
+    return null
+  }
   /** 取消排队/执行中的 run；默认不支持（任务账本仍会记 cancelled） */
   async cancel(_id: string, _reason?: string): Promise<boolean> {
     return false

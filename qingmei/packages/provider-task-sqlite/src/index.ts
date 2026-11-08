@@ -301,7 +301,6 @@ function parseUsage(raw: string | null): TaskUsage | null {
 function toRun(row: TaskRow): TaskRun {
   return {
     id: row.id,
-    taskId: row.task_id,
     title: row.title,
     prompt: row.prompt,
     project: row.project?.trim() || null,

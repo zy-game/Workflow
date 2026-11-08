@@ -81,6 +81,20 @@ export class TaskRunner extends TaskRunnerService {
     return this.ctx.get('harness', false) as HarnessService | undefined
   }
 
+  /** 设备/远程执行器领取任务：与本地队列共用优先级、静默时段和依赖判断。 */
+  async lease(executorId: string): Promise<TaskRun | null> {
+    const quiet = this.deps.quietHours !== null && inQuietHours(new Date(), this.deps.quietHours)
+    const runs = (await this.deps.task.list(100))
+      .filter((run) => run.status === 'queued' && run.target.executorId === executorId)
+      .sort((a, b) => (b.priority ?? 5) - (a.priority ?? 5) || a.createdAt.getTime() - b.createdAt.getTime())
+    for (const run of runs) {
+      if (quiet && (run.priority ?? 5) < this.deps.urgentPriority) continue
+      const state = await this.dependencyState(run)
+      if (state !== 'ready') continue
+      return this.deps.task.start(run.id)
+    }
+    return null
+  }
   dispatch(run: TaskRun): void {
     this.queue.push(run)
     void this.pump()

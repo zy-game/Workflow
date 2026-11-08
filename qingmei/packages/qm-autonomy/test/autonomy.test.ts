@@ -154,7 +154,6 @@ function approvalRequest(prompt = '子 agent 请求执行：bash: npm test'): Ap
 function taskRun(overrides: Partial<TaskRun> = {}): TaskRun {
   return {
     id: 'run_1',
-    taskId: 'run_1',
     title: '跑测试',
     prompt: '跑测试',
     project: null,

@@ -136,7 +136,7 @@ target.executorId = device:<id>
   → 设备 companion（DSH Host）
 ```
 
-两条路径共享同一个 Task 账本和 TaskView，但调度/审批/上下文仍有两套实现差异；后续要收敛到统一 ExecutorRegistry/TaskDispatcher。
+两条路径共享同一个 Task 账本、TaskView 和调度策略：设备 claim 通过 `TaskRunnerService.lease(executorId)`，与本地队列共用优先级、静默时段和依赖判断。剩余差异是审批桥和设备侧上下文组装。
 
 ## 5. 数据流
 

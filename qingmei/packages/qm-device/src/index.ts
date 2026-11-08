@@ -21,6 +21,7 @@ import {
   type PreparedTaskTarget,
   taskViewOf,
   type TaskService,
+  type TaskRunnerService,
 } from '@qingmei/core'
 
 export interface DeviceConfig {
@@ -111,7 +112,9 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   ctx.inject(['memory'], (sub) => { memoryService = sub.memory })
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
   let taskService: TaskService | undefined
+  let taskRunner: TaskRunnerService | undefined
   ctx.inject(['task'], (sub) => { taskService = sub.task })
+  ctx.inject(['taskRunner'], (sub) => { taskRunner = sub.taskRunner })
   new DeviceTaskTargets(ctx, prepareTarget)
   const digests = store.collection<DigestRow>('qm_session_digest')
   const staleMs = Math.max(10_000, config.staleMs ?? 90_000)
@@ -249,18 +252,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   }
 
   async function claim(deviceId: string): Promise<TaskRun | null> {
-    return serialize(async () => {
-      if (taskService) {
-        const queued = (await unifiedTasks(deviceId))
-          .filter((run) => run.status === 'queued')
-          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-        const next = queued[0]
-        if (!next) return null
-        const started = await taskService.start(next.id)
-        return started ?? null
-      }
-      return null
-    })
+    if (!taskRunner) return null
+    return taskRunner.lease(executorIdOf(deviceId))
   }
 
   ctx.effect(() =>
