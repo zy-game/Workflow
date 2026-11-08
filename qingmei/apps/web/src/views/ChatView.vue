@@ -20,7 +20,18 @@ const failed = ref(false)
 const retryAt = ref(0)
 const noticeText = ref('')
 const listening = ref(false)
-const nativeSpeech = () => window.Capacitor?.Plugins?.QmSpeech
+const nativeSpeech = () => {
+  const capacitor = window.Capacitor
+  if (capacitor?.Plugins?.QmSpeech) return capacitor.Plugins.QmSpeech
+  if (typeof capacitor?.registerPlugin === 'function') {
+    try {
+      return capacitor.registerPlugin('QmSpeech')
+    } catch {
+      return null
+    }
+  }
+  return null
+}
 const voiceSupported = ref(false)
 let retryTimer = 0
 let counter = 0
@@ -356,7 +367,7 @@ onBeforeUnmount(() => {
         @keydown="onKeydown"
         @input="resize"
       ></textarea>
-      <button v-if="voiceSupported" class="mic" :class="{ listening }" type="button" :aria-label="listening ? '停止语音输入' : '语音输入'" @click="toggleVoice">
+      <button class="mic" :class="{ listening }" type="button" :aria-label="listening ? '停止语音输入' : '语音输入'" @click="toggleVoice">
         {{ listening ? '听…' : '语音' }}
       </button>
       <button class="send" type="submit" :disabled="sendDisabled">{{ sendText }}</button>
