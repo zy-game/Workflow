@@ -10,7 +10,7 @@ import {
   type ChatMessage,
   type ChatRequest,
   type ChatStreamChunk,
-} from '@qingmei/service-llm'
+} from '@qingmei/core'
 
 export interface EchoConfig {
   /** 每轮回答的开头，例如「我是青梅，P1 版本先跑通闭环。」 */

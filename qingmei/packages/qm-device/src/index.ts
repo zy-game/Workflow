@@ -10,8 +10,6 @@ import {
   type GatewayRequest,
   type GatewayResponse,
   type GatewayService,
-  type LlmService,
-  type MemoryRecord,
   type MemoryService,
   type Row,
   type StoreService,
@@ -106,9 +104,7 @@ class DeviceTaskTargets extends TaskTargetService {
 export function apply(ctx: Context, config: DeviceConfig = {}): void {
   const store = ctx.store
   const gateway = ctx.gateway
-  let llmService: LlmService | undefined
   let memoryService: MemoryService | undefined
-  ctx.inject(['llm'], (sub) => { llmService = sub.llm })
   ctx.inject(['memory'], (sub) => { memoryService = sub.memory })
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
   let taskService: TaskService | undefined
@@ -302,73 +298,6 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     }),
   )
 
-  async function optimize(summary: string, events: unknown[]): Promise<string[]> {
-    const llm = llmService
-    if (!llm || events.length === 0) return []
-    const transcript = `${summary}\n${JSON.stringify(events).slice(0, 6000)}`
-    const { text } = await llm.complete({
-      messages: [
-        {
-          role: 'system',
-          content:
-            '你是自优化分析器。阅读会话和工具事件，提炼可复用的失败教训、重试模式或流程改进。' +
-            '只输出 JSON 字符串数组，每项不超过 120 字；没有就输出 []。',
-        },
-        { role: 'user', content: transcript.slice(0, 8000) },
-      ],
-    })
-    try {
-      const parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim())
-      return Array.isArray(parsed) ? parsed.map((item) => String(item).slice(0, 240)).slice(0, 10) : []
-    } catch {
-      return []
-    }
-  }
-  async function distill(input: { summary: string; turns: unknown[]; facts: unknown[] }): Promise<MemoryRecord[]> {
-    const llm = llmService
-    const memory = memoryService
-    if (!llm || !memory || input.facts.length > 0) return []
-    const transcript = [input.summary, JSON.stringify(input.turns).slice(0, 4000)].join('\n').slice(0, 5000)
-    if (transcript.trim().length < 10) return []
-    const { text } = await llm.complete({
-      messages: [
-        {
-          role: 'system',
-          content:
-            '你是一个知识提炼器。从会话记录中抽取值得长期记住的事实、决策和教训，只输出 JSON 数组。' +
-            '元素形如 {"subject":"项目","predicate":"使用","object":"pnpm","confidence":0.9}；没有就输出 []。',
-        },
-        { role: 'user', content: transcript },
-      ],
-    })
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim())
-    } catch {
-      return []
-    }
-    if (!Array.isArray(parsed)) return []
-    const records: MemoryRecord[] = []
-    for (const item of parsed.slice(0, 8)) {
-      if (!item || typeof item !== 'object') continue
-      const value = item as Record<string, unknown>
-      const subject = String(value.subject ?? '').trim()
-      const predicate = String(value.predicate ?? '').trim()
-      const object = String(value.object ?? '').trim()
-      if (!subject || !predicate || !object) continue
-      records.push({
-        kind: 'fact',
-        subject,
-        predicate,
-        object,
-        confidence: Math.min(1, Math.max(0, Number(value.confidence) || 0.7)),
-        sensitivity: 'private',
-        origin: { kind: 'harness', id: 'device-worker' },
-      })
-    }
-    if (records.length > 0) await memory.ingest(records)
-    return records
-  }
   ctx.effect(() =>
     gateway.route({
       method: 'GET',
@@ -466,29 +395,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
         }
         if (existing) await digests.update(id, row)
         else await digests.insert(row)
-        let distilled: MemoryRecord[] = []
-        try {
-          distilled = await distill({
-            summary: row.summary,
-            turns: JSON.parse(row.turns_json) as unknown[],
-            facts: JSON.parse(row.facts_json) as unknown[],
-          })
-        } catch {
-          distilled = []
-        }
-        if (distilled.length > 0) {
-          await digests.update(id, { distilled_json: JSON.stringify(distilled) })
-        }
-        let lessons: string[] = []
-        try {
-          lessons = await optimize(row.summary, JSON.parse(row.events_json) as unknown[])
-        } catch {
-          lessons = []
-        }
-        if (lessons.length > 0) {
-          await digests.update(id, { lessons_json: JSON.stringify(lessons) })
-        }
-        res.status(200).send({ ok: true, id, distilled: distilled.length, lessons: lessons.length })
+        res.status(200).send({ ok: true, id })
       },
     }),
   )

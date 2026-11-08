@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Context } from 'cordis'
-import { StoreService, type Row } from '@qingmei/service-store'
+import { StoreService, type Row } from '@qingmei/core'
 import * as storePlugin from '../src/index.ts'
 import { SqliteStore } from '../src/index.ts'
 

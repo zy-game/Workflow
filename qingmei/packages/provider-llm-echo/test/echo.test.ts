@@ -10,7 +10,7 @@ import {
   type ChatMessage,
   type ChatRequest,
   type ChatStreamChunk,
-} from '@qingmei/service-llm'
+} from '@qingmei/core'
 
 import * as echo from '../src/index.ts'
 import { EchoLlm } from '../src/index.ts'

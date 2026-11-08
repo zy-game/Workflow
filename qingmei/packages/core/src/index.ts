@@ -1075,40 +1075,6 @@ export abstract class IdentityService extends Service {
     return null
   }
 }
-export interface PermissionRequest {
-  actor: Actor
-  channel: ChannelId
-  conversation: 'dm' | 'group'
-  /** 'tool.invoke:<name>' | 'memory.read' | 'channel.send'… */
-  action: string
-  resource?: string
-}
-
-export type Decision =
-  | { effect: 'allow' }
-  | { effect: 'deny'; reason: string }
-  | { effect: 'ask'; prompt: string }
-
-/** 静态策略：动作前缀匹配（'tool.invoke:schedule_' 命中所有 schedule_*） */
-export interface PolicyRule {
-  match: string
-  effect: 'allow' | 'deny' | 'ask'
-  reason?: string
-  prompt?: string
-  conversation?: 'dm' | 'group'
-  role?: Actor['role']
-}
-
-export abstract class PermissionService extends Service {
-  constructor(ctx: Context) {
-    super(ctx, 'permission')
-  }
-  abstract check(req: PermissionRequest): Promise<Decision>
-  abstract rules(): PolicyRule[]
-  /** 运行时追加规则；返回撤销函数 */
-  abstract addRule(rule: PolicyRule): () => void
-}
-
 export interface AuditEntry {
   at: Date
   actorId: string
@@ -1338,7 +1304,6 @@ declare module 'cordis' {
     taskTargets: TaskTargetService
     taskRunner: TaskRunnerService
     identity: IdentityService
-    permission: PermissionService
     skills: SkillService
     audit: AuditService
     approval: ApprovalService

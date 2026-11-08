@@ -6,9 +6,7 @@
 #
 # 相对路径（path / webRoot）以进程工作目录为基准，请在仓库根目录启动。
 
-# ── 服务契约的实现（基础设施；service-store / service-llm 是门面，无运行时行为）
-- name: '@qingmei/service-store'
-- name: '@qingmei/service-llm'
+# ── 运行时服务（契约在 core；store/llm/memory 不再单独装门面包）
 - name: '@qingmei/service-channel'
 - name: '@qingmei/service-gateway'
 
@@ -17,7 +15,6 @@
   config:
     skillsDir: ./skills
 - name: '@qingmei/qm-skill/api'
-- name: '@qingmei/service-memory'
 
 # ── 提供方
 - name: '@qingmei/provider-store-sqlite'
@@ -29,12 +26,12 @@
     limit: 5
     minConfidence: 0.6
 
+# 仅本地开发/测试：生产默认不装配任何 LLM
 - name: '@qingmei/provider-llm-echo'
   config:
     greeting: '我是青梅，P1 版本先跑通闭环。'
 
 # 权限与审计：worker/ACP 的敏感动作仍走这里
-- name: '@qingmei/provider-permission-static'
 
 - name: '@qingmei/provider-audit-sqlite'
 
@@ -88,10 +85,6 @@
     quietStart: 23
     quietEnd: 8
 
-# 夜间巩固：每天 4 点压缩同主题低价值事实（POST /api/v1/memory/consolidate 可手动触发）
-- name: '@qingmei/qm-consolidate'
-  config:
-    hour: 4
 
 # 群画像：未配置的群回「权限未配置」，打标签后按策略回复
 - name: '@qingmei/qm-conversation-profile'

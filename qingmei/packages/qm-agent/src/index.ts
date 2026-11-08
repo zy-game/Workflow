@@ -34,7 +34,7 @@ import {
   type ThreadService,
   type TurnEnd,
 } from '@qingmei/core'
-import type { LlmService } from '@qingmei/service-llm'
+import type { LlmService } from '@qingmei/core'
 
 export interface AgentConfig {
   /** 注入 system 消息的人格设定 */
@@ -44,7 +44,7 @@ export interface AgentConfig {
 export const name = 'qm-agent'
 
 /** cordis 会等这四个服务就绪后才执行 apply，卸载时自动停用本插件 */
-export const inject: string[] = ['llm', 'channel', 'gateway', 'memory']
+export const inject: string[] = ['channel', 'gateway', 'memory']
 
 /** 组装上下文时回读的历史条数上限 */
 const HISTORY_LIMIT = 20
@@ -138,7 +138,7 @@ interface StoredMessage extends Row {
 export function apply(ctx: Context, config: AgentConfig): void {
   const personaService = ctx.get('persona', false) as { current: () => { prompt: string } } | undefined
   const persona = personaService?.current().prompt || requirePersona(config)
-  const llm = ctx.llm
+  const llm = ctx.get('llm', false) as LlmService | undefined
   const channel = ctx.channel
   const gateway = ctx.gateway
   /** 记忆是核心依赖（docs/02）：缺失时插件不会 ACTIVE，而不是静默降级成「没有记忆」 */
@@ -377,6 +377,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
           ...(await loadHistory(sessionId, message.platformMessageId)),
           { role: 'user', content: userText },
         ]
+        if (!llm) throw new Error('没有可用的执行器：DSH 不可用且未配置 LLM')
         reply = await streamReply(sessionId, messages, controller.signal)
         steps = 1
       }

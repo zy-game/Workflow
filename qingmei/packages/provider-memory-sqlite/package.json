@@ -8,9 +8,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "cordis": "4.0.0-rc.12",
     "@qingmei/core": "workspace:*",
-    "@qingmei/service-memory": "workspace:*"
+    "cordis": "4.0.0-rc.12"
   },
   "devDependencies": {
     "@qingmei/provider-store-sqlite": "workspace:*",

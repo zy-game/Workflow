@@ -9,7 +9,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { uid, type Migration, type Row } from '@qingmei/core'
-import { StoreService, type Collection, type Query } from '@qingmei/service-store'
+import { StoreService, type Collection, type Query } from '@qingmei/core'
 import type { Context } from 'cordis'
 
 export const name = 'provider-store-sqlite'

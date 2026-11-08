@@ -8,7 +8,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@qingmei/service-store": "workspace:*",
     "cordis": "4.0.0-rc.12",
     "@qingmei/core": "workspace:*"
   }
