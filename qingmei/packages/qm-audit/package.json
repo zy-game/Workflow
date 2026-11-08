@@ -12,7 +12,6 @@
     "@qingmei/core": "workspace:*"
   },
   "devDependencies": {
-    "@qingmei/provider-audit-sqlite": "workspace:*",
     "@qingmei/provider-store-sqlite": "workspace:*",
     "@qingmei/service-gateway": "workspace:*"
   }

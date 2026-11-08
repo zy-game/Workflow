@@ -759,8 +759,22 @@ function isQuiet(date: Date, start: number, end: number): boolean {
   return hour >= start || hour < end
 }
 
+import * as incidentModule from './modules/incident.ts'
+import * as nudgeModule from './modules/nudge.ts'
+import * as openerModule from './modules/opener.ts'
+import * as restModule from './modules/rest.ts'
+import * as profileModule from './modules/conversation-profile.ts'
+
 export function apply(ctx: Context, config: AutonomyConfig = {}): void {
   const runner = new AutonomyRunner(ctx, config)
+  // 自治能力统一装配：主动建议、故障提案、督促、开场、休息、群策略
+  if (config.modules) {
+    ctx.plugin(incidentModule, {})
+    ctx.plugin(nudgeModule, {})
+    ctx.plugin(openerModule, {})
+    ctx.plugin(restModule, {})
+    ctx.plugin(profileModule, {})
+  }
 
   if (config.tickMs !== 0) {
     ctx.effect(() => {

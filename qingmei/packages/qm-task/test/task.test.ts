@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import path from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
-import * as taskPlugin from '@qingmei/provider-task-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as taskOrchestrator from '../src/index.ts'
 import {
@@ -123,14 +122,11 @@ async function setup(
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'orchestrator.db') })
   await storeFiber
-  const taskFiber = ctx.plugin(taskPlugin, { workspaceRoot })
-  await taskFiber
   await ctx.plugin(gatewayPlugin)
-  const task = ctx.reflect.get('task', false) as TaskService
-  if (options.pre) await options.pre(task)
   const harness = harnessOptions ? new FakeHarness(ctx, harnessOptions) : null
   const orchestratorFiber = ctx.plugin(taskOrchestrator, {
     workspaceRoot,
+    startPaused: true,
     timeoutMs: 3000,
     ...(options.maxConcurrent ? { maxConcurrent: options.maxConcurrent } : {}),
     ...(options.quietHours ? { quietHours: options.quietHours } : {}),
@@ -138,6 +134,11 @@ async function setup(
     ...(options.urgentPriority !== undefined ? { urgentPriority: options.urgentPriority } : {}),
   })
   await orchestratorFiber
+  const task = ctx.reflect.get('task', false) as TaskService
+  if (options.pre) await options.pre(task)
+  const runner = ctx.reflect.get('taskRunner', false) as { start(): void; resumeOnRestart(): Promise<void> }
+  await runner.resumeOnRestart()
+  runner.start()
 
   return {
     ctx,
@@ -151,7 +152,6 @@ async function setup(
     },
     async dispose() {
       await orchestratorFiber.dispose()
-      await taskFiber.dispose()
       await storeFiber.dispose()
       rmSync(dir, { recursive: true, force: true })
     },
@@ -160,7 +160,7 @@ async function setup(
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(taskOrchestrator.name, 'qm-task')
-  assert.deepEqual(taskOrchestrator.inject, ['task', 'gateway'])
+  assert.deepEqual(taskOrchestrator.inject, ['store', 'gateway'])
 })
 
 test('排队超时：没有执行器接管时转 failed，不无限 queued', async () => {

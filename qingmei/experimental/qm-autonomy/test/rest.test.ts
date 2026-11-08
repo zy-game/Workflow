@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
-import * as restPlugin from '../src/index.ts'
+import * as restPlugin from '../src/modules/rest.ts'
 import {
   ChannelService,
   type GatewayRequest,

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
-import * as profilePlugin from '../src/index.ts'
+import * as profilePlugin from '../src/modules/conversation-profile.ts'
 import {
   ChannelService,
   EVENTS,

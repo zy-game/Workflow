@@ -13,7 +13,6 @@
   },
   "devDependencies": {
     "@qingmei/provider-store-sqlite": "workspace:*",
-    "@qingmei/provider-task-sqlite": "workspace:*",
     "@qingmei/service-gateway": "workspace:*"
   }
 }

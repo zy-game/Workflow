@@ -76,9 +76,6 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-store-sqlite
-      '@qingmei/provider-task-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-task-sqlite
       '@qingmei/qm-agent':
         specifier: workspace:*
         version: link:../../packages/qm-agent
@@ -88,18 +85,9 @@ importers:
       '@qingmei/qm-audit':
         specifier: workspace:*
         version: link:../../packages/qm-audit
-      '@qingmei/qm-autonomy':
-        specifier: workspace:*
-        version: link:../../experimental/qm-autonomy
-      '@qingmei/qm-consolidate':
-        specifier: workspace:*
-        version: link:../../experimental/qm-consolidate
       '@qingmei/qm-content':
         specifier: workspace:*
         version: link:../../experimental/qm-content
-      '@qingmei/qm-conversation-profile':
-        specifier: workspace:*
-        version: link:../../experimental/qm-conversation-profile
       '@qingmei/qm-device':
         specifier: workspace:*
         version: link:../../packages/qm-device
@@ -109,27 +97,6 @@ importers:
       '@qingmei/qm-identity':
         specifier: workspace:*
         version: link:../../packages/qm-identity
-      '@qingmei/qm-incident':
-        specifier: workspace:*
-        version: link:../../experimental/qm-incident
-      '@qingmei/qm-memory-extract':
-        specifier: workspace:*
-        version: link:../../experimental/qm-memory-extract
-      '@qingmei/qm-memory-hotspot':
-        specifier: workspace:*
-        version: link:../../experimental/qm-memory-hotspot
-      '@qingmei/qm-nudge':
-        specifier: workspace:*
-        version: link:../../experimental/qm-nudge
-      '@qingmei/qm-opener':
-        specifier: workspace:*
-        version: link:../../experimental/qm-opener
-      '@qingmei/qm-reminder':
-        specifier: workspace:*
-        version: link:../../experimental/qm-reminder
-      '@qingmei/qm-rest':
-        specifier: workspace:*
-        version: link:../../experimental/qm-rest
       '@qingmei/qm-review':
         specifier: workspace:*
         version: link:../../experimental/qm-review
@@ -139,9 +106,6 @@ importers:
       '@qingmei/qm-task':
         specifier: workspace:*
         version: link:../../packages/qm-task
-      '@qingmei/qm-thread':
-        specifier: workspace:*
-        version: link:../../experimental/qm-thread
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../../packages/service-channel
@@ -177,50 +141,6 @@ importers:
         specifier: ^6.3.5
         version: 6.4.5(@types/node@26.6.6)(jiti@2.7.0)
 
-  experimental/provider-approval-sqlite:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-
-  experimental/provider-audit-sqlite:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-
-  experimental/provider-embedding-openai:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
-  experimental/provider-llm-openai:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
   experimental/qm-autonomy:
     dependencies:
       '@qingmei/core':
@@ -233,25 +153,9 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-store-sqlite
-      '@qingmei/service-gateway':
+      '@qingmei/qm-task':
         specifier: workspace:*
-        version: link:../../packages/service-gateway
-
-  experimental/qm-consolidate:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-memory-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-memory-sqlite
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
+        version: link:../../packages/qm-task
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../../packages/service-channel
@@ -275,154 +179,6 @@ importers:
         specifier: workspace:*
         version: link:../../packages/service-gateway
 
-  experimental/qm-conversation-profile:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-      '@qingmei/service-channel':
-        specifier: workspace:*
-        version: link:../../packages/service-channel
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../../packages/service-gateway
-
-  experimental/qm-incident:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-      '@qingmei/provider-task-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-task-sqlite
-      '@qingmei/service-channel':
-        specifier: workspace:*
-        version: link:../../packages/service-channel
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../../packages/service-gateway
-
-  experimental/qm-memory-extract:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
-  experimental/qm-memory-hotspot:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-      '@qingmei/service-channel':
-        specifier: workspace:*
-        version: link:../../packages/service-channel
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../../packages/service-gateway
-
-  experimental/qm-nudge:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-      '@qingmei/provider-task-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-task-sqlite
-      '@qingmei/service-channel':
-        specifier: workspace:*
-        version: link:../../packages/service-channel
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../../packages/service-gateway
-
-  experimental/qm-opener:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-      '@qingmei/service-channel':
-        specifier: workspace:*
-        version: link:../../packages/service-channel
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../../packages/service-gateway
-
-  experimental/qm-reminder:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-      '@qingmei/qm-history':
-        specifier: workspace:*
-        version: link:../../packages/qm-history
-      '@qingmei/service-channel':
-        specifier: workspace:*
-        version: link:../../packages/service-channel
-
-  experimental/qm-rest:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-      '@qingmei/service-channel':
-        specifier: workspace:*
-        version: link:../../packages/service-channel
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../../packages/service-gateway
-
   experimental/qm-review:
     dependencies:
       '@qingmei/core':
@@ -438,22 +194,6 @@ importers:
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../../packages/service-channel
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../../packages/service-gateway
-
-  experimental/qm-thread:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../../packages/service-gateway
@@ -586,19 +326,6 @@ importers:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
 
-  packages/provider-task-sqlite:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../provider-store-sqlite
-
   packages/qm-agent:
     dependencies:
       '@qingmei/core':
@@ -624,9 +351,6 @@ importers:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
     devDependencies:
-      '@qingmei/provider-approval-sqlite':
-        specifier: workspace:*
-        version: link:../../experimental/provider-approval-sqlite
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
@@ -643,9 +367,6 @@ importers:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
     devDependencies:
-      '@qingmei/provider-audit-sqlite':
-        specifier: workspace:*
-        version: link:../../experimental/provider-audit-sqlite
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
@@ -665,9 +386,6 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
-      '@qingmei/provider-task-sqlite':
-        specifier: workspace:*
-        version: link:../provider-task-sqlite
       '@qingmei/qm-task':
         specifier: workspace:*
         version: link:../qm-task
@@ -729,9 +447,6 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
-      '@qingmei/provider-task-sqlite':
-        specifier: workspace:*
-        version: link:../provider-task-sqlite
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway

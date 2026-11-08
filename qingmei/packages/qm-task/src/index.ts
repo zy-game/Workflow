@@ -11,6 +11,8 @@
  * 子 agent 没汇报也不会卡住：会话正常结束就把累计文本当结论收尾。
  */
 import { mkdir } from 'node:fs/promises'
+import { SqliteTask } from './store.ts'
+export { SqliteTask } from './store.ts'
 import path from 'node:path'
 import type { Context } from 'cordis'
 import {
@@ -41,12 +43,14 @@ export interface TaskConfig {
   preemptPriority?: number
   /** 静默时段仍允许启动的优先级下限，默认 8 */
   urgentPriority?: number
+  /** 测试/恢复用：只注册服务和路由，不自动启动 runner */
+  startPaused?: boolean
   /** 排队最长等待；超过后失败，默认 24h */
   queueTimeoutMs?: number
 }
 
 export const name = 'qm-task'
-export const inject = ['task', 'gateway']
+export const inject = ['store', 'gateway']
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const LOCAL_EXECUTOR = 'local'
@@ -62,6 +66,7 @@ interface RunnerDeps {
   urgentPriority: number
   preemptPriority: number
   queueTimeoutMs: number
+  resumeOnRestart: boolean
 }
 
 export class TaskRunner extends TaskRunnerService {
@@ -120,6 +125,30 @@ export class TaskRunner extends TaskRunnerService {
         error: `排队超时：${Math.round(this.deps.queueTimeoutMs / 1000)}s 内没有执行器接管`,
       })
       this.ctx.logger.warn(`[qm-task] 排队超时：${run.id}`)
+    }
+  }
+
+  async resumeOnRestart(): Promise<void> {
+    const runs = (await this.deps.task.list(50)).slice().reverse()
+    const available = this.harness() ? await this.harness()!.available().catch(() => false) : false
+    for (const run of runs) {
+      if (run.target.executorId !== LOCAL_EXECUTOR) continue
+      if (run.status === 'queued') {
+        if (available) this.dispatch(run)
+        continue
+      }
+      if (run.status === 'running' || run.status === 'needs_approval') {
+        if (this.deps.resumeOnRestart) {
+          const resumed = await this.deps.task.resume(run.id)
+          if (resumed && available) this.dispatch(resumed)
+          this.ctx.logger.info('[qm-task] 重启恢复：' + run.id + ' 重新排队')
+          continue
+        }
+        await this.deps.task.finish(run.id, {
+          status: 'failed',
+          error: '进程重启：任务在执行中被中断（resume 未实现）',
+        })
+      }
     }
   }
 
@@ -439,7 +468,7 @@ function parseTarget(raw: unknown): { executorId: string; workspaceId?: string; 
 }
 
 export function apply(ctx: Context, config: TaskConfig = {}): void {
-  const task = ctx.task
+  const task = new SqliteTask(ctx, { workspaceRoot: config.workspaceRoot })
   const gateway = ctx.gateway
   /** harness 是可选依赖：开发环境可能没装 DSH，此时派发返回「没有可用的 harness」 */
   const harness = ctx.get('harness', false) as HarnessService | undefined
@@ -457,8 +486,9 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   const urgentPriority = Number.isFinite(Number(config.urgentPriority))
     ? Math.min(9, Math.max(0, Math.round(Number(config.urgentPriority))))
     : DEFAULT_URGENT_PRIORITY
-  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority, preemptPriority, queueTimeoutMs })
-  runner.start()
+  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority, preemptPriority, queueTimeoutMs, resumeOnRestart: config.resumeOnRestart !== false })
+  if (!config.startPaused) runner.start()
+  if (!config.startPaused) void runner.resumeOnRestart()
   ctx.effect(() => () => runner.stop())
 
   // 任务状态变化推给 SSE，Web 任务面板直接订阅
@@ -473,35 +503,6 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   }
 
 
-  // 重启恢复：排队中的重新排队；执行中的没有 resume，就如实记失败
-  void (async () => {
-    try {
-      const runs = (await task.list(50)).slice().reverse()
-      const available = harness ? await harness.available().catch(() => false) : false
-      for (const run of runs) {
-        // 设备任务由目标设备 claim，不由服务端 runner 抢跑
-        if (run.target.executorId !== LOCAL_EXECUTOR) continue
-        if (run.status === 'queued') {
-          if (available && run.target.executorId === LOCAL_EXECUTOR) runner.dispatch(run)
-          continue
-        }
-        if (run.status === 'running' || run.status === 'needs_approval') {
-          if (resumeOnRestart) {
-            const resumed = await task.resume(run.id)
-            if (resumed && available) runner.dispatch(resumed)
-            ctx.logger.info('[qm-task] 重启恢复：' + run.id + ' 重新排队')
-            continue
-          }
-          await task.finish(run.id, {
-            status: 'failed',
-            error: '进程重启：任务在执行中被中断（resume 未实现）',
-          })
-        }
-      }
-    } catch (error) {
-      ctx.logger.warn(`[qm-task] 重启恢复失败：${messageOf(error)}`)
-    }
-  })()
   ctx.effect(() =>
     gateway.route({
       method: 'POST',

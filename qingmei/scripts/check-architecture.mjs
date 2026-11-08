@@ -43,7 +43,7 @@ const owners = {
   qm_memory_extract_queue: 'qm-memory-extract',
   qm_channel_target: 'qm-approval',
   qm_approval: 'provider-approval-sqlite',
-  qm_task_run: 'provider-task-sqlite',
+  qm_task_run: 'qm-task',
   qm_commitment: 'qm-opener',
   qm_opening: 'qm-opener',
   qm_opening_topic: 'qm-opener',

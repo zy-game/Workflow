@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
-import * as taskPlugin from '@qingmei/provider-task-sqlite'
+import { SqliteTask } from '@qingmei/qm-task'
 import * as gatewayPlugin from '@qingmei/service-gateway'
-import * as nudgePlugin from '../src/index.ts'
+import * as nudgePlugin from '../src/modules/nudge.ts'
 import {
   ChannelService,
   type GatewayRequest,
@@ -61,8 +61,7 @@ async function setup() {
   let clockMs = Date.now()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'nudge.db') })
   await storeFiber
-  const taskFiber = ctx.plugin(taskPlugin, { workspaceRoot: join(dir, 'workspaces') })
-  await taskFiber
+  new SqliteTask(ctx, { workspaceRoot: join(dir, 'workspaces') })
   await ctx.plugin(gatewayPlugin)
   const channel = new FakeChannel(ctx)
   const nudgeFiber = ctx.plugin(nudgePlugin, {
@@ -87,7 +86,6 @@ async function setup() {
     },
     async dispose() {
       await nudgeFiber.dispose()
-      await taskFiber.dispose()
       await storeFiber.dispose()
     },
   }

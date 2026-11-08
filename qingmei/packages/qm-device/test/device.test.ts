@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
-import * as taskPlugin from '@qingmei/provider-task-sqlite'
 import * as taskOrchestrator from '@qingmei/qm-task'
 import * as devicePlugin from '../src/index.ts'
 
@@ -16,11 +15,9 @@ async function setup() {
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'device.db') })
   await storeFiber
   await ctx.plugin(gatewayPlugin)
-  await ctx.plugin(taskPlugin)
+  await ctx.plugin(taskOrchestrator, { startPaused: true })
   const pluginFiber = ctx.plugin(devicePlugin, {})
   await pluginFiber
-  const orchestratorFiber = ctx.plugin(taskOrchestrator, {})
-  await orchestratorFiber
   return {
     ctx,
     async call(req) {
@@ -43,7 +40,6 @@ async function setup() {
       return { handled, status, body }
     },
     async dispose() {
-      await orchestratorFiber.dispose()
       await pluginFiber.dispose()
       await storeFiber.dispose()
     },

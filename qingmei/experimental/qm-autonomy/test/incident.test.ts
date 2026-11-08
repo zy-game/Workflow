@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
-import * as taskPlugin from '@qingmei/provider-task-sqlite'
+import { SqliteTask } from '@qingmei/qm-task'
 import * as gatewayPlugin from '@qingmei/service-gateway'
-import * as incidentPlugin from '../src/index.ts'
+import * as incidentPlugin from '../src/modules/incident.ts'
 import {
   ChannelService,
   EVENTS,
@@ -74,9 +74,8 @@ async function setup(config: incidentPlugin.IncidentConfig = {}) {
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'incident.db') })
   await storeFiber
-  const taskFiber = ctx.plugin(taskPlugin, { workspaceRoot: join(dir, 'workspaces') })
-  await taskFiber
   await ctx.plugin(gatewayPlugin)
+  new SqliteTask(ctx, { workspaceRoot: join(dir, 'workspaces') })
   const channel = new FakeChannel(ctx)
   const runner = new FakeTaskRunner(ctx)
   const incidentFiber = ctx.plugin(incidentPlugin, config)
@@ -93,7 +92,6 @@ async function setup(config: incidentPlugin.IncidentConfig = {}) {
     },
     async dispose() {
       await incidentFiber.dispose()
-      await taskFiber.dispose()
       await storeFiber.dispose()
       rmSync(dir, { recursive: true, force: true })
     },

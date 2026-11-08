@@ -36,7 +36,6 @@
 # 待人确认的审批队列：permission 判 ask、或子 agent 请求权限时落一条
 
 # 任务账本：把任务派给 harness 并记录 run
-- name: '@qingmei/provider-task-sqlite'
 
 # 日程账本：at / everyMs / cron；到点由 provider 直接投递
 - name: '@qingmei/provider-schedule-sqlite'
