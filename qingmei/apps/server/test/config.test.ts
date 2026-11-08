@@ -27,16 +27,15 @@ async function withYaml<T>(source: string, run: (file: string) => Promise<T>): P
   }
 }
 
-test('仓库自带的 qingmei.yml：二十七项插件，端口与数据库路径来自配置', () => {
+test('仓库自带的 qingmei.yml：二十六项插件，端口与数据库路径来自配置', () => {
   const entries = readPluginList(DEFAULT_CONFIG)
-  assert.equal(entries.length, 27)
+  assert.equal(entries.length, 26)
   assert.deepEqual(
     entries.map((entry) => entry.name),
     [
       '@qingmei/service-channel',
       '@qingmei/service-gateway',
       '@qingmei/qm-skill',
-      '@qingmei/qm-skill/api',
       '@qingmei/provider-store-sqlite',
       '@qingmei/provider-memory-sqlite',
       '@qingmei/provider-llm-echo',

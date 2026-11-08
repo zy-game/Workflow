@@ -14,7 +14,6 @@
 - name: '@qingmei/qm-skill'
   config:
     skillsDir: ./skills
-- name: '@qingmei/qm-skill/api'
 
 # ── 提供方
 - name: '@qingmei/provider-store-sqlite'

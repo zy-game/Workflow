@@ -5,14 +5,10 @@
  * 这样 qm-skill 不需要 inject 自己提供的服务。
  */
 import type { Context } from 'cordis'
-import type { GatewayRequest, GatewayResponse, SkillDefinition } from '@qingmei/core'
+import type { GatewayRequest, GatewayResponse, SkillDefinition, SkillService } from '@qingmei/core'
 
-export const name = 'qm-skill-api'
-export const inject = ['gateway', 'skills']
-
-export function apply(ctx: Context): void {
+export function registerSkillApi(ctx: Context, skills: SkillService): void {
   const gateway = ctx.gateway
-  const skills = ctx.skills
 
   ctx.effect(() =>
     gateway.route({
@@ -126,4 +122,3 @@ export function apply(ctx: Context): void {
   )
 }
 
-export default { name, inject, apply }

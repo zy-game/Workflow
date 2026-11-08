@@ -20,6 +20,7 @@ import {
   type GatewayService,
   type SkillDefinition,
 } from '@qingmei/core'
+import { registerSkillApi } from './api.ts'
 
 export interface SkillConfig {
   skillsDir?: string
@@ -196,7 +197,8 @@ class FileSkills extends SkillService {
 }
 
 export function apply(ctx: Context, config: SkillConfig = {}): void {
-  ctx.plugin(FileSkills, config)
+  const skills = new FileSkills(ctx, config)
+  ctx.inject(['gateway'], (sub) => registerSkillApi(sub, skills))
 }
 
 export const defaultExport = { name, inject, apply }
