@@ -212,6 +212,28 @@ export function apply(ctx: Context): void {
 
   ctx.effect(() =>
     gateway.route({
+      method: 'POST',
+      path: '/api/v1/approvals',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const action = typeof body.action === 'string' ? body.action.trim() : ''
+        const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+        if (!action || !prompt) {
+          res.status(400).send({ ok: false, error: 'action/prompt 不能为空' })
+          return
+        }
+        const request = await approval.create({
+          action,
+          prompt,
+          requester: typeof body.requester === 'string' ? body.requester : 'manual',
+        })
+        res.status(201).send({ ok: true, item: request })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
       method: 'GET',
       path: '/api/v1/approvals',
       async handler(req: GatewayRequest, res: GatewayResponse) {
