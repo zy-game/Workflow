@@ -23,6 +23,7 @@ import {
   type GatewayService,
   type InboundMessage,
   type MemoryService,
+  type MemoryQueueService,
   type PersonaService,
   type Row,
   type SchedulePatch,
@@ -80,6 +81,7 @@ interface ResourceServices {
   store?: StoreService
   persona?: PersonaService
   memory?: MemoryService
+  memoryQueue?: MemoryQueueService
   schedule?: ScheduleService
   channel?: ChannelService
 }
@@ -183,6 +185,7 @@ export const apply = (ctx: Context, config: Config = {}): Promise<void> => {
   ctx.inject(['history'], (sub) => { resources.history = sub.history })
   ctx.inject(['persona'], (sub) => { resources.persona = sub.persona })
   ctx.inject(['memory'], (sub) => { resources.memory = sub.memory })
+  ctx.inject(['memoryQueue'], (sub) => { resources.memoryQueue = sub.memoryQueue })
   ctx.inject(['schedule'], (sub) => { resources.schedule = sub.schedule })
   ctx.inject(['channel'], (sub) => { resources.channel = sub.channel })
   const deps: HandlerDeps = { resources, ctx, gateway, options, clients, startedAt }
@@ -381,15 +384,16 @@ async function routeRequest(
       return
     }
     if (pathname === '/api/v1/memory/queue' && method === 'GET') {
-      const store = deps.resources.store
-      if (!store) {
+      const memoryQueue = deps.resources.memoryQueue
+      if (!memoryQueue) {
         sendJson(res, 200, { count: 0, items: [] })
         return
       }
-      const rows = await store.collection<Row>('qm_memory_extract_queue').find({})
-      sendJson(res, 200, { count: rows.length, items: rows.map((row) => row as unknown as Record<string, unknown>) })
+      const items = await memoryQueue.pending()
+      sendJson(res, 200, { count: items.length, items })
       return
-    }    if (pathname === '/api/v1/persona' && (method === 'GET' || method === 'POST')) {
+    }
+    if (pathname === '/api/v1/persona' && (method === 'GET' || method === 'POST')) {
       const persona = deps.resources.persona
       if (!persona) {
         sendJson(res, 503, { ok: false, error: 'no persona service' })

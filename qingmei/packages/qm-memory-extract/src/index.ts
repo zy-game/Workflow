@@ -9,6 +9,8 @@ import {
   EVENTS,
   type LlmService,
   type MemoryRecord,
+  MemoryQueueService,
+  type MemoryQueueItem,
   type MemoryService,
   type Row,
   uid,
@@ -25,6 +27,28 @@ interface QueueRow extends Row {
   created_at: number
 }
 
+class MemoryQueue extends MemoryQueueService {
+  private readonly collection
+
+  constructor(ctx: Context) {
+    super(ctx)
+    this.collection = ctx.store.collection<QueueRow>('qm_memory_extract_queue')
+  }
+
+  async pending(): Promise<MemoryQueueItem[]> {
+    const rows = await this.collection.find({})
+    return rows
+      .sort((a, b) => a.created_at - b.created_at)
+      .map((row) => ({
+        id: row.id,
+        sessionId: row.session_id,
+        text: row.text,
+        attempts: row.attempts,
+        lastError: row.last_error || null,
+        createdAt: new Date(row.created_at),
+      }))
+  }
+}
 export interface ExtractConfig {
   /** 低于该置信度的事实丢弃 */
   minConfidence?: number
@@ -63,6 +87,7 @@ export function apply(ctx: Context, config: ExtractConfig = {}): void {
   const retryMs = config.retryMs ?? 60_000
   const maxAttempts = config.maxAttempts ?? 5
 
+  new MemoryQueue(ctx)
   const queue = store.collection<QueueRow>('qm_memory_extract_queue')
 
   ctx.events.on(EVENTS.turnEnd, (end: TurnEnd) => {

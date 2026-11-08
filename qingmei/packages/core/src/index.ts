@@ -1110,6 +1110,22 @@ export interface ChannelTarget {
 }
 
 /** 渠道最近入站目标；由审批/渠道桥维护，供主动推送路由使用。 */
+export interface MemoryQueueItem {
+  id: string
+  sessionId: string
+  text: string
+  attempts: number
+  lastError: string | null
+  createdAt: Date
+}
+
+/** qm_memory_extract_queue 的只读契约；队列写入仍由 qm-memory-extract 负责。 */
+export abstract class MemoryQueueService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'memoryQueue')
+  }
+  abstract pending(): Promise<MemoryQueueItem[]>
+}
 export interface HistoryMessage {
   id: string
   sessionId: string
@@ -1246,6 +1262,7 @@ declare module 'cordis' {
     approval: ApprovalService
     channelTargets: ChannelTargetService
     history: HistoryService
+    memoryQueue: MemoryQueueService
   }
 }
 /** 服务名常量，避免各处手写字符串拼错 */
