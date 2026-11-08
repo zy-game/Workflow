@@ -468,7 +468,8 @@ function parseTarget(raw: unknown): { executorId: string; workspaceId?: string; 
 }
 
 export function apply(ctx: Context, config: TaskConfig = {}): void {
-  const task = new SqliteTask(ctx, { workspaceRoot: config.workspaceRoot })
+  const existingTask = ctx.get('task', false) as TaskService | undefined
+  const task = existingTask ?? new SqliteTask(ctx, { workspaceRoot: config.workspaceRoot })
   const gateway = ctx.gateway
   /** harness 是可选依赖：开发环境可能没装 DSH，此时派发返回「没有可用的 harness」 */
   const harness = ctx.get('harness', false) as HarnessService | undefined
