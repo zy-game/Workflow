@@ -80,7 +80,7 @@ if (violations.length > 0) {
   }
 }
 
-if (strict && violations.length > 0) {
-  console.error('\n严格模式：存在绕过 inject 的服务访问')
+if (strict && (violations.length > 0 || crossCollections.length > 0)) {
+  console.error('\n严格模式：存在绕过 inject 的服务访问或跨插件 collection 访问')
   process.exit(1)
 }

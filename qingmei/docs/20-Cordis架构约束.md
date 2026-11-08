@@ -68,6 +68,14 @@ Task
   status
 ```
 
+## 3.1 执行门禁
+
+```bash
+pnpm arch       # 0 reflect + 0 跨插件 collection，否则退出 1
+pnpm artifacts  # Android APK 的 size/sha256 与 Desktop 安装器存在
+```
+
+`check-architecture.mjs` 默认报告，`--strict` 作为提交/发布门禁。
 ## 4.0 Conversation session key
 
 会话在历史/线程里的规范 key 只由核心函数生成：
