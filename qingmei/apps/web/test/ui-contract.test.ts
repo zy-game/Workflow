@@ -11,7 +11,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const SRC = path.resolve(here, '../src')
 const REPO = path.resolve(here, '../../..')
 const GATEWAY = path.join(REPO, 'packages/host-gateway/src/index.ts')
-const QM_CONTENT = path.join(REPO, 'packages/qm-content/src/index.ts')
+const QM_CONTENT = path.join(REPO, 'experimental/qm-content/src/index.ts')
 
 async function readSource(name: string): Promise<string> {
   return readFile(path.join(SRC, name), 'utf8')
