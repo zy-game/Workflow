@@ -21,7 +21,7 @@ const retryAt = ref(0)
 const noticeText = ref('')
 const listening = ref(false)
 const nativeSpeech = () => window.Capacitor?.Plugins?.QmSpeech
-const voiceSupported = computed(() => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition || nativeSpeech()))
+const voiceSupported = ref(false)
 let retryTimer = 0
 let counter = 0
 let current = null
@@ -171,6 +171,15 @@ async function sendMessage(text) {
   }
 }
 
+function detectVoiceSupport() {
+  voiceSupported.value = Boolean(
+    window.SpeechRecognition ||
+      window.webkitSpeechRecognition ||
+      nativeSpeech() ||
+      window.Capacitor?.isNativePlatform?.() === true,
+  )
+}
+
 function applyTranscript(text) {
   if (!text) return
   input.value = text
@@ -285,6 +294,8 @@ function subscribe() {
 }
 
 onMounted(() => {
+  detectVoiceSupport()
+  window.setTimeout(detectVoiceSupport, 800)
   subscribe()
   resize()
   if (session.authReady) void loadHistory()
