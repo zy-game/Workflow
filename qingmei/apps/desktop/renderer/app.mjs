@@ -30,6 +30,7 @@ const el = {
   bubbleCount: document.getElementById('bubble-count'),
   bubbleClose: document.getElementById('bubble-close'),
   chat: document.getElementById('chat'),
+  chatClose: document.getElementById('chat-close'),
   chatLog: document.getElementById('chat-log'),
   chatTyping: document.getElementById('chat-typing'),
   chatForm: document.getElementById('chat-form'),
@@ -1076,6 +1077,7 @@ function bind() {
     event.stopPropagation()
     dismissBubble()
   })
+  el.chatClose.addEventListener('click', () => closeChat())
   el.chatForm.addEventListener('submit', (event) => void sendMessage(event))
   window.addEventListener('paste', (event) => {
     const item = [...(event.clipboardData?.items ?? [])].find((entry) => entry.type.startsWith('image/'))
