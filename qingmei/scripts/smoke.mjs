@@ -181,6 +181,86 @@ async function main() {
     assert.ok(typeof assistant.text === 'string' && assistant.text.includes('你好'), 'assistant 回复应包含用户输入')
     assert.ok(assistant.id !== user.id, 'user / assistant 的 id 应不同')
     log('历史已落库（第一次）', `${user.role}="${user.text}" / ${assistant.role}="${assistant.text}"`)
+
+    const deviceId = `dev-smoke-${Date.now().toString(36)}`
+    const workspaceId = `ws-smoke-${Date.now().toString(36)}`
+    const register = await request('/api/v1/devices/register', {
+      method: 'POST',
+      headers: { ...AUTH, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: deviceId,
+        name: 'smoke device',
+        platform: 'windows',
+        arch: 'x64',
+        hostname: 'smoke',
+        harnesses: [{ kind: 'dsh', acp: true }],
+        workspaces: [{ id: workspaceId, title: 'Smoke', path: REPO_ROOT }],
+      }),
+    })
+    assert.equal(register.status, 200, `注册设备失败：${register.status} ${register.text}`)
+    assert.equal(register.json?.device?.deviceClass, 'desktop', '设备类型应由平台派生')
+
+    const enqueued = await request('/api/v1/devices/tasks', {
+      method: 'POST',
+      headers: { ...AUTH, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        deviceId,
+        harness: 'dsh',
+        workspaceId,
+        threadId: 'smoke-thread',
+        title: 'Smoke task',
+        prompt: '只回复 SMOKE_TASK',
+      }),
+    })
+    assert.equal(enqueued.status, 201, `派发设备任务失败：${enqueued.status} ${enqueued.text}`)
+    const taskId = enqueued.json?.task?.id
+    assert.ok(taskId, '设备任务应有 id')
+    assert.deepEqual(enqueued.json.task.target, {
+      deviceId,
+      workspaceId,
+      harnessId: 'dsh',
+      cwd: REPO_ROOT,
+    })
+    log('设备任务已入队', taskId)
+
+    const claimed = await request('/api/v1/devices/claim', {
+      method: 'POST',
+      headers: { ...AUTH, 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId, harness: 'dsh' }),
+    })
+    assert.equal(claimed.status, 200)
+    assert.equal(claimed.json?.task?.id, taskId)
+    assert.equal(claimed.json?.task?.target?.workspaceId, workspaceId)
+
+    const finished = await request('/api/v1/devices/finish', {
+      method: 'POST',
+      headers: { ...AUTH, 'content-type': 'application/json' },
+      body: JSON.stringify({ taskId, status: 'done', result: 'SMOKE_TASK', sessionId: 'session-smoke' }),
+    })
+    assert.equal(finished.status, 200)
+    const tasks = await request(`/api/v1/devices/tasks?deviceId=${encodeURIComponent(deviceId)}`, { headers: AUTH })
+    assert.equal(tasks.status, 200)
+    assert.equal(tasks.json?.items?.[0]?.status, 'done')
+    assert.equal(tasks.json?.items?.[0]?.sessionId, 'session-smoke')
+    assert.equal(tasks.json?.items?.[0]?.target?.sessionId, 'session-smoke')
+    log('设备任务 claim/finish/session 持久化通过')
+
+    const approval = await request('/api/v1/approvals', {
+      method: 'POST',
+      headers: { ...AUTH, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'smoke:approval', prompt: 'smoke approval', requester: 'smoke' }),
+    })
+    assert.equal(approval.status, 201, `创建审批失败：${approval.status} ${approval.text}`)
+    const approvalId = approval.json?.item?.id
+    assert.ok(approvalId)
+    const decided = await request('/api/v1/approvals/decide', {
+      method: 'POST',
+      headers: { ...AUTH, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: approvalId, allow: true }),
+    })
+    assert.equal(decided.status, 200)
+    assert.equal(decided.json?.request?.status, 'allowed')
+    log('审批创建/决定通过')
   } finally {
     await stopServer(first)
   }
