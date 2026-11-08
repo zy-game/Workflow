@@ -1,5 +1,5 @@
 {
-  "name": "@qingmei/desktop",
+  "name": "qingmei-desktop",
   "version": "0.1.2",
   "private": true,
   "type": "module",
@@ -78,9 +78,10 @@
       "artifactName": "qingmei-desktop-${version}-${arch}.${ext}"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "oneClick": true,
+      "createDesktopShortcut": true,
+      "perMachine": false,
+      "allowElevation": false
     }
   },
   "dependencies": {
