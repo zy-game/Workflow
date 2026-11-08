@@ -25,13 +25,36 @@ function walk(dir) {
     const text = readFileSync(file, 'utf8')
     const lines = text.split(/\r?\n/)
     lines.forEach((line, index) => {
-      if (line.includes('ctx.reflect.get(')) {
+      const collection = /store\.collection(?:<[^>]*>)?\('([^']+)'\)/.exec(line)
+    if (collection) {
+      const owner = owners[collection[1]]
+      const pkg = path.relative(root, file).split(path.sep)[0]
+      if (owner && owner !== pkg) crossCollections.push({ pkg, collection: collection[1], owner })
+    }
+    if (line.includes('ctx.reflect.get(')) {
         violations.push({ file: path.relative(root, file), line: index + 1, text: line.trim() })
       }
     })
   }
 }
 
+const owners = {
+  qm_message: 'qm-history',
+  qm_memory_extract_queue: 'qm-memory-extract',
+  qm_channel_target: 'qm-approval',
+  qm_approval: 'provider-approval-sqlite',
+  qm_task_run: 'provider-task-sqlite',
+  qm_commitment: 'qm-opener',
+  qm_opening: 'qm-opener',
+  qm_opening_topic: 'qm-opener',
+  qm_content_item: 'qm-content',
+  qm_content_variant: 'qm-content',
+  qm_content_action: 'qm-content',
+  qm_review_state: 'qm-review',
+  qm_review_card: 'qm-review',
+  qm_review_proposal: 'qm-review',
+}
+const crossCollections = []
 walk(root)
 
 const byPackage = new Map()
@@ -43,6 +66,11 @@ for (const violation of violations) {
 console.log(`Cordis 架构报告：${violations.length} 处 ctx.reflect.get`)
 for (const [name, count] of [...byPackage.entries()].sort((a, b) => b[1] - a[1])) {
   console.log(`  ${name}: ${count}`)
+}
+
+console.log(`collection 越界：${crossCollections.length} 处`)
+for (const item of crossCollections) {
+  console.log(`  ${item.pkg} → ${item.collection}（owner ${item.owner}）`)
 }
 
 if (violations.length > 0) {
