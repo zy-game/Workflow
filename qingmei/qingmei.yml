@@ -74,7 +74,6 @@
 - name: '@qingmei/qm-audit'
 
 # 自主循环（A1 建议模式）：每 5 分钟巡一次，值得打扰时给一条建议
-- name: '@qingmei/qm-autonomy'
   config:
     dailyBudget: 3
     quietStart: 23
@@ -82,13 +81,11 @@
 
 
 # 群画像：未配置的群回「权限未配置」，打标签后按策略回复
-- name: '@qingmei/qm-conversation-profile'
 
 # 身份绑定：每渠道第一个私聊自动绑 owner，之后陌生账号需显式 bind
 - name: '@qingmei/qm-identity'
 
 # 自愈：失败回合/任务 → incident 指纹去重、提案、熔断、派诊断
-- name: '@qingmei/qm-incident'
 
 # 月度复盘：每月 1 号生成报告，支持打分与低分提醒
 
