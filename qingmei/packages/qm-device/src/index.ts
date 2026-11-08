@@ -243,9 +243,14 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     let sessionId = requestedSession
     if (!sessionId && threadId) {
       const previous = (await unifiedTasks(deviceId))
-        .filter((row) => row.workspace_id === (workspace?.id ?? null) && row.thread_id === threadId && row.session_id)
-        .sort((a, b) => b.created_at - a.created_at)[0]
-      sessionId = previous?.session_id ?? null
+        .filter(
+          (run) =>
+            run.target?.workspaceId === (workspace?.id ?? null) &&
+            run.target?.threadId === threadId &&
+            (run.sessionId ?? run.target?.sessionId),
+        )
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
+      sessionId = previous?.sessionId ?? previous?.target?.sessionId ?? null
     }
     const created = await taskService.create({
       prompt,

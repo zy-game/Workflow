@@ -234,3 +234,55 @@ test('设备工作区：上报系统类型、工作区和任务定向', async ()
     await h.dispose()
   }
 })
+
+test('同一 thread 的第二条任务复用上一条 session', async () => {
+  const h = await setup()
+  try {
+    await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/register',
+      query: {},
+      headers: {},
+      body: {
+        id: 'dev-session',
+        platform: 'windows',
+        arch: 'x64',
+        harnesses: [{ kind: 'dsh', acp: true }],
+        workspaces: [{ id: 'ws-session', title: 'WS', path: 'C:/ws' }],
+      },
+    })
+    const first = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/tasks',
+      query: {},
+      headers: {},
+      body: { deviceId: 'dev-session', harness: 'dsh', workspaceId: 'ws-session', threadId: 'thread-1', prompt: 'first' },
+    })
+    assert.equal(first.status, 201)
+    const claimed = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/claim',
+      query: {},
+      headers: {},
+      body: { deviceId: 'dev-session', harness: 'dsh' },
+    })
+    await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/finish',
+      query: {},
+      headers: {},
+      body: { taskId: claimed.body.task.id, status: 'done', sessionId: 'session-cont' },
+    })
+    const second = await h.call({
+      method: 'POST',
+      path: '/api/v1/devices/tasks',
+      query: {},
+      headers: {},
+      body: { deviceId: 'dev-session', harness: 'dsh', workspaceId: 'ws-session', threadId: 'thread-1', prompt: 'second' },
+    })
+    assert.equal(second.status, 201)
+    assert.equal(second.body.task.sessionId, 'session-cont')
+  } finally {
+    await h.dispose()
+  }
+})
