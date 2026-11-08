@@ -1193,6 +1193,29 @@ export function clampToCapabilities(blocks: Block[], caps: ChannelCapabilities):
     })
 }
 
+declare module 'cordis' {
+  interface Context {
+    schedule: ScheduleService
+    autonomy: AutonomyService
+    store: StoreService
+    channel: ChannelService
+    gateway: GatewayService
+    llm: LlmService
+    embedding: EmbeddingService
+    harness: HarnessService
+    conversationProfile: ConversationProfileService
+    memory: MemoryService
+    persona: PersonaService
+    thread: ThreadService
+    task: TaskService
+    taskRunner: TaskRunnerService
+    identity: IdentityService
+    permission: PermissionService
+    skills: SkillService
+    audit: AuditService
+    approval: ApprovalService
+  }
+}
 /** 服务名常量，避免各处手写字符串拼错 */
 export const SERVICES = {
   store: 'store',

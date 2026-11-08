@@ -87,7 +87,7 @@ function request(method: string, path: string, body?: unknown, query: Record<str
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(approvalApi.name, 'qm-approval')
-  assert.deepEqual(approvalApi.inject, ['approval', 'gateway', 'store'])
+  assert.deepEqual(approvalApi.inject, ['approval', 'gateway', 'store', 'channel'])
 })
 
 test('GET /api/v1/approvals：默认全部，?status=pending 只给待确认', async () => {

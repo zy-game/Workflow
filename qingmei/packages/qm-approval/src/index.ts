@@ -41,20 +41,17 @@ interface ChannelTarget extends Row {
 }
 
 export const name = 'qm-approval'
-export const inject = ['approval', 'gateway', 'store']
+export const inject = ['approval', 'gateway', 'store', 'channel']
 
 export function apply(ctx: Context): void {
-  const approval = ctx.reflect.get('approval', false) as ApprovalService | undefined
-  if (!approval) throw new Error('[qm-approval] 缺少 approval 服务')
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!gateway) throw new Error('[qm-approval] 缺少 gateway 服务')
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  if (!store) throw new Error('[qm-approval] 缺少 store 服务')
+  const approval = ctx.approval
+  const gateway = ctx.gateway
+  const store = ctx.store
   const targets = store.collection<ChannelTarget>('qm_channel_target')
   const pushes = store.collection<ApprovalPush>('qm_approval_push')
 
   // 渠道里回「批准/拒绝」直接处理最早的一条待确认；没有待确认时静默忽略
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
+  const channel = ctx.channel
   ctx.events.on(EVENTS.inbound, (message: InboundMessage) => {
     void rememberTarget(message).catch(() => undefined)
     const text = textOf(message.blocks).trim()
