@@ -78,13 +78,6 @@
 
 # 内容层（账号运维 docs/18）：content_item / variant / action 账本 + 人审状态机
 # 平台连接器未实现，connected 全 false；发布一律被闸门挡住，不会假装成功
-- name: '@qingmei/qm-content'
-  config:
-    daily: { publish: 2, reply: 20, mention: 10 }
-    quietStart: 23
-    quietEnd: 8
-    connected: { blog: false, weibo: false, bilibili: false, zhihu: false }
-
 # 审计的只读查询面：GET /api/v1/audit
 - name: '@qingmei/qm-audit'
 
@@ -110,7 +103,6 @@
 - name: '@qingmei/qm-incident'
 
 # 月度复盘：每月 1 号生成报告，支持打分与低分提醒
-- name: '@qingmei/qm-review'
 
 # 记忆热点（A4）：夜间小步调整 + 周报；可回滚、有审计
 - name: '@qingmei/qm-memory-hotspot'
