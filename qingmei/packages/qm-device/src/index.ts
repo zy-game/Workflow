@@ -30,7 +30,6 @@ export const name = 'qm-device'
 export const inject = ['store', 'gateway']
 
 const DEVICE_COLLECTION = 'qm_device'
-const TASK_COLLECTION = 'qm_device_task'
 const PLATFORMS = new Set(['windows', 'macos', 'linux', 'android', 'ios', 'unknown'])
 
 interface WorkspaceInfo {
@@ -111,14 +110,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   ctx.inject(['llm'], (sub) => { llmService = sub.llm })
   ctx.inject(['memory'], (sub) => { memoryService = sub.memory })
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
-  const tasks = store.collection<DeviceTaskRow>(TASK_COLLECTION)
   let taskService: TaskService | undefined
-  ctx.inject(['task'], (sub) => {
-    taskService = sub.task
-    void migrateLegacy().catch((error: unknown) => {
-      ctx.logger.warn(`[qm-device] 旧任务迁移失败：${messageOf(error)}`)
-    })
-  })
+  ctx.inject(['task'], (sub) => { taskService = sub.task })
   const digests = store.collection<DigestRow>('qm_session_digest')
   const staleMs = Math.max(10_000, config.staleMs ?? 90_000)
   const keepTasks = Math.max(20, config.keepTasks ?? 200)
@@ -206,51 +199,6 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       .filter((run) => (deviceId ? run.target?.deviceId === deviceId : Boolean(run.target?.deviceId)))
       .map(toTaskRow)
   }
-  /** 一次性把旧 qm_device_task 迁到统一 Task 表；legacyId 保证重试不重复。 */
-  async function migrateLegacy(): Promise<void> {
-    if (!taskService) return
-    const rows = (await tasks.find({})).sort((a, b) => a.created_at - b.created_at)
-    if (rows.length === 0) return
-    const known = new Set(
-      (await taskService.list(500))
-        .map((run) => run.target?.legacyId)
-        .filter((id): id is string => Boolean(id)),
-    )
-    for (const row of rows) {
-      if (known.has(row.id)) {
-        await tasks.delete(row.id)
-        continue
-      }
-      const created = await taskService.create({
-        prompt: row.prompt,
-        title: row.title,
-        harnessId: row.harness,
-        ...(row.cwd ? { cwd: row.cwd } : {}),
-        target: {
-          deviceId: row.device_id,
-          ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
-          ...(row.thread_id ? { threadId: row.thread_id } : {}),
-          ...(row.session_id ? { sessionId: row.session_id } : {}),
-          ...(row.cwd ? { cwd: row.cwd } : {}),
-          legacyId: row.id,
-        },
-      })
-      if (row.status === 'done' || row.status === 'failed' || row.status === 'cancelled') {
-        await taskService.finish(created.id, {
-          status: row.status,
-          ...(row.result ? { result: row.result } : {}),
-          ...(row.error ? { error: row.error } : {}),
-          ...(row.session_id ? { sessionId: row.session_id } : {}),
-        })
-      } else if (row.status === 'running') {
-        await taskService.start(created.id, {
-          ...(row.session_id ? { sessionId: row.session_id } : {}),
-        })
-      }
-      await tasks.delete(row.id)
-    }
-    ctx.logger.info(`[qm-device] 已迁移 ${rows.length} 条旧设备任务`)
-  }
   async function upsert(input: {
     id?: string
     name?: string
@@ -331,59 +279,28 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     const cwd = String(input.cwd ?? workspace?.path ?? '').trim()
     const requestedSession = String(input.sessionId ?? '').trim()
     const threadId = String(input.threadId ?? '').trim()
-    if (taskService) {
-      let sessionId = requestedSession
-      if (!sessionId && threadId) {
-        const previous = (await unifiedTasks(deviceId))
-          .filter((row) => row.workspace_id === (workspace?.id ?? null) && row.thread_id === threadId && row.session_id)
-          .sort((a, b) => b.created_at - a.created_at)[0]
-        sessionId = previous?.session_id ?? null
-      }
-      const created = await taskService.create({
-        prompt,
-        title: String(input.title ?? prompt.slice(0, 40)).trim().slice(0, 120),
-        harnessId: String(input.harness ?? 'dsh').trim() || 'dsh',
-        cwd: cwd || `${workspace?.path ?? ''}`,
-        target: {
-          deviceId,
-          ...(workspace?.id ? { workspaceId: workspace.id } : {}),
-          ...(threadId ? { threadId } : {}),
-          ...(sessionId ? { sessionId } : {}),
-          ...(cwd ? { cwd } : {}),
-        },
-      })
-      return toTaskRow(created)
-    }
+    if (!taskService) throw new Error('task service 未就绪')
     let sessionId = requestedSession
     if (!sessionId && threadId) {
-      const previous = (await tasks.find({ where: { device_id: deviceId, workspace_id: workspace?.id ?? null, thread_id: threadId } }))
-        .filter((row) => row.session_id)
+      const previous = (await unifiedTasks(deviceId))
+        .filter((row) => row.workspace_id === (workspace?.id ?? null) && row.thread_id === threadId && row.session_id)
         .sort((a, b) => b.created_at - a.created_at)[0]
       sessionId = previous?.session_id ?? null
     }
-    const now = Date.now()
-    const task: DeviceTaskRow = {
-      id: uid('dtask'),
-      device_id: deviceId,
+    const created = await taskService.create({
+      prompt,
       title: String(input.title ?? prompt.slice(0, 40)).trim().slice(0, 120),
-      prompt: prompt.slice(0, 20_000),
-      harness: String(input.harness ?? 'dsh').trim() || 'dsh',
-      workspace_id: workspace?.id ?? null,
-      session_id: sessionId,
-      thread_id: threadId || null,
-      cwd: cwd || null,
-      status: 'queued',
-      progress_json: '[]',
-      result: null,
-      error: null,
-      created_at: now,
-      claimed_at: null,
-      finished_at: null,
-    }
-    await tasks.insert(task)
-    const all = (await tasks.find({ where: { device_id: deviceId } })).sort((a, b) => b.created_at - a.created_at)
-    for (const old of all.slice(keepTasks)) await tasks.delete(old.id)
-    return task
+      harnessId: String(input.harness ?? 'dsh').trim() || 'dsh',
+      cwd: cwd || `${workspace?.path ?? ''}`,
+      target: {
+        deviceId,
+        ...(workspace?.id ? { workspaceId: workspace.id } : {}),
+        ...(threadId ? { threadId } : {}),
+        ...(sessionId ? { sessionId } : {}),
+        ...(cwd ? { cwd } : {}),
+      },
+    })
+    return toTaskRow(created)
   }
 
   async function claim(deviceId: string, harness = ''): Promise<DeviceTaskRow | null> {
@@ -397,16 +314,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
         const started = await taskService.start(next.id)
         return started ? toTaskRow(started) : null
       }
-      const queued = (await tasks.find({ where: { device_id: deviceId, status: 'queued' } }))
-        .filter((row) => !harness || row.harness === harness)
-        .sort(
-        (a, b) => a.created_at - b.created_at,
-      )
-      const task = queued[0]
-      if (!task) return null
-      await tasks.update(task.id, { status: 'running', claimed_at: Date.now() })
-      const row = await tasks.get(task.id)
-      return row ?? null
+      return null
     })
   }
 
@@ -667,12 +575,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       path: '/api/v1/devices/tasks',
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId.trim() : ''
-        const legacy = deviceId ? await tasks.find({ where: { device_id: deviceId } }) : await tasks.find({})
-        const unified = taskService ? await unifiedTasks(deviceId || undefined) : []
-        const rows = [...unified, ...legacy]
-        const seen = new Set<string>()
+        const rows = taskService ? await unifiedTasks(deviceId || undefined) : []
         const items = rows
-          .filter((row) => (seen.has(row.id) ? false : Boolean(seen.add(row.id))))
           .sort((a, b) => b.created_at - a.created_at)
           .slice(0, 100)
           .map(toTask)
@@ -718,20 +622,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
             return
           }
         }
-        const row = id ? await tasks.get(id) : null
-        if (!row) {
-          res.status(404).send({ ok: false, error: '没有这个任务' })
-          return
-        }
-        const progress = JSON.parse(row.progress_json) as Record<string, unknown>[]
-        progress.push({
-          phase: String(body.phase ?? '').slice(0, 40),
-          percent: Number.isFinite(Number(body.percent)) ? Number(body.percent) : null,
-          note: String(body.note ?? '').slice(0, 500),
-          at: Date.now(),
-        })
-        await tasks.update(id, { progress_json: JSON.stringify(progress.slice(-50)) })
-        res.status(200).send({ ok: true })
+        res.status(404).send({ ok: false, error: '没有这个任务' })
       },
     }),
   )
@@ -759,22 +650,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
             return
           }
         }
-        const row = id ? await tasks.get(id) : null
-        if (!row) {
-          res.status(404).send({ ok: false, error: '没有这个任务' })
-          return
-        }
-        const status = body.status === 'failed' ? 'failed' : 'done'
-        await tasks.update(id, {
-          status,
-          ...(typeof body.sessionId === 'string' && body.sessionId.trim()
-            ? { session_id: body.sessionId.trim().slice(0, 120) }
-            : {}),
-          result: typeof body.result === 'string' ? body.result.slice(0, 20_000) : null,
-          error: typeof body.error === 'string' ? body.error.slice(0, 2_000) : null,
-          finished_at: Date.now(),
-        })
-        res.status(200).send({ ok: true })
+        res.status(404).send({ ok: false, error: '没有这个任务' })
       },
     }),
   )

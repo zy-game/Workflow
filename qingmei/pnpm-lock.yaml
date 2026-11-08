@@ -650,6 +650,9 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
+      '@qingmei/provider-task-sqlite':
+        specifier: workspace:*
+        version: link:../provider-task-sqlite
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway
