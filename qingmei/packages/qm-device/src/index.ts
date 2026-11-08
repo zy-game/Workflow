@@ -151,6 +151,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     sessionId: row.session_id,
     threadId: row.thread_id,
     cwd: row.cwd,
+    source: 'device' as const,
     target: {
       deviceId: row.device_id,
       ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),

@@ -904,6 +904,20 @@ export interface TaskRun {
   finishedAt: Date | null
 }
 
+/** 服务器任务与设备任务的统一只读视图；存储仍在各自 provider，迁移期共用这个边界。 */
+export interface TaskView {
+  id: string
+  title: string
+  prompt: string
+  status: TaskStatus
+  target: TaskTarget
+  sessionId: string | null
+  result: string | null
+  error: string | null
+  createdAt: Date
+  finishedAt: Date | null
+  source: 'server' | 'device'
+}
 export interface CreateTaskInput {
   prompt: string
   title?: string

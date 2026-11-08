@@ -85,6 +85,26 @@ interface TaskTarget {
 `TaskRun.target` 和 `qm_device_task` 的 API 现在都输出 `target`。旧字段保留一段时间兼容，但新代码优先读 `target`，不再分别解释 `deviceId/harness/workspaceId`。
 
 最终目标是删除 `DeviceTask` 这个独立业务概念，设备只是 `TaskTarget.deviceId`。
+对外统一为 `TaskView`：
+
+```ts
+interface TaskView {
+  id: string
+  title: string
+  prompt: string
+  status: TaskStatus
+  target: TaskTarget
+  sessionId: string | null
+  result: string | null
+  error: string | null
+  createdAt: Date
+  finishedAt: Date | null
+  source: 'server' | 'device'
+}
+```
+
+服务器任务 `source = server`，设备任务 `source = device`。UI 只按 `TaskView` 渲染，不再分别判断两种任务对象。
+
 ## 5. 数据流
 
 ### 对话

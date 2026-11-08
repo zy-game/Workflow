@@ -298,6 +298,7 @@ function toRun(row: TaskRow): TaskRun {
     harnessId: row.harness_id,
     sessionId: row.session_id,
     cwd: row.cwd,
+    source: 'server' as const,
     target: {
       harnessId: row.harness_id,
       ...(row.session_id ? { sessionId: row.session_id } : {}),
