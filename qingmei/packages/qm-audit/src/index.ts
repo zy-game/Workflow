@@ -6,6 +6,7 @@
  * 审计是只追加的（docs/04），这里不提供写/删入口；给后台与排障用。
  */
 import type { Context } from 'cordis'
+import { SqliteAudit } from './store.ts'
 import {
   type AuditEntry,
   type AuditService,
@@ -15,13 +16,13 @@ import {
 } from '@qingmei/core'
 
 export const name = 'qm-audit'
-export const inject = ['audit', 'gateway']
+export const inject = ['store', 'gateway']
 
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 200
 
 export function apply(ctx: Context): void {
-  const audit = ctx.audit
+  const audit = new SqliteAudit(ctx)
   const gateway = ctx.gateway
 
   ctx.effect(() =>

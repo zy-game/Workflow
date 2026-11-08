@@ -69,6 +69,7 @@ export class TaskRunner extends TaskRunnerService {
   private pumping = false
   private pumpQueued = false
   private quietTimer: ReturnType<typeof setTimeout> | null = null
+  private stopped = false
 
   constructor(ctx: Context, deps: RunnerDeps) {
     super(ctx)
@@ -96,6 +97,7 @@ export class TaskRunner extends TaskRunnerService {
     return null
   }
   dispatch(run: TaskRun): void {
+    if (this.stopped) return
     this.queue.push(run)
     void this.pump()
   }
@@ -114,6 +116,7 @@ export class TaskRunner extends TaskRunnerService {
    * 先按 priority 降序、再按到达顺序；依赖未完成的任务留在队列里等，不占并发。
    */
   private async pump(): Promise<void> {
+    if (this.stopped) return
     if (this.pumping) {
       this.pumpQueued = true
       return
@@ -261,6 +264,7 @@ export class TaskRunner extends TaskRunnerService {
   /** 静默时段结束时再泵一次，否则队列会一直停到下一个事件 */
   /** 插件卸载时清掉窗口定时器 */
   stop(): void {
+    this.stopped = true
     if (this.quietTimer) clearTimeout(this.quietTimer)
     this.quietTimer = null
   }
@@ -277,6 +281,7 @@ export class TaskRunner extends TaskRunnerService {
   }
 
   private async execute(run: TaskRun): Promise<void> {
+    if (this.stopped) return
     const { task, timeoutMs } = this.deps
     const harness = this.harness()
     if (!harness) {

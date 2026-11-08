@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
-import * as auditPlugin from '@qingmei/provider-audit-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as auditApi from '../src/index.ts'
 import {
@@ -39,8 +38,6 @@ async function setup() {
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'audit.db') })
   await storeFiber
-  const auditFiber = ctx.plugin(auditPlugin)
-  await auditFiber
   await ctx.plugin(gatewayPlugin)
   const apiFiber = ctx.plugin(auditApi)
   await apiFiber
@@ -55,7 +52,6 @@ async function setup() {
     },
     async dispose() {
       await apiFiber.dispose()
-      await auditFiber.dispose()
       await storeFiber.dispose()
       rmSync(dir, { recursive: true, force: true })
     },
@@ -81,7 +77,7 @@ function entry(overrides: Partial<AuditEntry> = {}): AuditEntry {
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(auditApi.name, 'qm-audit')
-  assert.deepEqual(auditApi.inject, ['audit', 'gateway'])
+  assert.deepEqual(auditApi.inject, ['store', 'gateway'])
 })
 
 test('GET /api/v1/audit：按时间倒序返回，支持 limit', async () => {

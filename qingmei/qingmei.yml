@@ -33,7 +33,6 @@
 
 # 权限与审计：worker/ACP 的敏感动作仍走这里
 
-- name: '@qingmei/provider-audit-sqlite'
 
 # 待人确认的审批队列：permission 判 ask、或子 agent 请求权限时落一条
 - name: '@qingmei/provider-approval-sqlite'

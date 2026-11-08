@@ -225,6 +225,13 @@ export class SqliteMemory extends MemoryService {
     const limit = clampLimit(query.limit ?? this.limit)
     const all = (await this.facts.find({})).filter((row) => visible(row, audience))
     if (all.length === 0) return { facts: [], text: '' }
+    if (!query.text.trim()) {
+      const facts = all
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, limit)
+        .map(toFact)
+      return { facts, text: facts.map((fact) => `- ${fact.subject} ${fact.predicate} ${fact.object}`).join('\n') }
+    }
 
     const byId = new Map(all.map((row) => [row.id, row]))
     const hitIds = this.fts?.search(query.text, Math.max(20, limit * 4)) ?? []
