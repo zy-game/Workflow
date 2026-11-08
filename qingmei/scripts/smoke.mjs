@@ -220,6 +220,7 @@ async function main() {
     assert.deepEqual(enqueued.json.task.target, {
       deviceId,
       workspaceId,
+      threadId: 'smoke-thread',
       harnessId: 'dsh',
       cwd: REPO_ROOT,
     })

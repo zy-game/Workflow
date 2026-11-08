@@ -63,24 +63,6 @@ interface DigestRow extends Row {
   at: number
 }
 
-interface DeviceTaskRow extends Row {
-  device_id: string
-  session_id: string | null
-  thread_id: string | null
-  title: string
-  prompt: string
-  harness: string
-  workspace_id: string | null
-  cwd: string | null
-  status: string
-  progress_json: string
-  result: string | null
-  error: string | null
-  created_at: number
-  claimed_at: number | null
-  finished_at: number | null
-}
-
 export interface HarnessCapability {
   kind: string
   acp: boolean
@@ -143,61 +125,39 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     online: Date.now() - row.last_seen <= staleMs,
   })
 
-  const toTask = (row: DeviceTaskRow) => ({
-    id: row.id,
-    deviceId: row.device_id,
-    title: row.title,
-    prompt: row.prompt,
-    harness: row.harness,
-    workspaceId: row.workspace_id,
-    sessionId: row.session_id,
-    threadId: row.thread_id,
-    cwd: row.cwd,
-    source: 'device' as const,
-    target: {
-      deviceId: row.device_id,
-      ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
-      harnessId: row.harness,
-      ...(row.session_id ? { sessionId: row.session_id } : {}),
-      ...(row.cwd ? { cwd: row.cwd } : {}),
-    },
-    status: row.status,
-    progress: JSON.parse(row.progress_json) as Record<string, unknown>[],
-    result: row.result,
-    error: row.error,
-    createdAt: new Date(row.created_at),
-    claimedAt: row.claimed_at ? new Date(row.claimed_at) : null,
-    finishedAt: row.finished_at ? new Date(row.finished_at) : null,
-  })
-
-  function toTaskRow(run: TaskRun): DeviceTaskRow {
+  const toTask = (run: TaskRun) => {
     const target = run.target ?? { harnessId: run.harnessId, cwd: run.cwd }
     return {
       id: run.id,
-      device_id: target.deviceId ?? '',
+      deviceId: target.deviceId ?? '',
       title: run.title,
       prompt: run.prompt,
       harness: target.harnessId ?? run.harnessId,
-      workspace_id: target.workspaceId ?? null,
-      session_id: run.sessionId ?? target.sessionId ?? null,
-      thread_id: target.threadId ?? null,
+      workspaceId: target.workspaceId ?? null,
+      sessionId: run.sessionId ?? target.sessionId ?? null,
+      threadId: target.threadId ?? null,
       cwd: target.cwd ?? run.cwd ?? null,
+      source: 'device' as const,
+      target: {
+        ...target,
+        ...(target.deviceId ? { deviceId: target.deviceId } : {}),
+        ...(target.harnessId ? { harnessId: target.harnessId } : {}),
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+      },
       status: run.status,
-      progress_json: JSON.stringify(run.progress ? [run.progress] : []),
+      progress: run.progress ? [run.progress] : [],
       result: run.result,
       error: run.error,
-      created_at: run.createdAt.getTime(),
-      claimed_at: run.startedAt?.getTime() ?? null,
-      finished_at: run.finishedAt?.getTime() ?? null,
+      createdAt: run.createdAt,
+      claimedAt: run.startedAt,
+      finishedAt: run.finishedAt,
     }
   }
 
-  async function unifiedTasks(deviceId?: string): Promise<DeviceTaskRow[]> {
+  async function unifiedTasks(deviceId?: string): Promise<TaskRun[]> {
     if (!taskService) return []
     const runs = await taskService.list(200)
-    return runs
-      .filter((run) => (deviceId ? run.target?.deviceId === deviceId : Boolean(run.target?.deviceId)))
-      .map(toTaskRow)
+    return runs.filter((run) => (deviceId ? run.target?.deviceId === deviceId : Boolean(run.target?.deviceId)))
   }
   async function upsert(input: {
     id?: string
@@ -300,19 +260,19 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
         ...(cwd ? { cwd } : {}),
       },
     })
-    return toTaskRow(created)
+    return created
   }
 
-  async function claim(deviceId: string, harness = ''): Promise<DeviceTaskRow | null> {
+  async function claim(deviceId: string, harness = ''): Promise<TaskRun | null> {
     return serialize(async () => {
       if (taskService) {
         const queued = (await unifiedTasks(deviceId))
-          .filter((row) => row.status === 'queued' && (!harness || row.harness === harness))
-          .sort((a, b) => a.created_at - b.created_at)
+          .filter((run) => run.status === 'queued' && (!harness || (run.target?.harnessId ?? run.harnessId) === harness))
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         const next = queued[0]
         if (!next) return null
         const started = await taskService.start(next.id)
-        return started ? toTaskRow(started) : null
+        return started ?? null
       }
       return null
     })
@@ -577,7 +537,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
         const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId.trim() : ''
         const rows = taskService ? await unifiedTasks(deviceId || undefined) : []
         const items = rows
-          .sort((a, b) => b.created_at - a.created_at)
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
           .slice(0, 100)
           .map(toTask)
         res.status(200).send({ ok: true, items })
