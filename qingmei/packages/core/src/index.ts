@@ -909,6 +909,8 @@ export interface TaskRun {
   source?: 'server' | 'device'
   status: TaskStatus
   progress: TaskProgress | null
+  /** 完整进度事件流（最多保留 100 条） */
+  progressHistory?: TaskProgress[]
   artifacts: TaskArtifact[]
   usage: TaskUsage | null
   result: string | null

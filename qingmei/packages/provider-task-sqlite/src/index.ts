@@ -63,6 +63,8 @@ interface TaskRow extends Row {
   target_json?: string | null
   status: TaskStatus
   progress_json: string | null
+  /** 进度事件流；老数据没有 */
+  progress_events_json?: string | null
   artifacts_json: string | null
   usage_json: string | null
   result: string | null
@@ -121,6 +123,7 @@ export class SqliteTask extends TaskService {
       }),
       status: 'queued',
       progress_json: null,
+      progress_events_json: null,
       artifacts_json: null,
       usage_json: null,
       result: null,
@@ -195,7 +198,11 @@ export class SqliteTask extends TaskService {
       ...(Number.isFinite(progress.percent) ? { percent: progress.percent } : {}),
       ...(progress.note?.trim() ? { note: progress.note.trim() } : {}),
     }
-    const next = await this.patch(row, { progress_json: JSON.stringify(entry) })
+    const history = [...parseProgressHistory(row.progress_events_json), entry].slice(-100)
+    const next = await this.patch(row, {
+      progress_json: JSON.stringify(entry),
+      progress_events_json: JSON.stringify(history),
+    })
     if (next) this.ctx.events.emit(EVENTS.taskProgress, next)
     return next
   }
@@ -319,6 +326,7 @@ function toRun(row: TaskRow): TaskRun {
     }),
     status: row.status,
     progress: parseProgress(row.progress_json),
+    progressHistory: parseProgressHistory(row.progress_events_json),
     artifacts: parseArtifacts(row.artifacts_json),
     usage: parseUsage(row.usage_json),
     result: row.result,
@@ -402,6 +410,23 @@ function parseTarget(raw: string | null | undefined, fallback: TaskTarget): Task
     // 老数据/损坏值按派生目标处理
   }
   return fallback
+}
+function parseProgressHistory(raw: string | null | undefined): TaskProgress[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item): item is { phase: string; percent?: number; note?: string; at?: string } => Boolean(item) && typeof item.phase === 'string')
+      .map((item) => ({
+        phase: item.phase,
+        ...(typeof item.percent === 'number' ? { percent: item.percent } : {}),
+        ...(typeof item.note === 'string' ? { note: item.note } : {}),
+        at: item.at ? new Date(item.at) : new Date(),
+      }))
+  } catch {
+    return []
+  }
 }
 function parseProgress(raw: string | null): TaskProgress | null {
   if (!raw) return null

@@ -93,10 +93,12 @@ test('reportProgress：写入最近一条进度并发事件', async () => {
     assert.ok(updated.progress?.at instanceof Date)
     assert.equal(h.events.filter((event) => event.type === 'progress').length, 1)
 
-    // 第二次覆盖最近一条，不累积
+    // 最近一条覆盖，事件流保留历史
     const second = await h.task.reportProgress(run.id, { phase: '修用例' })
     assert.equal(second?.progress?.phase, '修用例')
     assert.equal(second?.progress?.percent, undefined)
+    assert.deepEqual(second?.progressHistory?.map((item) => item.phase), ['跑测试', '修用例'])
+    assert.equal(second?.progressHistory?.length, 2)
 
     await assert.rejects(h.task.reportProgress(run.id, { phase: '  ' }), /必须有 phase/)
   } finally {

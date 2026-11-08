@@ -145,7 +145,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
         ...(run.sessionId ? { sessionId: run.sessionId } : {}),
       },
       status: run.status,
-      progress: run.progress ? [run.progress] : [],
+      progress: run.progressHistory?.length ? run.progressHistory : run.progress ? [run.progress] : [],
       result: run.result,
       error: run.error,
       createdAt: run.createdAt,
