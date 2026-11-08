@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SecureStorePlugin.class);
         registerPlugin(PetOverlayPlugin.class);
         registerPlugin(QmUpdaterPlugin.class);
+        registerPlugin(QmSpeechPlugin.class);
         super.onCreate(savedInstanceState);
         routeIntent(getIntent());
     }

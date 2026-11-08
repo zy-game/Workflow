@@ -20,13 +20,15 @@ const failed = ref(false)
 const retryAt = ref(0)
 const noticeText = ref('')
 const listening = ref(false)
-const voiceSupported = computed(() => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition))
+const nativeSpeech = () => window.Capacitor?.Plugins?.QmSpeech
+const voiceSupported = computed(() => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition || nativeSpeech()))
 let retryTimer = 0
 let counter = 0
 let current = null
 let historyLoaded = false
 let unsubscribers = []
 let recognition = null
+let nativeHandles = []
 
 const overlayAvailable = computed(() => Boolean(window.Capacitor?.Plugins?.PetOverlay))
 const sendDisabled = computed(() => !hasAuth() || sending.value || Date.now() < retryAt.value)
@@ -169,14 +171,49 @@ async function sendMessage(text) {
   }
 }
 
+function applyTranscript(text) {
+  if (!text) return
+  input.value = text
+  resize()
+}
+
+async function startNativeVoice(plugin) {
+  if (nativeHandles.length === 0) {
+    nativeHandles = [
+      await plugin.addListener('partial', (data) => applyTranscript(data?.text)),
+      await plugin.addListener('result', (data) => {
+        applyTranscript(data?.text)
+        listening.value = false
+      }),
+      await plugin.addListener('speechEnd', () => { listening.value = false }),
+      await plugin.addListener('error', (data) => {
+        listening.value = false
+        appendNotice(`语音识别失败：${data?.message || 'unknown'}`)
+      }),
+    ]
+  }
+  listening.value = true
+  await plugin.start().catch((error) => {
+    listening.value = false
+    appendNotice(`语音启动失败：${error?.message || error}`)
+  })
+}
+
 function toggleVoice() {
   if (listening.value) {
-    recognition?.stop()
+    if (nativeSpeech()) void nativeSpeech().stop()
+    else recognition?.stop()
+    listening.value = false
     return
   }
   const Speech = window.SpeechRecognition || window.webkitSpeechRecognition
-  if (!Speech) {
-    appendNotice('当前环境不支持系统语音识别；桌面/安卓需要用原生语音插件')
+  const native = nativeSpeech()
+  if (!Speech && !native) {
+    appendNotice('当前环境不支持系统语音识别')
+    return
+  }
+  if (native) {
+    void startNativeVoice(native)
     return
   }
   recognition = new Speech()
@@ -194,10 +231,7 @@ function toggleVoice() {
     for (let index = event.resultIndex; index < event.results.length; index += 1) {
       text += event.results[index][0]?.transcript ?? ''
     }
-    if (text) {
-      input.value = text
-      resize()
-    }
+    applyTranscript(text)
   }
   recognition.start()
 }
@@ -267,6 +301,9 @@ onBeforeUnmount(() => {
   for (const off of unsubscribers) off()
   clearTimeout(retryTimer)
   recognition?.stop()
+  if (nativeSpeech()) void nativeSpeech().cancel()
+  for (const handle of nativeHandles) handle?.remove?.()
+  nativeHandles = []
 })
 </script>
 
