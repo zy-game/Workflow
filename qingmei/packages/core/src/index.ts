@@ -875,16 +875,14 @@ export interface TaskContract {
 }
 /** Task 的执行目标；设备任务和服务器任务共用同一形状。 */
 export interface TaskTarget {
-  deviceId?: string
+  /** 执行器 id；服务器本地执行器固定为 local，设备形如 device:<id> */
+  executorId: string
   workspaceId?: string
-  harnessId?: string
-  /** 设备侧会话线程键；服务端任务可忽略 */
-  threadId?: string
-  /** 从旧设备任务表迁移过来时的原 id（迁移去重） */
-  legacyId?: string
-  sessionId?: string
+  /** 会话延续键；只表达“复用同一个执行器会话”，不是 qm-thread 的 Thread */
+  sessionKey?: string
   cwd?: string
 }
+
 export interface TaskRun {
   id: string
   taskId: string
@@ -899,18 +897,14 @@ export interface TaskRun {
   dependsOn: string[]
   /** 任务合同；老数据为 null */
   contract: TaskContract | null
-  harnessId: string
-  /** harness 侧会话 id，用于 resume */
+  /** 统一执行目标；所有位置/工作区/会话键都只在这里 */
+  target: TaskTarget
+  /** 执行器返回的真实会话 id，用于 resume */
   sessionId: string | null
-  /** 青梅分配的 run 目录，不是用户任意路径 */
-  cwd: string
-  /** 统一执行目标（新代码优先读它） */
-  target?: TaskTarget
-  source?: 'server' | 'device'
   status: TaskStatus
   progress: TaskProgress | null
   /** 完整进度事件流（最多保留 100 条） */
-  progressHistory?: TaskProgress[]
+  progressHistory: TaskProgress[]
   artifacts: TaskArtifact[]
   usage: TaskUsage | null
   result: string | null
@@ -920,39 +914,83 @@ export interface TaskRun {
   finishedAt: Date | null
 }
 
-/** 服务器任务与设备任务的统一只读视图；存储仍在各自 provider，迁移期共用这个边界。 */
+/** 对外统一只读视图；不包含 source/location 等位置字段。 */
 export interface TaskView {
   id: string
   title: string
   prompt: string
+  project: string | null
+  kind: 'task' | 'inventory'
+  priority: number
+  dependsOn: string[]
+  contract: TaskContract | null
   status: TaskStatus
   target: TaskTarget
   sessionId: string | null
+  progress: TaskProgress | null
+  progressHistory: TaskProgress[]
+  artifacts: TaskArtifact[]
   result: string | null
   error: string | null
   createdAt: Date
   finishedAt: Date | null
-  source: 'server' | 'device'
+}
+
+export function taskViewOf(run: TaskRun): TaskView {
+  return {
+    id: run.id,
+    title: run.title,
+    prompt: run.prompt,
+    project: run.project,
+    kind: run.kind,
+    priority: run.priority,
+    dependsOn: run.dependsOn,
+    contract: run.contract,
+    status: run.status,
+    target: run.target,
+    sessionId: run.sessionId,
+    progress: run.progress,
+    progressHistory: run.progressHistory,
+    artifacts: run.artifacts,
+    result: run.result,
+    error: run.error,
+    createdAt: run.createdAt,
+    finishedAt: run.finishedAt,
+  }
 }
 export interface CreateTaskInput {
   prompt: string
   title?: string
-  /** 归属项目；项目审问按它过滤（docs/13 §7） */
   project?: string
-  /** task = 正常任务；inventory = 只读盘点（结论要回推给主人） */
   kind?: 'task' | 'inventory'
-  /** 0-9，越大越先跑；静默时段只有 >= urgentPriority 的任务会跑 */
   priority?: number
-  /** 前置 run id 列表 */
   dependsOn?: string[]
-  /** 任务合同（W1）：截止/进展信号/强度 */
   contract?: TaskContract
-  /** 不传则用 provider 的 workspaceRoot/<id> */
-  cwd?: string
-  harnessId?: string
   target?: TaskTarget
+  /** 创建时直接带入的执行器会话（仅用于同会话续跑） */
+  sessionId?: string
 }
 
+export interface TaskTargetInput {
+  executorId: string
+  workspaceId?: string
+  sessionKey?: string
+  cwd?: string
+  sessionId?: string
+}
+
+export interface PreparedTaskTarget {
+  target: TaskTarget
+  sessionId?: string
+}
+
+/** 把外部 target 解析成可入账的 TaskTarget；设备校验/会话复用由 owner 提供。 */
+export abstract class TaskTargetService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'taskTargets')
+  }
+  abstract prepare(input: TaskTargetInput): Promise<PreparedTaskTarget>
+}
 export abstract class TaskService extends Service {
   constructor(ctx: Context) {
     super(ctx, 'task')
@@ -1295,6 +1333,7 @@ declare module 'cordis' {
     persona: PersonaService
     thread: ThreadService
     task: TaskService
+    taskTargets: TaskTargetService
     taskRunner: TaskRunnerService
     identity: IdentityService
     permission: PermissionService

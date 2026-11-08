@@ -200,28 +200,29 @@ async function main() {
     assert.equal(register.status, 200, `注册设备失败：${register.status} ${register.text}`)
     assert.equal(register.json?.device?.deviceClass, 'desktop', '设备类型应由平台派生')
 
-    const enqueued = await request('/api/v1/devices/tasks', {
+    const enqueued = await request('/api/v1/tasks', {
       method: 'POST',
       headers: { ...AUTH, 'content-type': 'application/json' },
       body: JSON.stringify({
         deviceId,
-        harness: 'dsh',
-        workspaceId,
-        threadId: 'smoke-thread',
+        target: {
+          executorId: `device:${deviceId}`,
+          workspaceId,
+          sessionKey: 'smoke-thread',
+          cwd: REPO_ROOT,
+        },
         title: 'Smoke task',
         prompt: '只回复 SMOKE_TASK',
       }),
     })
-    assert.equal(enqueued.status, 201, `派发设备任务失败：${enqueued.status} ${enqueued.text}`)
-    const taskId = enqueued.json?.task?.id
+    assert.equal(enqueued.status, 202, `派发设备任务失败：${enqueued.status} ${enqueued.text}`)
+    const taskId = enqueued.json?.run?.id
     assert.ok(taskId, '设备任务应有 id')
     assert.ok(taskId.startsWith('run_'), '设备任务应写入统一 Task 表（run_ 前缀）')
-    assert.equal(enqueued.json.task.source, 'device')
-    assert.deepEqual(enqueued.json.task.target, {
-      deviceId,
+    assert.deepEqual(enqueued.json.run.target, {
+      executorId: `device:${deviceId}`,
       workspaceId,
-      threadId: 'smoke-thread',
-      harnessId: 'dsh',
+      sessionKey: 'smoke-thread',
       cwd: REPO_ROOT,
     })
     log('设备任务已入队', taskId)
@@ -229,7 +230,7 @@ async function main() {
     const claimed = await request('/api/v1/devices/claim', {
       method: 'POST',
       headers: { ...AUTH, 'content-type': 'application/json' },
-      body: JSON.stringify({ deviceId, harness: 'dsh' }),
+      body: JSON.stringify({ deviceId }),
     })
     assert.equal(claimed.status, 200)
     assert.equal(claimed.json?.task?.id, taskId)
@@ -245,7 +246,6 @@ async function main() {
     assert.equal(tasks.status, 200)
     assert.equal(tasks.json?.items?.[0]?.status, 'done')
     assert.equal(tasks.json?.items?.[0]?.sessionId, 'session-smoke')
-    assert.equal(tasks.json?.items?.[0]?.target?.sessionId, 'session-smoke')
     log('设备任务 claim/finish/session 持久化通过')
 
     const approval = await request('/api/v1/approvals', {

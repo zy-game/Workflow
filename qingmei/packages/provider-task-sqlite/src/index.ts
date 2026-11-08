@@ -28,8 +28,8 @@ import {
 export interface TaskConfig {
   /** run 目录的根；实际目录是 <workspaceRoot>/<runId> */
   workspaceRoot?: string
-  /** 单次执行默认给哪个 harness */
-  harnessId?: string
+  /** 本地执行器 id，默认 local */
+  executorId?: string
   /** 列表默认条数 */
   listLimit?: number
 }
@@ -56,11 +56,9 @@ interface TaskRow extends Row {
   depends_on_json?: string | null
   /** W1 任务合同；老数据没有 */
   contract_json?: string | null
-  harness_id: string
+  /** 唯一执行目标；不再单独存 harness_id/cwd */
+  target_json: string
   session_id: string | null
-  cwd: string
-  /** 统一 TaskTarget；老数据没有 */
-  target_json?: string | null
   status: TaskStatus
   progress_json: string | null
   /** 进度事件流；老数据没有 */
@@ -78,7 +76,7 @@ export class SqliteTask extends TaskService {
   private readonly ctx: Context
   private readonly collection
   private readonly workspaceRoot: string
-  private readonly harnessId: string
+  private readonly executorId: string
   private readonly listLimit: number
   /** 同一毫秒内建的 run 也要有稳定先后（列表排序与测试都依赖它） */
   private lastCreatedAt = 0
@@ -90,7 +88,7 @@ export class SqliteTask extends TaskService {
     if (!store) throw new Error('[provider-task-sqlite] 缺少 store 服务')
     this.collection = store.collection<TaskRow>(COLLECTION)
     this.workspaceRoot = config.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT
-    this.harnessId = config.harnessId ?? 'dsh'
+    this.executorId = config.executorId ?? 'local'
     this.listLimit = config.listLimit ?? DEFAULT_LIST_LIMIT
   }
 
@@ -98,11 +96,14 @@ export class SqliteTask extends TaskService {
     const prompt = input.prompt?.trim()
     if (!prompt) throw new Error('任务内容不能为空')
     const id = uid('run')
-    const target = { ...(input.target ?? {}) }
-    const harnessId = target.harnessId ?? input.harnessId ?? this.harnessId
-    const cwd = input.cwd ?? target.cwd ?? `${this.workspaceRoot}/${id}`
     const now = Math.max(Date.now(), this.lastCreatedAt + 1)
     this.lastCreatedAt = now
+    const target: TaskTarget = {
+      executorId: input.target?.executorId?.trim() || this.executorId,
+      ...(input.target?.workspaceId?.trim() ? { workspaceId: input.target.workspaceId.trim() } : {}),
+      ...(input.target?.sessionKey?.trim() ? { sessionKey: input.target.sessionKey.trim() } : {}),
+      cwd: input.target?.cwd?.trim() || `${this.workspaceRoot}/${id}`,
+    }
     const row: Omit<TaskRow, 'id'> = {
       task_id: id,
       title: input.title?.trim() || prompt.slice(0, 40),
@@ -112,15 +113,8 @@ export class SqliteTask extends TaskService {
       priority: clampPriority(input.priority),
       depends_on_json: JSON.stringify(normalizeDependsOn(input.dependsOn)),
       contract_json: input.contract ? JSON.stringify(serializeContract(input.contract)) : null,
-      harness_id: harnessId,
-      session_id: target.sessionId ?? null,
-      cwd,
-      target_json: JSON.stringify({
-        ...target,
-        harnessId,
-        cwd,
-        ...(target.sessionId ? { sessionId: target.sessionId } : {}),
-      }),
+      target_json: JSON.stringify(target),
+      session_id: input.sessionId ?? null,
       status: 'queued',
       progress_json: null,
       progress_events_json: null,
@@ -315,15 +309,8 @@ function toRun(row: TaskRow): TaskRun {
     priority: clampPriority(row.priority),
     dependsOn: parseDependsOn(row.depends_on_json),
     contract: parseContract(row.contract_json),
-    harnessId: row.harness_id,
+    target: parseTarget(row.target_json),
     sessionId: row.session_id,
-    cwd: row.cwd,
-    source: 'server' as const,
-    target: parseTarget(row.target_json, {
-      harnessId: row.harness_id,
-      ...(row.session_id ? { sessionId: row.session_id } : {}),
-      cwd: row.cwd,
-    }),
     status: row.status,
     progress: parseProgress(row.progress_json),
     progressHistory: parseProgressHistory(row.progress_events_json),
@@ -401,15 +388,19 @@ function clampPriority(value: unknown): number {
   return Math.min(9, Math.max(0, Math.round(priority)))
 }
 
-function parseTarget(raw: string | null | undefined, fallback: TaskTarget): TaskTarget {
-  if (!raw) return fallback
+function parseTarget(raw: string): TaskTarget {
   try {
-    const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object') return { ...fallback, ...(parsed as TaskTarget) }
+    const parsed = JSON.parse(raw) as Partial<TaskTarget>
+    const executorId = typeof parsed.executorId === 'string' && parsed.executorId.trim() ? parsed.executorId.trim() : 'local'
+    return {
+      executorId,
+      ...(typeof parsed.workspaceId === 'string' && parsed.workspaceId.trim() ? { workspaceId: parsed.workspaceId.trim() } : {}),
+      ...(typeof parsed.sessionKey === 'string' && parsed.sessionKey.trim() ? { sessionKey: parsed.sessionKey.trim() } : {}),
+      ...(typeof parsed.cwd === 'string' && parsed.cwd.trim() ? { cwd: parsed.cwd.trim() } : {}),
+    }
   } catch {
-    // 老数据/损坏值按派生目标处理
+    return { executorId: 'local' }
   }
-  return fallback
 }
 function parseProgressHistory(raw: string | null | undefined): TaskProgress[] {
   if (!raw) return []

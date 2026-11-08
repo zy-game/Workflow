@@ -7,6 +7,7 @@ import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as taskPlugin from '@qingmei/provider-task-sqlite'
+import * as taskOrchestrator from '@qingmei/qm-task'
 import * as devicePlugin from '../src/index.ts'
 
 async function setup() {
@@ -18,6 +19,8 @@ async function setup() {
   await ctx.plugin(taskPlugin)
   const pluginFiber = ctx.plugin(devicePlugin, {})
   await pluginFiber
+  const orchestratorFiber = ctx.plugin(taskOrchestrator, {})
+  await orchestratorFiber
   return {
     ctx,
     async call(req) {
@@ -40,6 +43,7 @@ async function setup() {
       return { handled, status, body }
     },
     async dispose() {
+      await orchestratorFiber.dispose()
       await pluginFiber.dispose()
       await storeFiber.dispose()
     },
@@ -88,13 +92,13 @@ test('任务：入队、领取、进度、完成', async () => {
 
     const created = await h.call({
       method: 'POST',
-      path: '/api/v1/devices/tasks',
+      path: '/api/v1/tasks',
       query: {},
       headers: {},
-      body: { deviceId: 'dev_a', prompt: '跑测试', title: '测试任务', harness: 'dsh' },
+      body: { prompt: '跑测试', title: '测试任务', target: { executorId: 'device:dev_a' } },
     })
-    assert.equal(created.status, 201)
-    const taskId = created.body.task.id
+    assert.equal(created.status, 202)
+    const taskId = created.body.run.id
 
     const claim = await h.call({
       method: 'POST',
@@ -132,7 +136,7 @@ test('任务：入队、领取、进度、完成', async () => {
     })
     assert.equal(list.body.items[0].status, 'done')
     assert.equal(list.body.items[0].result, '通过')
-    assert.equal(list.body.items[0].progress.length, 1)
+    assert.equal(list.body.items[0].progressHistory.length, 1)
   } finally {
     await h.dispose()
   }
@@ -143,10 +147,10 @@ test('未知设备拒绝入队', async () => {
   try {
     const res = await h.call({
       method: 'POST',
-      path: '/api/v1/devices/tasks',
+      path: '/api/v1/tasks',
       query: {},
       headers: {},
-      body: { deviceId: 'missing', prompt: 'x' },
+      body: { prompt: 'x', target: { executorId: 'device:missing' } },
     })
     assert.equal(res.status, 400)
   } finally {
@@ -207,19 +211,17 @@ test('设备工作区：上报系统类型、工作区和任务定向', async ()
 
     const created = await h.call({
       method: 'POST',
-      path: '/api/v1/devices/tasks',
+      path: '/api/v1/tasks',
       query: {},
       headers: {},
       body: {
-        deviceId: 'dev-workspace',
-        harness: 'dsh',
-        workspaceId: 'ws-1',
         prompt: '只回复 OK',
+        target: { executorId: 'device:dev-workspace', workspaceId: 'ws-1' },
       },
     })
-    assert.equal(created.status, 201)
-    assert.equal(created.body.task.workspaceId, 'ws-1')
-    assert.equal(created.body.task.cwd, 'E:\\Workflow')
+    assert.equal(created.status, 202)
+    assert.equal(created.body.run.target.workspaceId, 'ws-1')
+    assert.equal(created.body.run.target.cwd, 'E:\\Workflow')
 
     const claimed = await h.call({
       method: 'POST',
@@ -228,8 +230,8 @@ test('设备工作区：上报系统类型、工作区和任务定向', async ()
       headers: {},
       body: { deviceId: 'dev-workspace', harness: 'dsh' },
     })
-    assert.equal(claimed.body.task.id, created.body.task.id)
-    assert.equal(claimed.body.task.cwd, 'E:\\Workflow')
+    assert.equal(claimed.body.task.id, created.body.run.id)
+    assert.equal(claimed.body.task.target.cwd, 'E:\\Workflow')
   } finally {
     await h.dispose()
   }
@@ -253,12 +255,12 @@ test('同一 thread 的第二条任务复用上一条 session', async () => {
     })
     const first = await h.call({
       method: 'POST',
-      path: '/api/v1/devices/tasks',
+      path: '/api/v1/tasks',
       query: {},
       headers: {},
-      body: { deviceId: 'dev-session', harness: 'dsh', workspaceId: 'ws-session', threadId: 'thread-1', prompt: 'first' },
+      body: { prompt: 'first', target: { executorId: 'device:dev-session', workspaceId: 'ws-session', sessionKey: 'thread-1' } },
     })
-    assert.equal(first.status, 201)
+    assert.equal(first.status, 202)
     const claimed = await h.call({
       method: 'POST',
       path: '/api/v1/devices/claim',
@@ -275,13 +277,13 @@ test('同一 thread 的第二条任务复用上一条 session', async () => {
     })
     const second = await h.call({
       method: 'POST',
-      path: '/api/v1/devices/tasks',
+      path: '/api/v1/tasks',
       query: {},
       headers: {},
-      body: { deviceId: 'dev-session', harness: 'dsh', workspaceId: 'ws-session', threadId: 'thread-1', prompt: 'second' },
+      body: { prompt: 'second', target: { executorId: 'device:dev-session', workspaceId: 'ws-session', sessionKey: 'thread-1' } },
     })
-    assert.equal(second.status, 201)
-    assert.equal(second.body.task.sessionId, 'session-cont')
+    assert.equal(second.status, 202)
+    assert.equal(second.body.run.sessionId, 'session-cont')
   } finally {
     await h.dispose()
   }

@@ -16,13 +16,16 @@ import type { Context } from 'cordis'
 import {
   EVENTS,
   TaskRunnerService,
+  taskViewOf,
   type GatewayRequest,
   type GatewayResponse,
   type GatewayService,
   type HarnessService,
   type TaskContract,
   type TaskRun,
+  type TaskTarget,
   type TaskService,
+  type TaskTargetService,
 } from '@qingmei/core'
 
 export interface TaskConfig {
@@ -30,8 +33,6 @@ export interface TaskConfig {
   workspaceRoot?: string
   /** 单次执行的时间上限，默认 10 分钟 */
   timeoutMs?: number
-  /** 派给哪个 harness */
-  harnessId?: string
   /** 同时最多跑几个 run；超出的排队，默认 2 */
   maxConcurrent?: number
   /** 静默时段（如 23:00-08:00）：非紧急任务不启动，跨午夜也支持 */
@@ -46,7 +47,7 @@ export const name = 'qm-task'
 export const inject = ['task', 'gateway']
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
-const DEFAULT_HARNESS = 'dsh'
+const LOCAL_EXECUTOR = 'local'
 const DEFAULT_MAX_CONCURRENT = 2
 const LIST_LIMIT = 20
 
@@ -288,7 +289,7 @@ export class TaskRunner extends TaskRunnerService {
     }
 
     try {
-      const cwd = path.resolve(run.cwd)
+      const cwd = path.resolve(run.target.cwd ?? `.`)
       await mkdir(cwd, { recursive: true })
       await task.start(run.id)
 
@@ -380,15 +381,26 @@ function normalizeContract(raw: unknown): TaskContract | undefined {
     ...(normalizedBudget ? { tokenBudget: normalizedBudget } : {}),
   }
 }
+function parseTarget(raw: unknown): { executorId: string; workspaceId?: string; sessionKey?: string; cwd?: string } {
+  const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+  return {
+    executorId: typeof value.executorId === 'string' && value.executorId.trim() ? value.executorId.trim() : LOCAL_EXECUTOR,
+    ...(typeof value.workspaceId === 'string' && value.workspaceId.trim() ? { workspaceId: value.workspaceId.trim() } : {}),
+    ...(typeof value.sessionKey === 'string' && value.sessionKey.trim() ? { sessionKey: value.sessionKey.trim() } : {}),
+    ...(typeof value.cwd === 'string' && value.cwd.trim() ? { cwd: value.cwd.trim() } : {}),
+  }
+}
+
 export function apply(ctx: Context, config: TaskConfig = {}): void {
   const task = ctx.task
   const gateway = ctx.gateway
   /** harness 是可选依赖：开发环境可能没装 DSH，此时派发返回「没有可用的 harness」 */
   const harness = ctx.get('harness', false) as HarnessService | undefined
+  let taskTargets: TaskTargetService | undefined
+  ctx.inject(['taskTargets'], (sub) => { taskTargets = sub.taskTargets })
 
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const resumeOnRestart = config.resumeOnRestart !== false
-  const harnessId = config.harnessId ?? DEFAULT_HARNESS
   const maxConcurrent = Math.max(1, Number(config.maxConcurrent) || DEFAULT_MAX_CONCURRENT)
   const quietHours = parseQuietHours(config.quietHours)
   const preemptPriority = Number.isFinite(Number(config.preemptPriority))
@@ -419,10 +431,9 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
       const available = harness ? await harness.available().catch(() => false) : false
       for (const run of runs) {
         // 设备任务由目标设备 claim，不由服务端 runner 抢跑
-        if (run.target?.deviceId) continue
-        if (run.harnessId !== harnessId) continue
+        if (run.target.executorId !== LOCAL_EXECUTOR) continue
         if (run.status === 'queued') {
-          if (available) runner.dispatch(run)
+          if (available && run.target.executorId === LOCAL_EXECUTOR) runner.dispatch(run)
           continue
         }
         if (run.status === 'running' || run.status === 'needs_approval') {
@@ -453,28 +464,42 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           res.status(400).send({ ok: false, error: 'prompt 不能为空' })
           return
         }
-
-        const available = harness ? await harness.available().catch(() => false) : false
-        if (!harness || !available) {
-          res.status(503).send({ ok: false, error: '没有可用的 harness' })
+        const target = parseTarget(body.target)
+        const local = target.executorId === LOCAL_EXECUTOR
+        const prepared = local
+          ? { target }
+          : taskTargets
+            ? await taskTargets.prepare({
+                ...target,
+                ...(typeof body.sessionId === 'string' && body.sessionId.trim() ? { sessionId: body.sessionId.trim() } : {}),
+              }).catch(() => null)
+            : null
+        if (!prepared) {
+          res.status(400).send({ ok: false, error: '没有这个执行器或 target 不合法' })
           return
         }
-
+        if (local) {
+          const available = harness ? await harness.available().catch(() => false) : false
+          if (!harness || !available) {
+            res.status(503).send({ ok: false, error: '没有可用的执行器' })
+            return
+          }
+        }
         const run = await task.create({
           prompt,
           ...(typeof body.title === 'string' && body.title.trim() ? { title: body.title.trim() } : {}),
           ...(typeof body.project === 'string' && body.project.trim() ? { project: body.project.trim() } : {}),
-          ...(typeof body.cwd === 'string' && body.cwd.trim() ? { cwd: body.cwd.trim() } : {}),
           ...(Number.isFinite(Number(body.priority)) ? { priority: Number(body.priority) } : {}),
           ...(Array.isArray(body.dependsOn)
             ? { dependsOn: body.dependsOn.map((item) => String(item)).filter(Boolean) }
             : {}),
           ...(normalizeContract(body.contract) ? { contract: normalizeContract(body.contract)! } : {}),
-          harnessId,
+          target: prepared.target,
+          ...(prepared.sessionId ? { sessionId: prepared.sessionId } : {}),
+          ...(!prepared.sessionId && typeof body.sessionId === 'string' && body.sessionId.trim() ? { sessionId: body.sessionId.trim() } : {}),
         })
-        res.status(202).send({ ok: true, run })
-        // 派发是后台动作：HTTP 先返回 run，进度靠事件与轮询
-        runner.dispatch(run)
+        res.status(202).send({ ok: true, run: taskViewOf(run) })
+        if (local) runner.dispatch(run)
       },
     }),
   )
@@ -491,11 +516,12 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
             res.status(404).send({ ok: false, error: '没有这个任务' })
             return
           }
-          res.status(200).send({ ok: true, run })
+          res.status(200).send({ ok: true, run: taskViewOf(run) })
           return
         }
         const limit = Number(req.query.limit ?? LIST_LIMIT)
-        res.status(200).send({ ok: true, items: await task.list(Number.isFinite(limit) ? limit : LIST_LIMIT) })
+        const items = (await task.list(Number.isFinite(limit) ? limit : LIST_LIMIT)).map(taskViewOf)
+        res.status(200).send({ ok: true, items })
       },
     }),
   )

@@ -16,6 +16,10 @@ import {
   type Row,
   type StoreService,
   type TaskRun,
+  TaskTargetService,
+  type TaskTargetInput,
+  type PreparedTaskTarget,
+  taskViewOf,
   type TaskService,
 } from '@qingmei/core'
 
@@ -67,6 +71,7 @@ export interface HarnessCapability {
   kind: string
   acp: boolean
   mcp: boolean
+  transport?: string
   version?: string
 }
 
@@ -84,6 +89,19 @@ export function deviceClassOf(platform: string): string {
   return 'unknown'
 }
 
+class DeviceTaskTargets extends TaskTargetService {
+  private readonly prepareFn: (input: TaskTargetInput) => Promise<PreparedTaskTarget>
+
+  constructor(ctx: Context, prepareFn: (input: TaskTargetInput) => Promise<PreparedTaskTarget>) {
+    super(ctx)
+    this.prepareFn = prepareFn
+  }
+
+  prepare(input: TaskTargetInput): Promise<PreparedTaskTarget> {
+    return this.prepareFn(input)
+  }
+}
+
 export function apply(ctx: Context, config: DeviceConfig = {}): void {
   const store = ctx.store
   const gateway = ctx.gateway
@@ -94,6 +112,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
   let taskService: TaskService | undefined
   ctx.inject(['task'], (sub) => { taskService = sub.task })
+  new DeviceTaskTargets(ctx, prepareTarget)
   const digests = store.collection<DigestRow>('qm_session_digest')
   const staleMs = Math.max(10_000, config.staleMs ?? 90_000)
   const keepTasks = Math.max(20, config.keepTasks ?? 200)
@@ -125,39 +144,15 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     online: Date.now() - row.last_seen <= staleMs,
   })
 
-  const toTask = (run: TaskRun) => {
-    const target = run.target ?? { harnessId: run.harnessId, cwd: run.cwd }
-    return {
-      id: run.id,
-      deviceId: target.deviceId ?? '',
-      title: run.title,
-      prompt: run.prompt,
-      harness: target.harnessId ?? run.harnessId,
-      workspaceId: target.workspaceId ?? null,
-      sessionId: run.sessionId ?? target.sessionId ?? null,
-      threadId: target.threadId ?? null,
-      cwd: target.cwd ?? run.cwd ?? null,
-      source: 'device' as const,
-      target: {
-        ...target,
-        ...(target.deviceId ? { deviceId: target.deviceId } : {}),
-        ...(target.harnessId ? { harnessId: target.harnessId } : {}),
-        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
-      },
-      status: run.status,
-      progress: run.progressHistory?.length ? run.progressHistory : run.progress ? [run.progress] : [],
-      result: run.result,
-      error: run.error,
-      createdAt: run.createdAt,
-      claimedAt: run.startedAt,
-      finishedAt: run.finishedAt,
-    }
-  }
+  const executorIdOf = (deviceId: string) => `device:${deviceId}`
+
+  const toTask = taskViewOf
 
   async function unifiedTasks(deviceId?: string): Promise<TaskRun[]> {
     if (!taskService) return []
     const runs = await taskService.list(200)
-    return runs.filter((run) => (deviceId ? run.target?.deviceId === deviceId : Boolean(run.target?.deviceId)))
+    if (deviceId) return runs.filter((run) => run.target.executorId === executorIdOf(deviceId))
+    return runs.filter((run) => run.target.executorId.startsWith('device:'))
   }
   async function upsert(input: {
     id?: string
@@ -182,6 +177,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
             kind: String(item.kind ?? '').trim(),
             acp: item.acp === true,
             mcp: item.mcp === true,
+            ...(typeof item.transport === 'string' && item.transport.trim() ? { transport: item.transport.trim() } : {}),
             ...(typeof item.version === 'string' && item.version.trim() ? { version: item.version.trim() } : {}),
           }))
           .filter((item) => item.kind)
@@ -217,19 +213,9 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     return row
   }
 
-  async function enqueue(input: {
-    deviceId?: unknown
-    prompt?: unknown
-    title?: unknown
-    harness?: unknown
-    workspaceId?: unknown
-    sessionId?: unknown
-    threadId?: unknown
-    cwd?: unknown
-  }) {
-    const deviceId = String(input.deviceId ?? '').trim()
-    const prompt = String(input.prompt ?? '').trim()
-    if (!deviceId || !prompt) throw new Error('deviceId 和 prompt 必填')
+  async function prepareTarget(input: TaskTargetInput): Promise<PreparedTaskTarget> {
+    const deviceId = input.executorId.startsWith('device:') ? input.executorId.slice('device:'.length) : ''
+    if (!deviceId) throw new Error('只有 device:<id> 走设备执行器')
     const device = await devices.get(deviceId)
     if (!device) throw new Error('没有这个设备')
     const workspaces = JSON.parse(device.workspaces_json || '[]') as WorkspaceInfo[]
@@ -237,42 +223,36 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     const workspace = requestedWorkspace ? workspaces.find((item) => item.id === requestedWorkspace) : undefined
     if (requestedWorkspace && !workspace) throw new Error('设备没有上报这个工作区')
     const cwd = String(input.cwd ?? workspace?.path ?? '').trim()
-    const requestedSession = String(input.sessionId ?? '').trim()
-    const threadId = String(input.threadId ?? '').trim()
-    if (!taskService) throw new Error('task service 未就绪')
-    let sessionId = requestedSession
-    if (!sessionId && threadId) {
+    const sessionKey = String(input.sessionKey ?? '').trim()
+    let sessionId = String(input.sessionId ?? '').trim()
+    if (!sessionId && sessionKey) {
       const previous = (await unifiedTasks(deviceId))
         .filter(
           (run) =>
-            run.target?.workspaceId === (workspace?.id ?? null) &&
-            run.target?.threadId === threadId &&
-            (run.sessionId ?? run.target?.sessionId),
+            run.target.executorId === executorIdOf(deviceId) &&
+            run.target.workspaceId === (workspace?.id ?? null) &&
+            run.target.sessionKey === sessionKey &&
+            run.sessionId,
         )
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
-      sessionId = previous?.sessionId ?? previous?.target?.sessionId ?? null
+      sessionId = previous?.sessionId ?? null
     }
-    const created = await taskService.create({
-      prompt,
-      title: String(input.title ?? prompt.slice(0, 40)).trim().slice(0, 120),
-      harnessId: String(input.harness ?? 'dsh').trim() || 'dsh',
-      cwd: cwd || `${workspace?.path ?? ''}`,
+    return {
       target: {
-        deviceId,
+        executorId: executorIdOf(deviceId),
         ...(workspace?.id ? { workspaceId: workspace.id } : {}),
-        ...(threadId ? { threadId } : {}),
-        ...(sessionId ? { sessionId } : {}),
+        ...(sessionKey ? { sessionKey } : {}),
         ...(cwd ? { cwd } : {}),
       },
-    })
-    return created
+      ...(sessionId ? { sessionId } : {}),
+    }
   }
 
-  async function claim(deviceId: string, harness = ''): Promise<TaskRun | null> {
+  async function claim(deviceId: string): Promise<TaskRun | null> {
     return serialize(async () => {
       if (taskService) {
         const queued = (await unifiedTasks(deviceId))
-          .filter((run) => run.status === 'queued' && (!harness || (run.target?.harnessId ?? run.harnessId) === harness))
+          .filter((run) => run.status === 'queued')
           .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         const next = queued[0]
         if (!next) return null
@@ -521,21 +501,6 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   )
   ctx.effect(() =>
     gateway.route({
-      method: 'POST',
-      path: '/api/v1/devices/tasks',
-      async handler(req: GatewayRequest, res: GatewayResponse) {
-        try {
-          const task = await enqueue((req.body ?? {}) as Record<string, unknown>)
-          res.status(201).send({ ok: true, task: toTask(task) })
-        } catch (error) {
-          res.status(400).send({ ok: false, error: error instanceof Error ? error.message : String(error) })
-        }
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
       method: 'GET',
       path: '/api/v1/devices/tasks',
       async handler(req: GatewayRequest, res: GatewayResponse) {
@@ -561,8 +526,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
           res.status(400).send({ ok: false, error: 'deviceId 必填' })
           return
         }
-        const harness = String(body.harness ?? '').trim()
-        const task = await claim(id, harness)
+        const task = await claim(id)
         res.status(200).send({ ok: true, task: task ? toTask(task) : null })
       },
     }),

@@ -48,8 +48,8 @@ test('create：queued 状态、taskId 与 run 目录', async () => {
     assert.equal(run.status, 'queued')
     assert.equal(run.prompt, '把测试跑一遍')
     assert.equal(run.taskId, run.id)
-    assert.equal(run.harnessId, 'dsh')
-    assert.match(run.cwd, /data\/workspaces\/run_/)
+    assert.equal(run.target.executorId, 'local')
+    assert.match(run.target.cwd ?? '', /data\/workspaces\/run_/)
     assert.equal(run.progress, null)
     assert.equal(run.startedAt, null)
     assert.ok(run.createdAt instanceof Date)
@@ -234,9 +234,10 @@ test('落库在 qm_task_run 集合，列名与 docs/07 §5 的字段对应', asy
     const row = rows[0]!
     assert.equal(row.id, run.id)
     assert.equal(row.task_id, run.id)
-    assert.equal(row.harness_id, 'dsh')
     assert.equal(row.status, 'queued')
-    assert.equal(row.cwd, run.cwd)
+    const target = JSON.parse(String(row.target_json)) as { executorId: string; cwd: string }
+    assert.equal(target.executorId, 'local')
+    assert.equal(target.cwd, run.target.cwd)
     assert.equal(row.started_at, null)
     assert.equal(row.finished_at, null)
   } finally {

@@ -30,30 +30,32 @@
 ## 2. 任务投递
 
 ```text
-POST /api/v1/devices/tasks
+POST /api/v1/tasks
 {
-  deviceId,
-  harness: "dsh",
-  workspaceId,
-  cwd,
   prompt,
-  title
+  title,
+  target: {
+    executorId: "device:<deviceId>",
+    workspaceId,
+    sessionKey,
+    cwd
+  }
 }
 
-POST /api/v1/devices/claim    { deviceId, harness: "dsh" }
+POST /api/v1/devices/claim    { deviceId }
 POST /api/v1/devices/progress
 POST /api/v1/devices/finish
 GET  /api/v1/devices/tasks?deviceId=...
 ```
 
-`workspaceId` 必须属于设备上报列表；`cwd` 用于校验/回退。任务只投给目标设备。
+`workspaceId` 必须属于设备上报列表；`cwd` 用于校验/回退。任务由 `target.executorId=device:<id>` 选择设备执行器。
 
 ## 3. DSH Host Companion
 
 `apps/dsh-companion` 运行在 DSH Host 内：
 
 ```text
-领 harness=dsh 任务
+领当前设备执行器的任务
   → sessionController.create({ cwd, agentPreset: 'standard' })
   → ctx.agents.get(sessionId)
   → workspace.attachSession(sessionId)
@@ -150,18 +152,18 @@ DSH 重启后 companion/hook 生效。
 
 ## 7. 任务会话延续
 
-设备任务支持 `threadId`：
+设备任务支持 `target.sessionKey`：
 
 ```text
-deviceId + harness + workspaceId + threadId + prompt
+executorId + workspaceId + sessionKey + prompt
 ```
 
-- 同一 `threadId` 下，服务端取该线程上一任务的真实 DSH `sessionId`。
+- 同一 `sessionKey` 下，服务端取该线程上一任务的真实 DSH `sessionId`。
 - companion 先用 `sessionController.resolveAgent(sessionId)` 恢复已有会话，恢复失败才新建。
 - 新任务会把上一轮摘要和最近 turns 传给 `/api/v1/devices/context`，再做记忆召回。
 - 任务完成后 `finish` 回写真实 `sessionId`。
 
-Web 任务页默认用工作区 id 作为 `threadId`，所以同一工作区的连续任务会延续同一个 DSH 会话。
+Web 任务页默认用工作区 id 作为 `sessionKey`，所以同一工作区的连续任务会延续同一个 DSH 会话。
 ## 7. 语音输入与主动推送
 
 ### 语音输入

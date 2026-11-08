@@ -13,6 +13,7 @@ import type { Context } from 'cordis'
 import {
   EVENTS,
   conversationIdFromSession,
+  HistoryService,
   conversationSessionId,
   textOf,
   uid,
@@ -29,7 +30,6 @@ import {
   type ProfileEntry,
   type SkillService,
   type Row,
-  type StoreService,
   type TurnChunk,
   type ThreadService,
   type TurnEnd,
@@ -44,10 +44,7 @@ export interface AgentConfig {
 export const name = 'qm-agent'
 
 /** cordis 会等这四个服务就绪后才执行 apply，卸载时自动停用本插件 */
-export const inject: string[] = ['llm', 'store', 'channel', 'gateway', 'memory']
-
-/** qm_message 表名 */
-const MESSAGE_COLLECTION = 'qm_message'
+export const inject: string[] = ['llm', 'channel', 'gateway', 'memory']
 
 /** 组装上下文时回读的历史条数上限 */
 const HISTORY_LIMIT = 20
@@ -142,7 +139,6 @@ export function apply(ctx: Context, config: AgentConfig): void {
   const personaService = ctx.get('persona', false) as { current: () => { prompt: string } } | undefined
   const persona = personaService?.current().prompt || requirePersona(config)
   const llm = ctx.llm
-  const store = ctx.store
   const channel = ctx.channel
   const gateway = ctx.gateway
   /** 记忆是核心依赖（docs/02）：缺失时插件不会 ACTIVE，而不是静默降级成「没有记忆」 */
@@ -150,12 +146,14 @@ export function apply(ctx: Context, config: AgentConfig): void {
 
   // 可选增强：由 Cordis 在服务出现时注入，不在业务代码里查字符串。
   let harness: HarnessService | undefined
+  let historyService: HistoryService | undefined
   let identityService: IdentityService | undefined
   let threadService: ThreadService | undefined
   let profileService: ConversationProfileService | undefined
   let skillService: SkillService | undefined
   let auditService: AuditService | undefined
   ctx.inject(['harness'], (sub) => { harness = sub.harness })
+  ctx.inject(['history'], (sub) => { historyService = sub.history })
   ctx.inject(['identity'], (sub) => { identityService = sub.identity })
   ctx.inject(['thread'], (sub) => { threadService = sub.thread })
   ctx.inject(['conversationProfile'], (sub) => { profileService = sub.conversationProfile })
@@ -181,16 +179,10 @@ export function apply(ctx: Context, config: AgentConfig): void {
    * 再由调用方把当前 userText 补在最后——上下文才和「此刻」对齐。
    */
   async function loadHistory(sessionId: string, platformMessageId: string): Promise<ChatMessage[]> {
-    const rows = await store.collection<StoredMessage>(MESSAGE_COLLECTION).find({
-      where: { session_id: sessionId },
-      order: [{ field: 'created_at', dir: 'desc' }],
-      // 多取一条：历史里可能已经有本轮这条，截掉之后仍要凑满 HISTORY_LIMIT
-      limit: HISTORY_LIMIT + 1,
-    })
-    // store 只保证「按 created_at 降序取最近 N 条」，回读时翻回时间正序
-    const ordered = rows.reverse()
-    const cut = ordered.findIndex((row) => row.platform_message_id === platformMessageId)
-    const past = cut >= 0 ? ordered.slice(0, cut) : ordered
+    if (!historyService) return []
+    const rows = await historyService.recent(sessionId, HISTORY_LIMIT + 1)
+    const cut = rows.findIndex((row) => row.platformMessageId === platformMessageId)
+    const past = cut >= 0 ? rows.slice(0, cut) : rows
     return past.slice(-HISTORY_LIMIT).map((row) => ({ role: row.role, content: row.text }))
   }
 

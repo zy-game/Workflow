@@ -70,7 +70,7 @@ export function apply(ctx, config = {}) {
       platform: process.platform,
       arch: process.arch,
       hostname: process.env.COMPUTERNAME || '',
-      harnesses: [{ kind: 'dsh', acp: true }],
+      harnesses: [{ kind: 'dsh', acp: false, transport: 'dsh-host' }],
       workspaces: workspaces(),
       workerVersion: 'dsh-companion/0.1.0',
     })
@@ -78,7 +78,7 @@ export function apply(ctx, config = {}) {
   }
 
   const claim = async () => {
-    const result = await post('/api/v1/devices/claim', { deviceId, harness: 'dsh' })
+    const result = await post('/api/v1/devices/claim', { deviceId })
     return result?.task ?? null
   }
 
@@ -133,11 +133,11 @@ export function apply(ctx, config = {}) {
     let state
     try {
       sessionId = String(task.sessionId || `session-${randomUUID()}`)
-      const targetWorkspace = task.workspaceId
-        ? workspaces().find((item) => item.id === task.workspaceId)
+      const targetWorkspace = task.target?.workspaceId
+        ? workspaces().find((item) => item.id === task.target.workspaceId)
         : null
-      if (task.workspaceId && !targetWorkspace) throw new Error('任务指定的工作区不在 DSH 中')
-      const cwd = realpathSync(task.cwd || targetWorkspace?.path || workspacePath)
+      if (task.target?.workspaceId && !targetWorkspace) throw new Error('任务指定的工作区不在 DSH 中')
+      const cwd = realpathSync(task.target?.cwd || targetWorkspace?.path || workspacePath)
       const selection = ctx.agentDefaultModel?.currentSelection?.()
       let agent = null
       if (task.sessionId) {

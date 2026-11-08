@@ -458,7 +458,7 @@ async function seed(
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(agent.name, 'qm-agent')
-  assert.deepEqual(agent.inject, ['llm', 'store', 'channel', 'gateway', 'memory'])
+  assert.deepEqual(agent.inject, ['llm', 'channel', 'gateway', 'memory'])
 })
 
 test('一次 inbound：chunk 事件、turn/end、store 两条消息、渠道回投', async () => {

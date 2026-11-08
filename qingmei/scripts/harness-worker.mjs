@@ -85,7 +85,7 @@ async function runDsh(config, task) {
   const command = config.dshCommand
   if (!command) throw new Error('没有配置 dsh ACP 命令')
   const [executable, ...args] = command.split(/\s+/)
-  const cwd = task.cwd ? path.resolve(task.cwd) : config.workdir
+  const cwd = task.target?.cwd ? path.resolve(task.target.cwd) : config.workdir
   mkdirSync(cwd, { recursive: true })
   let output = ''
   const client = new AcpClient({
@@ -329,7 +329,7 @@ async function main() {
         taskId: task.id,
         phase: 'running',
         percent: 10,
-        note: `${task.harness} 已启动`,
+        note: `${task.target?.executorId ?? 'executor'} 已启动`,
       }).catch(() => undefined)
       try {
         const result = await runDsh(config, task)

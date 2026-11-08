@@ -63,7 +63,7 @@ Device        执行任务的位置
 
 ```text
 Task
-  target: { deviceId?, workspaceId?, harness? }
+  target: { executorId, workspaceId?, sessionKey?, cwd? }
   sessionId?: string
   status
 ```
@@ -88,21 +88,19 @@ conversationIdFromSession(sessionId)    // 还原
 `qm-agent`、`qm-history`、`host-gateway` 不再各自拼 `s_` 前缀。
 ## 4.1 TaskTarget
 
-服务器任务和设备任务共用：
+执行器只有一个领域概念：DSH executor。服务器和设备只是执行位置：
 
 ```ts
 interface TaskTarget {
-  deviceId?: string
+  executorId: string      // local | device:<id>
   workspaceId?: string
-  harnessId?: string
-  sessionId?: string
+  sessionKey?: string     // 复用执行器会话的键，不是 qm-thread 的 Thread
   cwd?: string
 }
 ```
 
-`TaskRun.target` 和 `qm_device_task` 的 API 现在都输出 `target`。旧字段保留一段时间兼容，但新代码优先读 `target`，不再分别解释 `deviceId/harness/workspaceId`。
+`TaskRun.target` 是唯一目标来源；不再有根上的 `harnessId`、`cwd`、`source`，也不再有 `target.deviceId/harnessId/threadId/sessionId/legacyId`。
 
-最终目标是删除 `DeviceTask` 这个独立业务概念，设备只是 `TaskTarget.deviceId`。
 对外统一为 `TaskView`：
 
 ```ts
@@ -117,16 +115,28 @@ interface TaskView {
   error: string | null
   createdAt: Date
   finishedAt: Date | null
-  source: 'server' | 'device'
 }
 ```
 
-服务器任务 `source = server`，设备任务 `source = device`。UI 只按 `TaskView` 渲染，不再分别判断两种任务对象。
+`sessionId` 是执行器返回的真实会话 id；`target.sessionKey` 是请求复用的键。
+
 ### 存储状态
 
-新设备任务已经写入 `qm_task_run`（`run_` 前缀），通过 `TaskService` 创建、claim、finish。
+所有任务都写 `qm_task_run`。`qm_device_task` 已迁移并清空，代码中不再读取。
 
-`qm_device_task` 仅作为旧数据兼容读取，不再接收新任务。迁移完成后删除该表。
+### 当前执行路径
+
+```text
+target.executorId = local
+  → qm-task TaskRunner
+  → provider-dsh-acp
+
+target.executorId = device:<id>
+  → qm-device claim
+  → 设备 companion（DSH Host）
+```
+
+两条路径共享同一个 Task 账本和 TaskView，但调度/审批/上下文仍有两套实现差异；后续要收敛到统一 ExecutorRegistry/TaskDispatcher。
 
 ## 5. 数据流
 
@@ -134,27 +144,34 @@ interface TaskView {
 
 ```text
 channel adapter
-  → qm/channel/inbound
-  → assistant/conversation plugin
+  → qm/inbound
+  → qm-agent
   → memory.recall
-  → llm / harness
-  → qm/assistant/reply
+  → local DSH harness / llm
+  → qm/turn/chunk
   → channel.send
-  → qm/history
+  → qm/outbound
+  → qm-history
+  → qm/turn/end
 ```
 
 ### 任务
 
+设备任务也走 `POST /api/v1/tasks`，target 为 `device:<id>`；`/api/v1/devices/tasks` 只保留列表查询，不再创建任务。
+
 ```text
-TaskService.dispatch
-  → task queue
-  → HarnessService.run
-  → progress / approval
+POST /api/v1/tasks
+  → local: qm-task TaskRunner
+  → device: qm-device TaskTargetService 解析，qm-device claim
+  → TaskService.create 写 qm_task_run
+
+执行器
+  → progress / usage / session
+  → TaskService.reportProgress / finish
   → qm/task/finished
-  → memory / history
 ```
 
-渠道插件不直接调用 memory/task；任务插件不直接发渠道消息；审批插件通过 approval service 和事件工作。
+渠道插件不直接调用 memory/task；任务插件不直接发渠道消息；审批通过 approval service 和事件工作。
 
 ## 6. 目标插件图
 

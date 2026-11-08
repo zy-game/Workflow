@@ -11,14 +11,12 @@ const devices = ref([])
 const deviceTasks = ref([])
 const deviceId = ref('')
 const workspaceId = ref('')
-const harness = ref('')
 const devicePrompt = ref('')
 const deviceError = ref('')
 const error = ref('')
 const loading = ref(false)
 const selectedDevice = computed(() => devices.value.find((device) => device.id === deviceId.value))
 const workspaces = computed(() => selectedDevice.value?.workspaces ?? [])
-const harnesses = computed(() => selectedDevice.value?.harnesses ?? [])
 let unsubscribers = []
 
 async function load() {
@@ -40,9 +38,6 @@ async function load() {
     if (!workspaceId.value || !workspaces.value.some((workspace) => workspace.id === workspaceId.value)) {
       workspaceId.value = workspaces.value[0]?.id ?? ''
     }
-    if (!harness.value || !harnesses.value.some((item) => item.kind === harness.value)) {
-      harness.value = harnesses.value[0]?.kind ?? 'dsh'
-    }
     error.value = ''
   } catch (err) {
     error.value = err instanceof TypeError ? '无法连接服务' : err.message || '读取任务失败'
@@ -53,7 +48,6 @@ async function load() {
 
 watch(deviceId, () => {
   workspaceId.value = workspaces.value[0]?.id ?? ''
-  harness.value = harnesses.value[0]?.kind ?? 'dsh'
 })
 
 async function dispatchDevice() {
@@ -63,16 +57,17 @@ async function dispatchDevice() {
     return
   }
   try {
-    await apiSend(ENDPOINTS.deviceTasks, {
+    await apiSend(ENDPOINTS.tasks, {
       method: 'POST',
       body: {
-        deviceId: deviceId.value,
-        threadId: workspaceId.value || deviceId.value,
-        workspaceId: workspaceId.value || undefined,
-        cwd: workspaces.value.find((workspace) => workspace.id === workspaceId.value)?.path,
         prompt: devicePrompt.value.trim(),
         title: devicePrompt.value.trim().slice(0, 40),
-        harness: harness.value || 'dsh',
+        target: {
+          executorId: `device:${deviceId.value}`,
+          ...(workspaceId.value ? { workspaceId: workspaceId.value } : {}),
+          sessionKey: workspaceId.value || deviceId.value,
+          cwd: workspaces.value.find((workspace) => workspace.id === workspaceId.value)?.path,
+        },
       },
     })
     devicePrompt.value = ''
@@ -125,16 +120,13 @@ onBeforeUnmount(() => {
 
     <div class="card">
       <h3 class="card-title">本机设备任务</h3>
-      <p class="view-sub">任务直接进目标设备的 worker 队列，由本机 ACP 拉起 DSH。</p>
+      <p class="view-sub">任务直接进目标设备的 worker 队列，由本机 DSH 执行器执行。</p>
       <div class="form-row">
         <select v-model="deviceId" class="input">
           <option value="">选择设备</option>
           <option v-for="device in devices" :key="device.id" :value="device.id">
             {{ device.name }} · {{ device.systemType || device.platform }}/{{ device.arch }} · {{ device.deviceClass || 'desktop' }} · {{ device.online ? '在线' : '离线' }}
           </option>
-        </select>
-        <select v-model="harness" class="input" :disabled="harnesses.length <= 1">
-          <option v-for="item in harnesses" :key="item.kind" :value="item.kind">{{ item.kind }}</option>
         </select>
         <select v-model="workspaceId" class="input" :disabled="workspaces.length === 0">
           <option value="">选择工作区</option>
@@ -151,7 +143,7 @@ onBeforeUnmount(() => {
           <div class="item-main">
             <p class="item-title">{{ task.title || task.prompt }}</p>
             <p class="item-meta">
-              {{ task.source === 'device' ? '设备' : '服务器' }} · {{ task.target?.deviceId || task.deviceId }} · {{ task.target?.harnessId || task.harness }} · {{ task.target?.workspaceId || task.workspaceId || '默认工作区' }} · {{ TASK_STATUS_TEXT[task.status] ?? task.status }}
+              {{ task.target.executorId }} · {{ task.target.workspaceId || '默认工作区' }} · {{ TASK_STATUS_TEXT[task.status] ?? task.status }}
               · {{ formatWhen(task.createdAt, null) }}
             </p>
             <p v-if="task.result" class="item-note">{{ task.result.slice(0, 300) }}</p>
