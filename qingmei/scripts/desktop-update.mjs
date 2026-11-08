@@ -16,7 +16,7 @@ const source =
   fileArg ||
   path.join(root, 'apps', 'desktop', 'dist', `青梅 Setup ${version}.exe`)
 if (!existsSync(source)) {
-  console.error(`[update] 找不到安装包：${source}，先运行 pnpm --filter qingmei-desktop dist:nsis`)
+  console.error(`[update] 找不到安装包：${source}，先运行 pnpm --filter @qingmei/desktop dist:nsis`)
   process.exit(1)
 }
 const name = `Qingmei-Setup-${version}.exe`
