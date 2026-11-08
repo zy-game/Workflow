@@ -151,6 +151,13 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     sessionId: row.session_id,
     threadId: row.thread_id,
     cwd: row.cwd,
+    target: {
+      deviceId: row.device_id,
+      ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
+      harnessId: row.harness,
+      ...(row.session_id ? { sessionId: row.session_id } : {}),
+      ...(row.cwd ? { cwd: row.cwd } : {}),
+    },
     status: row.status,
     progress: JSON.parse(row.progress_json) as Record<string, unknown>[],
     result: row.result,

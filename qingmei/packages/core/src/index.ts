@@ -864,6 +864,14 @@ export interface TaskContract {
   /** 逃生条款：每日可无理由暂停次数/小时 */
   escape?: { perDay: number; hours: number }
 }
+/** Task 的执行目标；设备任务和服务器任务共用同一形状。 */
+export interface TaskTarget {
+  deviceId?: string
+  workspaceId?: string
+  harnessId?: string
+  sessionId?: string
+  cwd?: string
+}
 export interface TaskRun {
   id: string
   taskId: string
@@ -883,6 +891,8 @@ export interface TaskRun {
   sessionId: string | null
   /** 青梅分配的 run 目录，不是用户任意路径 */
   cwd: string
+  /** 统一执行目标（新代码优先读它） */
+  target?: TaskTarget
   status: TaskStatus
   progress: TaskProgress | null
   artifacts: TaskArtifact[]
@@ -910,6 +920,7 @@ export interface CreateTaskInput {
   /** 不传则用 provider 的 workspaceRoot/<id> */
   cwd?: string
   harnessId?: string
+  target?: TaskTarget
 }
 
 export abstract class TaskService extends Service {

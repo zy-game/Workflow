@@ -68,6 +68,23 @@ Task
   status
 ```
 
+## 4.1 TaskTarget
+
+服务器任务和设备任务共用：
+
+```ts
+interface TaskTarget {
+  deviceId?: string
+  workspaceId?: string
+  harnessId?: string
+  sessionId?: string
+  cwd?: string
+}
+```
+
+`TaskRun.target` 和 `qm_device_task` 的 API 现在都输出 `target`。旧字段保留一段时间兼容，但新代码优先读 `target`，不再分别解释 `deviceId/harness/workspaceId`。
+
+最终目标是删除 `DeviceTask` 这个独立业务概念，设备只是 `TaskTarget.deviceId`。
 ## 5. 数据流
 
 ### 对话

@@ -298,6 +298,11 @@ function toRun(row: TaskRow): TaskRun {
     harnessId: row.harness_id,
     sessionId: row.session_id,
     cwd: row.cwd,
+    target: {
+      harnessId: row.harness_id,
+      ...(row.session_id ? { sessionId: row.session_id } : {}),
+      cwd: row.cwd,
+    },
     status: row.status,
     progress: parseProgress(row.progress_json),
     artifacts: parseArtifacts(row.artifacts_json),
