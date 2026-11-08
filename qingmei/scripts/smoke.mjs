@@ -215,6 +215,7 @@ async function main() {
     assert.equal(enqueued.status, 201, `派发设备任务失败：${enqueued.status} ${enqueued.text}`)
     const taskId = enqueued.json?.task?.id
     assert.ok(taskId, '设备任务应有 id')
+    assert.ok(taskId.startsWith('run_'), '设备任务应写入统一 Task 表（run_ 前缀）')
     assert.equal(enqueued.json.task.source, 'device')
     assert.deepEqual(enqueued.json.task.target, {
       deviceId,

@@ -869,6 +869,8 @@ export interface TaskTarget {
   deviceId?: string
   workspaceId?: string
   harnessId?: string
+  /** 设备侧会话线程键；服务端任务可忽略 */
+  threadId?: string
   sessionId?: string
   cwd?: string
 }
@@ -893,6 +895,7 @@ export interface TaskRun {
   cwd: string
   /** 统一执行目标（新代码优先读它） */
   target?: TaskTarget
+  source?: 'server' | 'device'
   status: TaskStatus
   progress: TaskProgress | null
   artifacts: TaskArtifact[]
@@ -964,7 +967,7 @@ export abstract class TaskService extends Service {
   /** 收尾；对已结束的 run 幂等返回当前值 */
   abstract finish(
     id: string,
-    input: { status: 'done' | 'failed' | 'cancelled'; result?: string; error?: string },
+    input: { status: 'done' | 'failed' | 'cancelled'; result?: string; error?: string; sessionId?: string },
   ): Promise<TaskRun | null>
 }
 

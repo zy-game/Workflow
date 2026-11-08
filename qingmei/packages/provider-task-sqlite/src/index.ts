@@ -21,6 +21,7 @@ import {
   type TaskProgress,
   type TaskRun,
   type TaskStatus,
+  type TaskTarget,
   type TaskUsage,
 } from '@qingmei/core'
 
@@ -58,6 +59,8 @@ interface TaskRow extends Row {
   harness_id: string
   session_id: string | null
   cwd: string
+  /** 统一 TaskTarget；老数据没有 */
+  target_json?: string | null
   status: TaskStatus
   progress_json: string | null
   artifacts_json: string | null
@@ -93,6 +96,9 @@ export class SqliteTask extends TaskService {
     const prompt = input.prompt?.trim()
     if (!prompt) throw new Error('任务内容不能为空')
     const id = uid('run')
+    const target = { ...(input.target ?? {}) }
+    const harnessId = target.harnessId ?? input.harnessId ?? this.harnessId
+    const cwd = input.cwd ?? target.cwd ?? `${this.workspaceRoot}/${id}`
     const now = Math.max(Date.now(), this.lastCreatedAt + 1)
     this.lastCreatedAt = now
     const row: Omit<TaskRow, 'id'> = {
@@ -104,9 +110,15 @@ export class SqliteTask extends TaskService {
       priority: clampPriority(input.priority),
       depends_on_json: JSON.stringify(normalizeDependsOn(input.dependsOn)),
       contract_json: input.contract ? JSON.stringify(serializeContract(input.contract)) : null,
-      harness_id: input.harnessId ?? this.harnessId,
-      session_id: null,
-      cwd: input.cwd ?? `${this.workspaceRoot}/${id}`,
+      harness_id: harnessId,
+      session_id: target.sessionId ?? null,
+      cwd,
+      target_json: JSON.stringify({
+        ...target,
+        harnessId,
+        cwd,
+        ...(target.sessionId ? { sessionId: target.sessionId } : {}),
+      }),
       status: 'queued',
       progress_json: null,
       artifacts_json: null,
@@ -224,7 +236,7 @@ export class SqliteTask extends TaskService {
 
   async finish(
     id: string,
-    input: { status: 'done' | 'failed' | 'cancelled'; result?: string; error?: string },
+    input: { status: 'done' | 'failed' | 'cancelled'; result?: string; error?: string; sessionId?: string },
   ): Promise<TaskRun | null> {
     const row = await this.collection.get(id)
     if (!row) return null
@@ -234,6 +246,7 @@ export class SqliteTask extends TaskService {
       status: input.status,
       result: input.result ?? row.result,
       error: input.error ?? row.error,
+      ...(input.sessionId ? { session_id: input.sessionId } : {}),
       finished_at: Date.now(),
     })
     if (next) this.ctx.events.emit(EVENTS.taskFinished, next)
@@ -299,11 +312,11 @@ function toRun(row: TaskRow): TaskRun {
     sessionId: row.session_id,
     cwd: row.cwd,
     source: 'server' as const,
-    target: {
+    target: parseTarget(row.target_json, {
       harnessId: row.harness_id,
       ...(row.session_id ? { sessionId: row.session_id } : {}),
       cwd: row.cwd,
-    },
+    }),
     status: row.status,
     progress: parseProgress(row.progress_json),
     artifacts: parseArtifacts(row.artifacts_json),
@@ -380,6 +393,16 @@ function clampPriority(value: unknown): number {
   return Math.min(9, Math.max(0, Math.round(priority)))
 }
 
+function parseTarget(raw: string | null | undefined, fallback: TaskTarget): TaskTarget {
+  if (!raw) return fallback
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') return { ...fallback, ...(parsed as TaskTarget) }
+  } catch {
+    // 老数据/损坏值按派生目标处理
+  }
+  return fallback
+}
 function parseProgress(raw: string | null): TaskProgress | null {
   if (!raw) return null
   try {

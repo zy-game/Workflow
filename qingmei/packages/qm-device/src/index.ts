@@ -15,6 +15,8 @@ import {
   type MemoryService,
   type Row,
   type StoreService,
+  type TaskRun,
+  type TaskService,
 } from '@qingmei/core'
 
 export interface DeviceConfig {
@@ -110,6 +112,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   ctx.inject(['memory'], (sub) => { memoryService = sub.memory })
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
   const tasks = store.collection<DeviceTaskRow>(TASK_COLLECTION)
+  let taskService: TaskService | undefined
+  ctx.inject(['task'], (sub) => { taskService = sub.task })
   const digests = store.collection<DigestRow>('qm_session_digest')
   const staleMs = Math.max(10_000, config.staleMs ?? 90_000)
   const keepTasks = Math.max(20, config.keepTasks ?? 200)
@@ -168,6 +172,35 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     finishedAt: row.finished_at ? new Date(row.finished_at) : null,
   })
 
+  function toTaskRow(run: TaskRun): DeviceTaskRow {
+    const target = run.target ?? { harnessId: run.harnessId, cwd: run.cwd }
+    return {
+      id: run.id,
+      device_id: target.deviceId ?? '',
+      title: run.title,
+      prompt: run.prompt,
+      harness: target.harnessId ?? run.harnessId,
+      workspace_id: target.workspaceId ?? null,
+      session_id: run.sessionId ?? target.sessionId ?? null,
+      thread_id: target.threadId ?? null,
+      cwd: target.cwd ?? run.cwd ?? null,
+      status: run.status,
+      progress_json: JSON.stringify(run.progress ? [run.progress] : []),
+      result: run.result,
+      error: run.error,
+      created_at: run.createdAt.getTime(),
+      claimed_at: run.startedAt?.getTime() ?? null,
+      finished_at: run.finishedAt?.getTime() ?? null,
+    }
+  }
+
+  async function unifiedTasks(deviceId?: string): Promise<DeviceTaskRow[]> {
+    if (!taskService) return []
+    const runs = await taskService.list(200)
+    return runs
+      .filter((run) => (deviceId ? run.target?.deviceId === deviceId : Boolean(run.target?.deviceId)))
+      .map(toTaskRow)
+  }
   async function upsert(input: {
     id?: string
     name?: string
@@ -248,6 +281,29 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     const cwd = String(input.cwd ?? workspace?.path ?? '').trim()
     const requestedSession = String(input.sessionId ?? '').trim()
     const threadId = String(input.threadId ?? '').trim()
+    if (taskService) {
+      let sessionId = requestedSession
+      if (!sessionId && threadId) {
+        const previous = (await unifiedTasks(deviceId))
+          .filter((row) => row.workspace_id === (workspace?.id ?? null) && row.thread_id === threadId && row.session_id)
+          .sort((a, b) => b.created_at - a.created_at)[0]
+        sessionId = previous?.session_id ?? null
+      }
+      const created = await taskService.create({
+        prompt,
+        title: String(input.title ?? prompt.slice(0, 40)).trim().slice(0, 120),
+        harnessId: String(input.harness ?? 'dsh').trim() || 'dsh',
+        cwd: cwd || `${workspace?.path ?? ''}`,
+        target: {
+          deviceId,
+          ...(workspace?.id ? { workspaceId: workspace.id } : {}),
+          ...(threadId ? { threadId } : {}),
+          ...(sessionId ? { sessionId } : {}),
+          ...(cwd ? { cwd } : {}),
+        },
+      })
+      return toTaskRow(created)
+    }
     let sessionId = requestedSession
     if (!sessionId && threadId) {
       const previous = (await tasks.find({ where: { device_id: deviceId, workspace_id: workspace?.id ?? null, thread_id: threadId } }))
@@ -282,6 +338,15 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
 
   async function claim(deviceId: string, harness = ''): Promise<DeviceTaskRow | null> {
     return serialize(async () => {
+      if (taskService) {
+        const queued = (await unifiedTasks(deviceId))
+          .filter((row) => row.status === 'queued' && (!harness || row.harness === harness))
+          .sort((a, b) => a.created_at - b.created_at)
+        const next = queued[0]
+        if (!next) return null
+        const started = await taskService.start(next.id)
+        return started ? toTaskRow(started) : null
+      }
       const queued = (await tasks.find({ where: { device_id: deviceId, status: 'queued' } }))
         .filter((row) => !harness || row.harness === harness)
         .sort(
@@ -552,8 +617,15 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       path: '/api/v1/devices/tasks',
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId.trim() : ''
-        const rows = deviceId ? await tasks.find({ where: { device_id: deviceId } }) : await tasks.find({})
-        const items = rows.sort((a, b) => b.created_at - a.created_at).slice(0, 100).map(toTask)
+        const legacy = deviceId ? await tasks.find({ where: { device_id: deviceId } }) : await tasks.find({})
+        const unified = taskService ? await unifiedTasks(deviceId || undefined) : []
+        const rows = [...unified, ...legacy]
+        const seen = new Set<string>()
+        const items = rows
+          .filter((row) => (seen.has(row.id) ? false : Boolean(seen.add(row.id))))
+          .sort((a, b) => b.created_at - a.created_at)
+          .slice(0, 100)
+          .map(toTask)
         res.status(200).send({ ok: true, items })
       },
     }),
@@ -584,6 +656,18 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const body = (req.body ?? {}) as Record<string, unknown>
         const id = String(body.taskId ?? '').trim()
+        if (taskService) {
+          const run = id ? await taskService.get(id) : null
+          if (run) {
+            await taskService.reportProgress(id, {
+              phase: String(body.phase ?? '').slice(0, 40),
+              ...(Number.isFinite(Number(body.percent)) ? { percent: Number(body.percent) } : {}),
+              ...(typeof body.note === 'string' ? { note: body.note.slice(0, 500) } : {}),
+            })
+            res.status(200).send({ ok: true })
+            return
+          }
+        }
         const row = id ? await tasks.get(id) : null
         if (!row) {
           res.status(404).send({ ok: false, error: '没有这个任务' })
@@ -609,6 +693,22 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const body = (req.body ?? {}) as Record<string, unknown>
         const id = String(body.taskId ?? '').trim()
+        if (taskService) {
+          const run = id ? await taskService.get(id) : null
+          if (run) {
+            const status = body.status === 'failed' ? 'failed' : 'done'
+            await taskService.finish(id, {
+              status,
+              ...(typeof body.sessionId === 'string' && body.sessionId.trim()
+                ? { sessionId: body.sessionId.trim().slice(0, 120) }
+                : {}),
+              ...(typeof body.result === 'string' ? { result: body.result.slice(0, 20_000) } : {}),
+              ...(typeof body.error === 'string' ? { error: body.error.slice(0, 2_000) } : {}),
+            })
+            res.status(200).send({ ok: true })
+            return
+          }
+        }
         const row = id ? await tasks.get(id) : null
         if (!row) {
           res.status(404).send({ ok: false, error: '没有这个任务' })

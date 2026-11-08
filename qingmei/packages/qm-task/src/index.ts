@@ -418,6 +418,8 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
       const runs = (await task.list(50)).slice().reverse()
       const available = harness ? await harness.available().catch(() => false) : false
       for (const run of runs) {
+        // 设备任务由目标设备 claim，不由服务端 runner 抢跑
+        if (run.target?.deviceId) continue
         if (run.harnessId !== harnessId) continue
         if (run.status === 'queued') {
           if (available) runner.dispatch(run)

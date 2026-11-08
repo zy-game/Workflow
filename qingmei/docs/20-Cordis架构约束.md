@@ -104,6 +104,11 @@ interface TaskView {
 ```
 
 服务器任务 `source = server`，设备任务 `source = device`。UI 只按 `TaskView` 渲染，不再分别判断两种任务对象。
+### 存储状态
+
+新设备任务已经写入 `qm_task_run`（`run_` 前缀），通过 `TaskService` 创建、claim、finish。
+
+`qm_device_task` 仅作为旧数据兼容读取，不再接收新任务。迁移完成后删除该表。
 
 ## 5. 数据流
 
