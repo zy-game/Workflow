@@ -51,63 +51,88 @@ public class QmSpeechPlugin extends Plugin {
     }
 
     private void begin(PluginCall call) {
-        if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
-            call.reject("设备没有可用的语音识别服务");
+        if (getActivity() == null) {
+            call.reject("没有可用的 Activity");
             return;
         }
-        stopRecognizer();
-        recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
-        recognizer.setRecognitionListener(new RecognitionListener() {
-            @Override public void onReadyForSpeech(Bundle params) { notifyListeners("ready", new JSObject()); }
-            @Override public void onBeginningOfSpeech() { notifyListeners("speechStart", new JSObject()); }
-            @Override public void onRmsChanged(float rmsdB) {}
-            @Override public void onBufferReceived(byte[] buffer) {}
-            @Override public void onEndOfSpeech() { notifyListeners("speechEnd", new JSObject()); }
+        getActivity().runOnUiThread(() -> beginOnUi(call));
+    }
 
-            @Override
-            public void onError(int error) {
-                JSObject data = new JSObject();
-                data.put("code", error);
-                data.put("message", errorText(error));
-                notifyListeners("error", data);
+    private void beginOnUi(PluginCall call) {
+        try {
+            if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
+                call.reject("设备没有可用的语音识别服务");
+                return;
             }
+            stopRecognizer();
+            recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+            recognizer.setRecognitionListener(new RecognitionListener() {
+                @Override public void onReadyForSpeech(Bundle params) { notifyListeners("ready", new JSObject()); }
+                @Override public void onBeginningOfSpeech() { notifyListeners("speechStart", new JSObject()); }
+                @Override public void onRmsChanged(float rmsdB) {}
+                @Override public void onBufferReceived(byte[] buffer) {}
+                @Override public void onEndOfSpeech() { notifyListeners("speechEnd", new JSObject()); }
 
-            @Override
-            public void onResults(Bundle results) {
-                JSObject data = new JSObject();
-                data.put("text", firstResult(results));
-                notifyListeners("result", data);
-            }
+                @Override
+                public void onError(int error) {
+                    JSObject data = new JSObject();
+                    data.put("code", error);
+                    data.put("message", errorText(error));
+                    notifyListeners("error", data);
+                }
 
-            @Override
-            public void onPartialResults(Bundle partialResults) {
-                JSObject data = new JSObject();
-                data.put("text", firstResult(partialResults));
-                notifyListeners("partial", data);
-            }
+                @Override
+                public void onResults(Bundle results) {
+                    JSObject data = new JSObject();
+                    data.put("text", firstResult(results));
+                    notifyListeners("result", data);
+                }
 
-            @Override public void onEvent(int eventType, Bundle params) {}
-        });
+                @Override
+                public void onPartialResults(Bundle partialResults) {
+                    JSObject data = new JSObject();
+                    data.put("text", firstResult(partialResults));
+                    notifyListeners("partial", data);
+                }
 
-        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
-        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-        recognizer.startListening(intent);
-        call.resolve();
+                @Override public void onEvent(int eventType, Bundle params) {}
+            });
+
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+            recognizer.startListening(intent);
+            call.resolve();
+        } catch (Throwable error) {
+            stopRecognizer();
+            call.reject(error.getMessage() == null ? "语音启动失败" : error.getMessage());
+        }
     }
 
     @PluginMethod
     public void stop(PluginCall call) {
-        if (recognizer != null) recognizer.stopListening();
-        call.resolve();
+        if (getActivity() == null) {
+            call.resolve();
+            return;
+        }
+        getActivity().runOnUiThread(() -> {
+            if (recognizer != null) recognizer.stopListening();
+            call.resolve();
+        });
     }
 
     @PluginMethod
     public void cancel(PluginCall call) {
-        stopRecognizer();
-        call.resolve();
+        if (getActivity() == null) {
+            call.resolve();
+            return;
+        }
+        getActivity().runOnUiThread(() -> {
+            stopRecognizer();
+            call.resolve();
+        });
     }
 
     private void stopRecognizer() {
