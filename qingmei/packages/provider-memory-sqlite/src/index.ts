@@ -15,6 +15,7 @@ import {
   uid,
   type ConsolidationReport,
   type EpisodeConsolidationReport,
+  type HistoryService,
   type MemoryRecord,
   type ProfileEntry,
   type RecallQuery,
@@ -195,7 +196,7 @@ export class SqliteMemory extends MemoryService {
   private readonly episodes
   private readonly workingRows
   private readonly embedding
-  private readonly messages
+  private history: HistoryService | undefined
   /** 会话 → 上一轮点亮的节点（工作记忆；进程内，重启清空） */
   private readonly working = new Map<string, { ids: string[]; at: number }>()
   private readonly limit: number
@@ -212,7 +213,7 @@ export class SqliteMemory extends MemoryService {
     this.episodes = store.collection<EpisodeRow>(EPISODE_COLLECTION)
     this.workingRows = store.collection<WorkingRow>(WORKING_COLLECTION)
     this.embedding = ctx.get('embedding', false) as EmbeddingService | undefined
-    this.messages = store.collection<MessageRow>('qm_message')
+    ctx.inject(['history'], (sub) => { this.history = sub.history })
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
     const path = store.filePath?.()
@@ -227,17 +228,10 @@ export class SqliteMemory extends MemoryService {
   }
 
   async summarize(sessionId: string): Promise<string> {
-    const wanted = sessionId.startsWith('s_') ? sessionId : `s_${sessionId}`
-    const rows = (await this.messages.find({}))
-      .filter((row) => {
-        const values = [row.session_id, row.sessionId]
-        return values.some((value) => value === sessionId || value === wanted)
-      })
-      .sort((a, b) => (Number(a.created_at) || 0) - (Number(b.created_at) || 0))
-      .slice(-20)
+    const rows = (await this.history?.recent(sessionId, 20)) ?? []
     if (rows.length === 0) return ''
-    const users = rows.filter((row) => row.role === 'user' && typeof row.text === 'string' && row.text.trim())
-    const assistant = [...rows].reverse().find((row) => row.role === 'assistant' && typeof row.text === 'string')
+    const users = rows.filter((row) => row.role === 'user' && row.text.trim())
+    const assistant = [...rows].reverse().find((row) => row.role === 'assistant' && row.text.trim())
     const topics = users
       .slice(-3)
       .map((row) => String(row.text).trim().replace(/\s+/g, ' ').slice(0, 60))

@@ -16,6 +16,7 @@ import {
   type ScheduleInput,
   type SchedulePatch,
   type Scheduled,
+  HistoryService,
 } from '@qingmei/core'
 import * as GatewayPlugin from '@qingmei/service-gateway'
 import type { GatewayHub } from '@qingmei/service-gateway'
@@ -278,7 +279,7 @@ test('GET /api/v1/events 先发 ready，再转发 gateway 事件', async () => {
 test('GET /api/v1/messages 从 qm_message 读取历史并按会话裁剪', async () => {
   const historyCtx = new Context()
   await historyCtx.plugin(GatewayPlugin)
-  new HistoryStore(historyCtx, [
+  await historyCtx.plugin(FakeHistory, [
     { id: 'm1', session_id: 's_conv-1', role: 'user', text: '早上好', created_at: 100 },
     { id: 'm2', session_id: 's_conv-1', role: 'assistant', text: '早上好呀', created_at: 200 },
     { id: 'm3', session_id: 's_conv-2', role: 'user', text: '另一段对话', created_at: 300 },
@@ -515,6 +516,30 @@ interface HistoryRow extends Row {
   created_at: number
 }
 
+class FakeHistory extends HistoryService {
+  private readonly rows: HistoryRow[]
+
+  constructor(ctx: Context, rows: HistoryRow[]) {
+    super(ctx)
+    this.rows = rows
+  }
+
+  async recent(conversationId: string, limit = 50) {
+    const wanted = conversationId.startsWith('s_') ? conversationId : `s_${conversationId}`
+    return this.rows
+      .filter((row) => row.session_id === conversationId || row.session_id === wanted)
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(-Math.max(1, Math.min(200, limit)))
+      .map((row) => ({
+        id: row.id,
+        sessionId: row.session_id,
+        role: row.role as 'user' | 'assistant',
+        text: row.text,
+        blocks: [{ type: 'text' as const, text: row.text }],
+        createdAt: new Date(row.created_at),
+      }))
+  }
+}
 /** 只实现 host-gateway 读取历史所需的最小 store，用来验证 qm_message 的读取路径。 */
 class HistoryStore extends StoreService {
   private readonly rows: HistoryRow[]

@@ -180,6 +180,7 @@ export const apply = (ctx: Context, config: Config = {}): Promise<void> => {
   const clients = new Set<ServerResponse>()
   const resources: ResourceServices = {}
   ctx.inject(['store'], (sub) => { resources.store = sub.store })
+  ctx.inject(['history'], (sub) => { resources.history = sub.history })
   ctx.inject(['persona'], (sub) => { resources.persona = sub.persona })
   ctx.inject(['memory'], (sub) => { resources.memory = sub.memory })
   ctx.inject(['schedule'], (sub) => { resources.schedule = sub.schedule })
@@ -376,7 +377,7 @@ async function routeRequest(
     if (pathname === '/api/v1/messages' && method === 'GET') {
       const conversationId = url.searchParams.get('conversationId') ?? undefined
       const limit = parseLimit(url.searchParams.get('limit'))
-      sendJson(res, 200, await readHistory(deps.ctx, deps.resources.store, conversationId, limit))
+      sendJson(res, 200, await readHistory(deps.ctx, deps.resources.history, conversationId, limit))
       return
     }
     if (pathname === '/api/v1/memory/queue' && method === 'GET') {
@@ -749,22 +750,15 @@ interface MessageRow extends Row {
 
 async function readHistory(
   ctx: Context,
-  store: StoreService | undefined,
+  history: HistoryService | undefined,
   conversationId: string | undefined,
   limit: number,
 ): Promise<MessageRow[]> {
-  if (!store) return []
+  if (!history) return []
   try {
-    // P1 的 store 只在 JS 侧做过滤/排序，这里取全量再裁剪，
-    // 以免把某一版的列命名（session_id / conversationId）写死进查询。
-    const rows = await store.collection<MessageRow>('qm_message').find({})
-    const scoped = conversationId
-      ? rows.filter((row) => belongsToConversation(row, conversationId))
-      : [...rows]
-    scoped.sort((a, b) => createdAtOf(a) - createdAtOf(b))
-    return scoped.slice(-limit)
+    return (await history.recent(conversationId ?? 'owner', limit)) as unknown as MessageRow[]
   } catch (error) {
-    ctx.logger.warn('读取 qm_message 历史失败，按空历史返回:', error)
+    ctx.logger.warn('读取历史失败，按空历史返回:', error)
     return []
   }
 }

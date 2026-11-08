@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
+import * as historyPlugin from '@qingmei/qm-history'
 import * as memoryPlugin from '../src/index.ts'
 import { cosine, localEmbedding } from '../src/index.ts'
 import type { MemoryRecord } from '@qingmei/core'
@@ -20,12 +21,15 @@ async function setup() {
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'memory.db') })
   await storeFiber
+  const historyFiber = ctx.plugin(historyPlugin)
+  await historyFiber
   const memoryFiber = ctx.plugin(memoryPlugin, { limit: 5 })
   await memoryFiber
   return {
     ctx,
     async dispose() {
       await memoryFiber.dispose()
+      await historyFiber.dispose()
       await storeFiber.dispose()
       rmSync(dir, { recursive: true, force: true })
     },

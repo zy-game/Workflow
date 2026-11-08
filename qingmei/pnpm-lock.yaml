@@ -356,6 +356,9 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
+      '@qingmei/qm-history':
+        specifier: workspace:*
+        version: link:../qm-history
 
   packages/provider-permission-static:
     dependencies:

@@ -13,6 +13,7 @@
     "@qingmei/service-memory": "workspace:*"
   },
   "devDependencies": {
-    "@qingmei/provider-store-sqlite": "workspace:*"
+    "@qingmei/provider-store-sqlite": "workspace:*",
+    "@qingmei/qm-history": "workspace:*"
   }
 }
