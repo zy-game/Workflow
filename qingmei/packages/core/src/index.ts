@@ -1110,6 +1110,23 @@ export interface ChannelTarget {
 }
 
 /** 渠道最近入站目标；由审批/渠道桥维护，供主动推送路由使用。 */
+export interface HistoryMessage {
+  id: string
+  sessionId: string
+  role: 'user' | 'assistant'
+  text: string
+  blocks: Block[]
+  createdAt: Date
+  platformMessageId?: string
+}
+
+/** qm_message 的唯一读取契约；写入仍由 qm-history 的事件监听完成。 */
+export abstract class HistoryService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'history')
+  }
+  abstract recent(conversationId: string, limit?: number): Promise<HistoryMessage[]>
+}
 export abstract class ChannelTargetService extends Service {
   constructor(ctx: Context) {
     super(ctx, 'channelTargets')
@@ -1228,6 +1245,7 @@ declare module 'cordis' {
     audit: AuditService
     approval: ApprovalService
     channelTargets: ChannelTargetService
+    history: HistoryService
   }
 }
 /** 服务名常量，避免各处手写字符串拼错 */

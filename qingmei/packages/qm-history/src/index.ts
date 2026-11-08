@@ -22,6 +22,8 @@ import {
   textOf,
   uid,
   type Block,
+  HistoryService,
+  type HistoryMessage,
   type OutboundRecord,
   type Row,
   type StoreService,
@@ -59,8 +61,45 @@ interface StoredTurn extends Row {
   created_at: number
 }
 
+class HistoryReader extends HistoryService {
+  private readonly collection
+
+  constructor(ctx: Context) {
+    super(ctx)
+    this.collection = ctx.store.collection<StoredMessage>(MESSAGE_COLLECTION)
+  }
+
+  async recent(conversationId: string, limit = 50): Promise<HistoryMessage[]> {
+    const wanted = conversationId.startsWith('s_') ? conversationId : `s_${conversationId}`
+    const rows = await this.collection.find({})
+    return rows
+      .filter((row) => row.session_id === conversationId || row.session_id === wanted)
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(-Math.max(1, Math.min(200, limit)))
+      .map((row) => ({
+        id: row.id,
+        sessionId: row.session_id,
+        role: row.role,
+        text: row.text,
+        blocks: parseBlocks(row.blocks_json, row.text),
+        createdAt: new Date(row.created_at),
+        ...(row.platform_message_id ? { platformMessageId: row.platform_message_id } : {}),
+      }))
+  }
+}
+
+function parseBlocks(raw: string, text: string): Block[] {
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) return parsed as Block[]
+  } catch {
+    // 旧行可能只有 text，下面用 text 兜底
+  }
+  return text ? [{ type: 'text', text }] : []
+}
 export function apply(ctx: Context): void {
   const store = ctx.store
+  new HistoryReader(ctx)
   const collection = store.collection<StoredMessage>(MESSAGE_COLLECTION)
   const turns = store.collection<StoredTurn>(TURN_COLLECTION)
 
