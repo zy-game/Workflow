@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
           <div class="item-main">
             <p class="item-title">{{ task.title || task.prompt }}</p>
             <p class="item-meta">
-              {{ task.deviceId }} · {{ task.harness }} · {{ task.workspaceId || '默认工作区' }} · {{ TASK_STATUS_TEXT[task.status] ?? task.status }}
+              {{ task.source === 'device' ? '设备' : '服务器' }} · {{ task.target?.deviceId || task.deviceId }} · {{ task.target?.harnessId || task.harness }} · {{ task.target?.workspaceId || task.workspaceId || '默认工作区' }} · {{ TASK_STATUS_TEXT[task.status] ?? task.status }}
               · {{ formatWhen(task.createdAt, null) }}
             </p>
             <p v-if="task.result" class="item-note">{{ task.result.slice(0, 300) }}</p>
