@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
-import * as approvalPlugin from '@qingmei/provider-approval-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as approvalApi from '../src/index.ts'
 import { EVENTS, ChannelService, type OutboundEnvelope, type SendResult } from '@qingmei/core'
@@ -55,8 +54,6 @@ async function setup() {
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'api.db') })
   await storeFiber
   const channel = new FakeChannel(ctx)
-  const approvalFiber = ctx.plugin(approvalPlugin)
-  await approvalFiber
   await ctx.plugin(gatewayPlugin)
   const apiFiber = ctx.plugin(approvalApi)
   await apiFiber
@@ -74,7 +71,6 @@ async function setup() {
     async dispose() {
       await apiFiber.dispose()
       await apiFiber.dispose()
-      await approvalFiber.dispose()
       await storeFiber.dispose()
       rmSync(dir, { recursive: true, force: true })
     },
@@ -87,7 +83,7 @@ function request(method: string, path: string, body?: unknown, query: Record<str
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(approvalApi.name, 'qm-approval')
-  assert.deepEqual(approvalApi.inject, ['approval', 'gateway', 'store', 'channel'])
+  assert.deepEqual(approvalApi.inject, ['gateway', 'store', 'channel'])
 })
 
 test('GET /api/v1/approvals：默认全部，?status=pending 只给待确认', async () => {

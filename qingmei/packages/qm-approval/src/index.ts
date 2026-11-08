@@ -8,6 +8,7 @@
  * ACP `session/request_permission`（子 agent 要执行敏感操作）。两边都 `wait()` 同一个队列。
  */
 import type { Context } from 'cordis'
+import { SqliteApproval } from './store.ts'
 import {
   EVENTS,
   textOf,
@@ -65,10 +66,10 @@ class ChannelTargetStore extends ChannelTargetService {
 }
 
 export const name = 'qm-approval'
-export const inject = ['approval', 'gateway', 'store', 'channel']
+export const inject = ['gateway', 'store', 'channel']
 
 export function apply(ctx: Context): void {
-  const approval = ctx.approval
+  const approval = new SqliteApproval(ctx)
   const gateway = ctx.gateway
   const store = ctx.store
   const targetStore = new ChannelTargetStore(ctx)
