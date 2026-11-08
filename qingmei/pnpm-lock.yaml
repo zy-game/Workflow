@@ -70,21 +70,12 @@ importers:
       '@qingmei/provider-dsh-acp':
         specifier: workspace:*
         version: link:../../packages/provider-dsh-acp
-      '@qingmei/provider-embedding-openai':
-        specifier: workspace:*
-        version: link:../../packages/provider-embedding-openai
       '@qingmei/provider-llm-echo':
         specifier: workspace:*
         version: link:../../packages/provider-llm-echo
-      '@qingmei/provider-llm-openai':
-        specifier: workspace:*
-        version: link:../../packages/provider-llm-openai
       '@qingmei/provider-memory-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-memory-sqlite
-      '@qingmei/provider-permission-static':
-        specifier: workspace:*
-        version: link:../../packages/provider-permission-static
       '@qingmei/provider-schedule-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-schedule-sqlite
@@ -108,7 +99,7 @@ importers:
         version: link:../../packages/qm-autonomy
       '@qingmei/qm-consolidate':
         specifier: workspace:*
-        version: link:../../packages/qm-consolidate
+        version: link:../../experimental/qm-consolidate
       '@qingmei/qm-content':
         specifier: workspace:*
         version: link:../../experimental/qm-content
@@ -129,7 +120,7 @@ importers:
         version: link:../../packages/qm-incident
       '@qingmei/qm-memory-extract':
         specifier: workspace:*
-        version: link:../../packages/qm-memory-extract
+        version: link:../../experimental/qm-memory-extract
       '@qingmei/qm-memory-hotspot':
         specifier: workspace:*
         version: link:../../experimental/qm-memory-hotspot
@@ -163,18 +154,9 @@ importers:
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../../packages/service-gateway
-      '@qingmei/service-llm':
-        specifier: workspace:*
-        version: link:../../packages/service-llm
-      '@qingmei/service-memory':
-        specifier: workspace:*
-        version: link:../../packages/service-memory
       '@qingmei/service-persona':
         specifier: workspace:*
         version: link:../../packages/service-persona
-      '@qingmei/service-store':
-        specifier: workspace:*
-        version: link:../../packages/service-store
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
@@ -201,6 +183,46 @@ importers:
         specifier: ^6.3.5
         version: 6.4.5(@types/node@26.6.6)(jiti@2.7.0)
 
+  experimental/provider-embedding-openai:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  experimental/provider-llm-openai:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
+  experimental/qm-consolidate:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-memory-sqlite':
+        specifier: workspace:*
+        version: link:../../packages/provider-memory-sqlite
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../../packages/provider-store-sqlite
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../../packages/service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../../packages/service-gateway
+
   experimental/qm-content:
     dependencies:
       '@qingmei/core':
@@ -216,6 +238,15 @@ importers:
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../../packages/service-gateway
+
+  experimental/qm-memory-extract:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
 
   experimental/qm-memory-hotspot:
     dependencies:
@@ -422,35 +453,11 @@ importers:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
 
-  packages/provider-embedding-openai:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
   packages/provider-llm-echo:
     dependencies:
       '@qingmei/core':
         specifier: workspace:*
         version: link:../core
-      '@qingmei/service-llm':
-        specifier: workspace:*
-        version: link:../service-llm
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
-  packages/provider-llm-openai:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      '@qingmei/service-llm':
-        specifier: workspace:*
-        version: link:../service-llm
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
@@ -460,9 +467,6 @@ importers:
       '@qingmei/core':
         specifier: workspace:*
         version: link:../core
-      '@qingmei/service-memory':
-        specifier: workspace:*
-        version: link:../service-memory
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
@@ -473,15 +477,6 @@ importers:
       '@qingmei/qm-history':
         specifier: workspace:*
         version: link:../qm-history
-
-  packages/provider-permission-static:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
 
   packages/provider-schedule-sqlite:
     dependencies:
@@ -501,9 +496,6 @@ importers:
       '@qingmei/core':
         specifier: workspace:*
         version: link:../core
-      '@qingmei/service-store':
-        specifier: workspace:*
-        version: link:../service-store
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
@@ -529,12 +521,6 @@ importers:
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../service-channel
-      '@qingmei/service-llm':
-        specifier: workspace:*
-        version: link:../service-llm
-      '@qingmei/service-store':
-        specifier: workspace:*
-        version: link:../service-store
       cordis:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
@@ -593,28 +579,6 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../service-gateway
-
-  packages/qm-consolidate:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-memory-sqlite':
-        specifier: workspace:*
-        version: link:../provider-memory-sqlite
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../provider-store-sqlite
-      '@qingmei/service-channel':
-        specifier: workspace:*
-        version: link:../service-channel
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway
@@ -711,15 +675,6 @@ importers:
         specifier: workspace:*
         version: link:../service-gateway
 
-  packages/qm-memory-extract:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
   packages/qm-reminder:
     dependencies:
       '@qingmei/core':
@@ -805,34 +760,7 @@ importers:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
 
-  packages/service-llm:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
-  packages/service-memory:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
   packages/service-persona:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-
-  packages/service-store:
     dependencies:
       '@qingmei/core':
         specifier: workspace:*

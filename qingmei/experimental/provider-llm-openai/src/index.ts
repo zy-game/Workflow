@@ -10,7 +10,7 @@ import {
   type ChatMessage,
   type ChatRequest,
   type ChatStreamChunk,
-} from '@qingmei/service-llm'
+} from '@qingmei/core'
 
 export interface OpenAiConfig {
   /** 例如 http://127.0.0.1:8081/v1（末尾斜杠会被规范化） */
