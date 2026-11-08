@@ -41,6 +41,8 @@ export interface TaskConfig {
   preemptPriority?: number
   /** 静默时段仍允许启动的优先级下限，默认 8 */
   urgentPriority?: number
+  /** 排队最长等待；超过后失败，默认 24h */
+  queueTimeoutMs?: number
 }
 
 export const name = 'qm-task'
@@ -49,6 +51,7 @@ export const inject = ['task', 'gateway']
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const LOCAL_EXECUTOR = 'local'
 const DEFAULT_MAX_CONCURRENT = 2
+const DEFAULT_QUEUE_TIMEOUT_MS = 24 * 60 * 60_000
 const LIST_LIMIT = 20
 
 interface RunnerDeps {
@@ -58,6 +61,7 @@ interface RunnerDeps {
   quietHours: QuietRange | null
   urgentPriority: number
   preemptPriority: number
+  queueTimeoutMs: number
 }
 
 export class TaskRunner extends TaskRunnerService {
@@ -69,6 +73,7 @@ export class TaskRunner extends TaskRunnerService {
   private pumping = false
   private pumpQueued = false
   private quietTimer: ReturnType<typeof setTimeout> | null = null
+  private sweepTimer: ReturnType<typeof setInterval> | null = null
   private stopped = false
 
   constructor(ctx: Context, deps: RunnerDeps) {
@@ -96,6 +101,28 @@ export class TaskRunner extends TaskRunnerService {
     }
     return null
   }
+  start(): void {
+    if (this.sweepTimer) return
+    void this.sweepExpired()
+    this.sweepTimer = setInterval(() => void this.sweepExpired(), 60_000)
+    this.sweepTimer.unref?.()
+  }
+
+  async sweepExpired(): Promise<void> {
+    if (this.stopped) return
+    const now = Date.now()
+    for (const run of await this.deps.task.list(200)) {
+      if (run.status !== 'queued' || now - run.createdAt.getTime() <= this.deps.queueTimeoutMs) continue
+      const queued = this.queue.findIndex((item) => item.id === run.id)
+      if (queued >= 0) this.queue.splice(queued, 1)
+      await this.deps.task.finish(run.id, {
+        status: 'failed',
+        error: `排队超时：${Math.round(this.deps.queueTimeoutMs / 1000)}s 内没有执行器接管`,
+      })
+      this.ctx.logger.warn(`[qm-task] 排队超时：${run.id}`)
+    }
+  }
+
   dispatch(run: TaskRun): void {
     if (this.stopped) return
     this.queue.push(run)
@@ -266,6 +293,7 @@ export class TaskRunner extends TaskRunnerService {
   stop(): void {
     this.stopped = true
     if (this.quietTimer) clearTimeout(this.quietTimer)
+    if (this.sweepTimer) clearInterval(this.sweepTimer)
     this.quietTimer = null
   }
 
@@ -422,13 +450,15 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   const resumeOnRestart = config.resumeOnRestart !== false
   const maxConcurrent = Math.max(1, Number(config.maxConcurrent) || DEFAULT_MAX_CONCURRENT)
   const quietHours = parseQuietHours(config.quietHours)
+  const queueTimeoutMs = Math.max(1_000, Number(config.queueTimeoutMs) || DEFAULT_QUEUE_TIMEOUT_MS)
   const preemptPriority = Number.isFinite(Number(config.preemptPriority))
     ? Math.min(9, Math.max(0, Math.round(Number(config.preemptPriority))))
     : DEFAULT_PREEMPT_PRIORITY
   const urgentPriority = Number.isFinite(Number(config.urgentPriority))
     ? Math.min(9, Math.max(0, Math.round(Number(config.urgentPriority))))
     : DEFAULT_URGENT_PRIORITY
-  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority, preemptPriority })
+  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority, preemptPriority, queueTimeoutMs })
+  runner.start()
   ctx.effect(() => () => runner.stop())
 
   // 任务状态变化推给 SSE，Web 任务面板直接订阅

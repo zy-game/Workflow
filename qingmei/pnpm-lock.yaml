@@ -61,9 +61,6 @@ importers:
       '@qingmei/host-gateway':
         specifier: workspace:*
         version: link:../../packages/host-gateway
-      '@qingmei/provider-audit-sqlite':
-        specifier: workspace:*
-        version: link:../../experimental/provider-audit-sqlite
       '@qingmei/provider-dsh-acp':
         specifier: workspace:*
         version: link:../../packages/provider-dsh-acp

@@ -115,6 +115,7 @@ async function setup(
     pre?: (task: TaskService) => Promise<void>
     quietHours?: { start: string; end: string }
     urgentPriority?: number
+    queueTimeoutMs?: number
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-task-orch-'))
@@ -133,6 +134,7 @@ async function setup(
     timeoutMs: 3000,
     ...(options.maxConcurrent ? { maxConcurrent: options.maxConcurrent } : {}),
     ...(options.quietHours ? { quietHours: options.quietHours } : {}),
+    ...(options.queueTimeoutMs !== undefined ? { queueTimeoutMs: options.queueTimeoutMs } : {}),
     ...(options.urgentPriority !== undefined ? { urgentPriority: options.urgentPriority } : {}),
   })
   await orchestratorFiber
@@ -159,6 +161,29 @@ async function setup(
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(taskOrchestrator.name, 'qm-task')
   assert.deepEqual(taskOrchestrator.inject, ['task', 'gateway'])
+})
+
+test('排队超时：没有执行器接管时转 failed，不无限 queued', async () => {
+  const h = await setup({}, {
+    queueTimeoutMs: 1_000,
+    pre: async (task) => {
+      await task.create({
+        prompt: '离线设备任务',
+        target: { executorId: 'device:offline' },
+      })
+    },
+  })
+  try {
+    const [queued] = await h.task.list(10)
+    assert.equal(queued?.status, 'queued')
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+    await (h.ctx.taskRunner as unknown as { sweepExpired(): Promise<void> }).sweepExpired()
+    const [expired] = await h.task.list(10)
+    assert.equal(expired?.status, 'failed')
+    assert.match(expired?.error ?? '', /排队超时/)
+  } finally {
+    await h.dispose()
+  }
 })
 
 test('POST /api/v1/tasks：建 run、派给 harness、正常收尾为 done', async () => {

@@ -19,7 +19,6 @@
     "@qingmei/provider-schedule-sqlite": "workspace:*",
     "@qingmei/qm-memory-extract": "workspace:*",
     "@qingmei/provider-memory-sqlite": "workspace:*",
-    "@qingmei/provider-audit-sqlite": "workspace:*",
     "@qingmei/provider-task-sqlite": "workspace:*",
     "@qingmei/qm-task": "workspace:*",
     "@qingmei/qm-approval": "workspace:*",

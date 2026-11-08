@@ -38,7 +38,7 @@
 # 任务账本：把任务派给 harness 并记录 run
 - name: '@qingmei/provider-task-sqlite'
 
-# 日程账本：at / everyMs / cron；qm-autonomy 与 qm-reminder 依赖它
+# 日程账本：at / everyMs / cron；到点由 provider 直接投递
 - name: '@qingmei/provider-schedule-sqlite'
   config:
     tickMs: 1000
