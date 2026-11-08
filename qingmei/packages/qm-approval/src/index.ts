@@ -18,6 +18,8 @@ import {
   type GatewayResponse,
   type ChannelId,
   type ChannelService,
+  ChannelTargetService,
+  type ChannelTarget,
   type GatewayService,
   type InboundMessage,
   type Row,
@@ -35,9 +37,31 @@ interface ApprovalPush extends Row {
   targets: PushTarget[]
 }
 
-interface ChannelTarget extends Row {
+interface ChannelTargetRow extends Row {
   conversationId: string
   updatedAt: number
+}
+
+class ChannelTargetStore extends ChannelTargetService {
+  private readonly collection
+
+  constructor(ctx: Context) {
+    super(ctx)
+    this.collection = ctx.store.collection<ChannelTargetRow>('qm_channel_target')
+  }
+
+  async list(): Promise<ChannelTarget[]> {
+    const rows = await this.collection.find({})
+    return rows.map((row) => ({ channel: row.id as ChannelId, conversationId: row.conversationId }))
+  }
+
+  async remember(input: { channel: ChannelId; conversationId: string }): Promise<void> {
+    if (input.channel === 'web') return
+    const existing = await this.collection.get(input.channel)
+    const updatedAt = Date.now()
+    if (existing) await this.collection.update(existing.id, { conversationId: input.conversationId, updatedAt })
+    else await this.collection.insert({ id: input.channel, conversationId: input.conversationId, updatedAt })
+  }
 }
 
 export const name = 'qm-approval'
@@ -47,7 +71,7 @@ export function apply(ctx: Context): void {
   const approval = ctx.approval
   const gateway = ctx.gateway
   const store = ctx.store
-  const targets = store.collection<ChannelTarget>('qm_channel_target')
+  const targetStore = new ChannelTargetStore(ctx)
   const pushes = store.collection<ApprovalPush>('qm_approval_push')
 
   // 渠道里回「批准/拒绝」直接处理最早的一条待确认；没有待确认时静默忽略
@@ -67,16 +91,12 @@ export function apply(ctx: Context): void {
 
   /** 记住每个渠道最近一次会话，审批请求推到这里 */
   async function rememberTarget(message: InboundMessage): Promise<void> {
-    if (message.channel === 'web') return
-    const existing = await targets.get(message.channel)
-    const updatedAt = Date.now()
-    if (existing) await targets.update(existing.id, { conversationId: message.conversation.id, updatedAt })
-    else await targets.insert({ id: message.channel, conversationId: message.conversation.id, updatedAt })
+    await targetStore.remember({ channel: message.channel, conversationId: message.conversation.id })
   }
 
   /** 审批一创建就推到最近的渠道会话；Web 侧靠任务面板，不重复发 */
   async function notifyApproval(request: ApprovalRequest): Promise<void> {
-    const rows = await targets.find({})
+    const rows = await targetStore.list()
     if (!channel || rows.length === 0) return
     const pending = await approval.list('pending')
     const extra = pending.length > 1 ? `（还有 ${pending.length - 1} 条待确认）` : ''
@@ -84,7 +104,7 @@ export function apply(ctx: Context): void {
     for (const row of rows) {
       const result = await channel
         .send({
-          channel: row.id as ChannelId,
+          channel: row.channel,
           conversationId: row.conversationId,
           blocks: [
             { type: 'text', text: `🔐 待确认：${request.prompt}\n回「批准」或「拒绝」即可${extra}` },
@@ -99,7 +119,7 @@ export function apply(ctx: Context): void {
         })
         .catch(() => undefined)
       pushed.push({
-        channel: row.id,
+        channel: row.channel,
         conversationId: row.conversationId,
         ...(result?.platformMessageId ? { messageId: result.platformMessageId } : {}),
       })

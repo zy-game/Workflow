@@ -26,6 +26,7 @@ import {
   type GatewayRequest,
   type GatewayResponse,
   type ChannelService,
+  type ChannelTargetService,
   type GatewayService,
   type Row,
   type ScheduleService,
@@ -104,11 +105,6 @@ const DEFAULTS = {
   digestHour: 20,
 }
 
-interface ChannelTargetRow extends Row {
-  conversationId: string
-  updatedAt: number
-}
-
 interface TraceRow extends Row {
   at: number
   trigger: string
@@ -149,7 +145,7 @@ class AutonomyRunner extends AutonomyService {
   private readonly gateway: GatewayService
   private readonly channel: ChannelService
   private readonly taskRunner: TaskRunnerService
-  private readonly targets: ReturnType<StoreService['collection']>
+  private channelTargets: ChannelTargetService | undefined
   private lastAt = 0
 
   constructor(ctx: Context, config: AutonomyConfig = {}) {
@@ -162,7 +158,7 @@ class AutonomyRunner extends AutonomyService {
     this.gateway = ctx.gateway
     this.channel = ctx.channel
     this.taskRunner = ctx.taskRunner
-    this.targets = store.collection<ChannelTargetRow>('qm_channel_target')
+    ctx.inject(['channelTargets'], (sub) => { this.channelTargets = sub.channelTargets })
     this.traces = store.collection<TraceRow>(TRACE)
     this.states = store.collection<StateRow>(STATE)
   }
@@ -410,7 +406,7 @@ class AutonomyRunner extends AutonomyService {
       let route = this.config.notify?.[kind] ?? this.config.notify?.default
       if (!route) {
         const preferred = kind === 'casual' ? 'qq' : 'feishu'
-        const target = (await this.targets.find({})).find((row) => row.id === preferred)
+        const target = (await this.channelTargets?.list() ?? []).find((row) => row.channel === preferred)
         if (target) route = { channel: preferred, conversationId: target.conversationId }
       }
       const result = await this.channel.send({

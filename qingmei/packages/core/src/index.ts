@@ -1104,6 +1104,19 @@ export interface CreateApprovalInput {
 }
 
 /** 审批队列：ask 的判定落到这里，人批准后调用方继续 */
+export interface ChannelTarget {
+  channel: ChannelId
+  conversationId: string
+}
+
+/** 渠道最近入站目标；由审批/渠道桥维护，供主动推送路由使用。 */
+export abstract class ChannelTargetService extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'channelTargets')
+  }
+  abstract list(): Promise<ChannelTarget[]>
+  abstract remember(input: { channel: ChannelId; conversationId: string }): Promise<void>
+}
 export abstract class ApprovalService extends Service {
   constructor(ctx: Context) {
     super(ctx, 'approval')
@@ -1214,6 +1227,7 @@ declare module 'cordis' {
     skills: SkillService
     audit: AuditService
     approval: ApprovalService
+    channelTargets: ChannelTargetService
   }
 }
 /** 服务名常量，避免各处手写字符串拼错 */
