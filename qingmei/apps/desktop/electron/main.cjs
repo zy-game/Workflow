@@ -374,6 +374,10 @@ if (!gotLock) {
       callback(permission === 'media')
     })
     session.defaultSession.setPermissionCheckHandler((_contents, permission) => permission === 'media')
+    session.defaultSession.setCertificateVerifyProc((request, callback) => {
+      // 生产网关当前使用自签证书；只放行这台青梅服务器的证书错误。
+      callback(request.hostname === '139.155.78.241' ? 0 : -3)
+    })
     createWindow()
     setFullscreenWatch(readSettings().hideOnFullscreen)
     applyAutoStart(readSettings().autoStart)
