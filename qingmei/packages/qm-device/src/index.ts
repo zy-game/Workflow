@@ -113,7 +113,12 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
   const tasks = store.collection<DeviceTaskRow>(TASK_COLLECTION)
   let taskService: TaskService | undefined
-  ctx.inject(['task'], (sub) => { taskService = sub.task })
+  ctx.inject(['task'], (sub) => {
+    taskService = sub.task
+    void migrateLegacy().catch((error: unknown) => {
+      ctx.logger.warn(`[qm-device] 旧任务迁移失败：${messageOf(error)}`)
+    })
+  })
   const digests = store.collection<DigestRow>('qm_session_digest')
   const staleMs = Math.max(10_000, config.staleMs ?? 90_000)
   const keepTasks = Math.max(20, config.keepTasks ?? 200)
@@ -200,6 +205,51 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     return runs
       .filter((run) => (deviceId ? run.target?.deviceId === deviceId : Boolean(run.target?.deviceId)))
       .map(toTaskRow)
+  }
+  /** 一次性把旧 qm_device_task 迁到统一 Task 表；legacyId 保证重试不重复。 */
+  async function migrateLegacy(): Promise<void> {
+    if (!taskService) return
+    const rows = (await tasks.find({})).sort((a, b) => a.created_at - b.created_at)
+    if (rows.length === 0) return
+    const known = new Set(
+      (await taskService.list(500))
+        .map((run) => run.target?.legacyId)
+        .filter((id): id is string => Boolean(id)),
+    )
+    for (const row of rows) {
+      if (known.has(row.id)) {
+        await tasks.delete(row.id)
+        continue
+      }
+      const created = await taskService.create({
+        prompt: row.prompt,
+        title: row.title,
+        harnessId: row.harness,
+        ...(row.cwd ? { cwd: row.cwd } : {}),
+        target: {
+          deviceId: row.device_id,
+          ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
+          ...(row.thread_id ? { threadId: row.thread_id } : {}),
+          ...(row.session_id ? { sessionId: row.session_id } : {}),
+          ...(row.cwd ? { cwd: row.cwd } : {}),
+          legacyId: row.id,
+        },
+      })
+      if (row.status === 'done' || row.status === 'failed' || row.status === 'cancelled') {
+        await taskService.finish(created.id, {
+          status: row.status,
+          ...(row.result ? { result: row.result } : {}),
+          ...(row.error ? { error: row.error } : {}),
+          ...(row.session_id ? { sessionId: row.session_id } : {}),
+        })
+      } else if (row.status === 'running') {
+        await taskService.start(created.id, {
+          ...(row.session_id ? { sessionId: row.session_id } : {}),
+        })
+      }
+      await tasks.delete(row.id)
+    }
+    ctx.logger.info(`[qm-device] 已迁移 ${rows.length} 条旧设备任务`)
   }
   async function upsert(input: {
     id?: string

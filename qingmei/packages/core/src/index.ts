@@ -871,6 +871,8 @@ export interface TaskTarget {
   harnessId?: string
   /** 设备侧会话线程键；服务端任务可忽略 */
   threadId?: string
+  /** 从旧设备任务表迁移过来时的原 id（迁移去重） */
+  legacyId?: string
   sessionId?: string
   cwd?: string
 }
