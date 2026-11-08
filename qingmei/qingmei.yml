@@ -16,6 +16,7 @@
 - name: '@qingmei/qm-skill'
   config:
     skillsDir: ./skills
+- name: '@qingmei/qm-skill/api'
 - name: '@qingmei/service-memory'
 
 # ── 提供方

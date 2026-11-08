@@ -30,7 +30,7 @@ export interface SkillConfig {
 }
 
 export const name = 'qm-skill'
-export const inject = ['gateway']
+export const inject: string[] = []
 
 const DEFAULT_ALLOWED_TOOLS = [
   'memory_recall','memory_remember',
@@ -197,121 +197,6 @@ class FileSkills extends SkillService {
 
 export function apply(ctx: Context, config: SkillConfig = {}): void {
   ctx.plugin(FileSkills, config)
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!gateway) return
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'GET',
-      path: '/api/v1/skills',
-      async handler(_req: GatewayRequest, res: GatewayResponse) {
-        const skills = ctx.reflect.get('skills', false) as SkillService
-        res.status(200).send({ ok: true, items: await skills.list() })
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'GET',
-      path: '/api/v1/skills/read',
-      async handler(req: GatewayRequest, res: GatewayResponse) {
-        const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
-        if (!name) {
-          res.status(400).send({ ok: false, error: 'name 必填' })
-          return
-        }
-        const skills = ctx.reflect.get('skills', false) as SkillService
-        const skill = await skills.read(name)
-        res.status(skill ? 200 : 404).send(skill ? { ok: true, skill } : { ok: false, error: '没有这个技能' })
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'POST',
-      path: '/api/v1/skills/install',
-      async handler(req: GatewayRequest, res: GatewayResponse) {
-        const body = (req.body ?? {}) as Record<string, unknown>
-        const skills = ctx.reflect.get('skills', false) as SkillService & {
-          install?: (input: {
-            name: string
-            body: string
-            description?: string
-            tools?: string[]
-          }) => Promise<SkillDefinition>
-        }
-        if (!skills?.install) {
-          res.status(501).send({ ok: false, error: '当前技能实现不支持安装' })
-          return
-        }
-        try {
-          const skill = await skills.install({
-            name: String(body.name ?? ''),
-            body: String(body.body ?? ''),
-            description: typeof body.description === 'string' ? body.description : '',
-            tools: Array.isArray(body.tools) ? body.tools.map(String) : [],
-          })
-          res.status(200).send({ ok: true, skill })
-        } catch (error) {
-          res.status(400).send({ ok: false, error: error instanceof Error ? error.message : '安装失败' })
-        }
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'GET',
-      path: '/api/v1/skills/history',
-      async handler(req: GatewayRequest, res: GatewayResponse) {
-        const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
-        const skills = ctx.reflect.get('skills', false) as SkillService & {
-          history?: (name: string) => { id: string; at: number }[]
-        }
-        if (!name) {
-          res.status(400).send({ ok: false, error: 'name 必填' })
-          return
-        }
-        res.status(200).send({ ok: true, items: skills.history?.(name) ?? [] })
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'POST',
-      path: '/api/v1/skills/rollback',
-      async handler(req: GatewayRequest, res: GatewayResponse) {
-        const body = (req.body ?? {}) as Record<string, unknown>
-        const name = typeof body.name === 'string' ? body.name.trim() : ''
-        const id = typeof body.id === 'string' ? body.id.trim() : undefined
-        const skills = ctx.reflect.get('skills', false) as SkillService & {
-          rollback?: (name: string, id?: string) => Promise<SkillDefinition>
-        }
-        if (!name || !skills.rollback) {
-          res.status(400).send({ ok: false, error: 'name 必填或当前实现不支持回滚' })
-          return
-        }
-        try {
-          res.status(200).send({ ok: true, skill: await skills.rollback(name, id) })
-        } catch (error) {
-          res.status(404).send({ ok: false, error: error instanceof Error ? error.message : '回滚失败' })
-        }
-      },
-    }),
-  )
-  ctx.effect(() =>
-    gateway.route({
-      method: 'POST',
-      path: '/api/v1/skills/reload',
-      async handler(_req: GatewayRequest, res: GatewayResponse) {
-        const skills = ctx.reflect.get('skills', false) as SkillService
-        res.status(200).send({ ok: true, items: await skills.reload() })
-      },
-    }),
-  )
 }
 
 export const defaultExport = { name, inject, apply }

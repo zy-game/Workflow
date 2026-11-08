@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as skillPlugin from '../src/index.ts'
+import * as skillApi from '../src/api.ts'
 import type { GatewayRequest, GatewayResponse } from '@qingmei/core'
 
 interface FakeResponse {
@@ -50,6 +51,8 @@ async function setup() {
   await ctx.plugin(gatewayPlugin)
   const fiber = ctx.plugin(skillPlugin, { skillsDir })
   await fiber
+  const apiFiber = ctx.plugin(skillApi)
+  await apiFiber
 
   return {
     ctx,
@@ -60,6 +63,7 @@ async function setup() {
       return { handled, ...response.read() }
     },
     async dispose() {
+      await apiFiber.dispose()
       await fiber.dispose()
     },
   }
@@ -67,7 +71,7 @@ async function setup() {
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(skillPlugin.name, 'qm-skill')
-  assert.deepEqual(skillPlugin.inject, ['gateway'])
+  assert.deepEqual(skillPlugin.inject, [])
 })
 
 test('列出与读取技能包', async () => {
