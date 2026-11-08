@@ -137,16 +137,28 @@ interface StoredMessage extends Row {
 }
 
 export function apply(ctx: Context, config: AgentConfig): void {
-  const personaService = ctx.reflect.get('persona', false) as { current: () => { prompt: string } } | undefined
+  const personaService = ctx.get('persona', false) as { current: () => { prompt: string } } | undefined
   const persona = personaService?.current().prompt || requirePersona(config)
   const llm = ctx.llm
   const store = ctx.store
   const channel = ctx.channel
   const gateway = ctx.gateway
-  /** harness 是可选车道：存在就优先用，不存在或不可用则回落 llm */
-  const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
   /** 记忆是核心依赖（docs/02）：缺失时插件不会 ACTIVE，而不是静默降级成「没有记忆」 */
   const memory = ctx.memory
+
+  // 可选增强：由 Cordis 在服务出现时注入，不在业务代码里查字符串。
+  let harness: HarnessService | undefined
+  let identityService: IdentityService | undefined
+  let threadService: ThreadService | undefined
+  let profileService: ConversationProfileService | undefined
+  let skillService: SkillService | undefined
+  let auditService: AuditService | undefined
+  ctx.inject(['harness'], (sub) => { harness = sub.harness })
+  ctx.inject(['identity'], (sub) => { identityService = sub.identity })
+  ctx.inject(['thread'], (sub) => { threadService = sub.thread })
+  ctx.inject(['conversationProfile'], (sub) => { profileService = sub.conversationProfile })
+  ctx.inject(['skills'], (sub) => { skillService = sub.skills })
+  ctx.inject(['audit'], (sub) => { auditService = sub.audit })
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
@@ -202,7 +214,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
 
     // 身份闸：私聊必须解析到 owner；每渠道首个私聊自动绑 owner（单用户部署）
     if (message.conversation.kind !== 'group') {
-      const identity = ctx.reflect.get('identity', false) as IdentityService | undefined
+      const identity = identityService
       if (identity) {
         const actor =
           (await identity.resolve(message.channel, message.sender.platformUserId)) ??
@@ -263,11 +275,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
       }
-      const threadService = ctx.reflect.get('thread', false) as ThreadService | undefined
-      if (threadService) {
+      const thread = threadService
+      if (thread) {
         try {
           const conversationId = sessionId.replace(/^s_/, '')
-          const threads = await threadService.list({ conversationId, limit: 3 })
+          const threads = await thread.list({ conversationId, limit: 3 })
           threadText = threads
             .filter((thread) => thread.summary)
             .map((thread) => `- ${thread.title}：${thread.summary}`)
@@ -290,7 +302,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       }
     }
     // 群策略：标签合并后的规则注入 prompt（长度/口吻/禁止话题），并在发送前截断
-    const profiles = ctx.reflect.get('conversationProfile', false) as ConversationProfileService | undefined
+    const profiles = profileService
     let groupNote = ''
     let maxChars = 0
     let policy: ConversationPolicy | null = null
@@ -307,7 +319,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       }
     }
     let skillsText = ''
-    const skills = ctx.reflect.get('skills', false) as SkillService | undefined
+    const skills = skillService
     if (skills && audience === 'owner') {
       try {
         const list = await skills.list()
@@ -391,7 +403,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       const violation = groupPolicyViolation(reply, policy)
       if (violation) {
         reply = '这个在群里不方便说，私聊我。'
-        const audit = ctx.reflect.get('audit', false) as AuditService | undefined
+        const audit = auditService
         void audit
           ?.append({
             at: new Date(),
@@ -469,20 +481,6 @@ function requirePersona(config: AgentConfig): string {
     throw new TypeError('qm-agent 需要 config.persona：一个非空字符串')
   }
   return config.persona
-}
-
-/**
- * 取一个已注册的服务。
- *
- * inject 正常工作时服务必然存在；这里显式检查是为了让「绕过 cordis 直接调 apply」
- * 这种误用立刻报出缺哪个服务，而不是在回合中途抛一个找不到属性的 TypeError。
- */
-function requireService<T>(ctx: Context, key: string): T {
-  const value = ctx.reflect.get(key, false) as T | undefined
-  if (!value) {
-    throw new Error(`qm-agent 缺少必需服务 "${key}"：请先加载提供它的插件`)
-  }
-  return value
 }
 
 function messageOf(error: unknown): string {
