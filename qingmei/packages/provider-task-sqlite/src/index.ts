@@ -81,7 +81,7 @@ export class SqliteTask extends TaskService {
   constructor(ctx: Context, config: TaskConfig = {}) {
     super(ctx)
     this.ctx = ctx
-    const store = ctx.reflect.get('store', false) as StoreService | undefined
+    const store = ctx.store
     if (!store) throw new Error('[provider-task-sqlite] 缺少 store 服务')
     this.collection = store.collection<TaskRow>(COLLECTION)
     this.workspaceRoot = config.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT

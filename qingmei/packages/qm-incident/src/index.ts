@@ -86,15 +86,16 @@ export interface Incident {
 }
 
 export function apply(ctx: Context, config: IncidentConfig = {}): void {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!store) throw new Error('[qm-incident] 缺少 store 服务')
+  const store = ctx.store
+  const channel = ctx.channel
+  const gateway = ctx.gateway
   if (!channel) throw new Error('[qm-incident] 缺少 channel 服务')
   if (!gateway) throw new Error('[qm-incident] 缺少 gateway 服务')
 
-  const task = ctx.reflect.get('task', false) as TaskService | undefined
-  const taskRunner = ctx.reflect.get('taskRunner', false) as TaskRunnerService | undefined
+  let task: TaskService | undefined
+  let taskRunner: TaskRunnerService | undefined
+  ctx.inject(['task'], (sub) => { task = sub.task })
+  ctx.inject(['taskRunner'], (sub) => { taskRunner = sub.taskRunner })
   const incidents = store.collection<IncidentRow>(COLLECTION)
   const playbooks = store.collection<PlaybookRow>(PLAYBOOK_COLLECTION)
   const windowMs = config.windowMs ?? 24 * 60 * 60 * 1000

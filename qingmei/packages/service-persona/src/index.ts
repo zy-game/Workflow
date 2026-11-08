@@ -192,7 +192,8 @@ export class Persona extends PersonaService {
 
 export function apply(ctx: Context, config: Config = {}): void {
   const persona = new Persona(ctx, config)
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
+  let gateway: GatewayService | undefined
+  ctx.inject(['gateway'], (sub) => { gateway = sub.gateway })
   if (!gateway) return
 
   ctx.effect(() =>

@@ -84,10 +84,9 @@ interface WeeklyRow extends Row {
 }
 
 export function apply(ctx: Context, config: HotspotConfig = {}): void {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!store) throw new Error('[qm-memory-hotspot] 缺少 store 服务')
+  const store = ctx.store
+  const channel = ctx.channel
+  const gateway = ctx.gateway
   if (!channel) throw new Error('[qm-memory-hotspot] 缺少 channel 服务')
   if (!gateway) throw new Error('[qm-memory-hotspot] 缺少 gateway 服务')
 
@@ -95,7 +94,9 @@ export function apply(ctx: Context, config: HotspotConfig = {}): void {
   const runs = store.collection<HotspotRow>(HOT_COLLECTION)
   const weeklies = store.collection<WeeklyRow>(WEEKLY_COLLECTION)
   const dailies = store.collection<DailyRow>(DAILY_COLLECTION)
-  const audit = ctx.reflect.get('audit', false) as AuditService | undefined
+  let auditService: AuditService | undefined
+  ctx.inject(['audit'], (sub) => { auditService = sub.audit })
+  const audit = auditService
   const now = () => (config.clock ? config.clock() : new Date())
   const maxDelta = Math.min(0.2, Math.max(0.01, config.maxDelta ?? 0.05))
   const maxRatio = Math.min(1, Math.max(0.001, config.maxRatio ?? 0.1))

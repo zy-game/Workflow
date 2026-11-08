@@ -47,10 +47,9 @@ const HOUR = 60 * 60 * 1000
 const DAY = 24 * HOUR
 
 export function apply(ctx: Context, config: RestConfig = {}): void {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!store) throw new Error('[qm-rest] 缺少 store 服务')
+  const store = ctx.store
+  const channel = ctx.channel
+  const gateway = ctx.gateway
   if (!channel) throw new Error('[qm-rest] 缺少 channel 服务')
   if (!gateway) throw new Error('[qm-rest] 缺少 gateway 服务')
 

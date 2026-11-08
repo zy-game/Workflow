@@ -98,8 +98,7 @@ class SqliteConversationProfile extends ConversationProfileService {
     this.pendingReply = pendingReply
     this.channel = channel
     this.suggestAfter = Math.max(1, suggestAfter)
-    const store = ctx.reflect.get('store', false) as StoreService | undefined
-    if (!store) throw new Error('[qm-conversation-profile] 缺少 store 服务')
+    const store = ctx.store
     this.collection = store.collection<ProfileRow>(COLLECTION)
     this.stats = store.collection<StatsRow>('qm_conversation_stats')
     this.suggestions = store.collection<SuggestionRow>('qm_conversation_suggestion')
@@ -410,9 +409,8 @@ class SqliteConversationProfile extends ConversationProfileService {
 }
 
 export function apply(ctx: Context, config: ConversationProfileConfig = {}): void {
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!channel) throw new Error('[qm-conversation-profile] 缺少 channel 服务')
+  const channel = ctx.channel
+  const gateway = ctx.gateway
   if (!gateway) throw new Error('[qm-conversation-profile] 缺少 gateway 服务')
 
   const pendingReply = config.pendingReply ?? '权限未配置'

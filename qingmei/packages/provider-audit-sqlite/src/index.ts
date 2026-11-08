@@ -31,7 +31,7 @@ export class SqliteAudit extends AuditService {
 
   constructor(ctx: Context) {
     super(ctx)
-    const store = ctx.reflect.get('store', false) as StoreService | undefined
+    const store = ctx.store
     if (!store) throw new Error('[provider-audit-sqlite] 缺少 store 服务')
     this.collection = store.collection<AuditRow>(COLLECTION)
   }

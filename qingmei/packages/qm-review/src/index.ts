@@ -102,12 +102,13 @@ export interface ReviewMetrics {
 }
 
 export function apply(ctx: Context, config: ReviewConfig = {}): void {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!store) throw new Error('[qm-review] 缺少 store 服务')
-  if (!channel) throw new Error('[qm-review] 缺少 channel 服务')
-  if (!gateway) throw new Error('[qm-review] 缺少 gateway 服务')
+  const store = ctx.store
+  const channel = ctx.channel
+  const gateway = ctx.gateway
+  let autonomyService: AutonomyService | undefined
+  let personaService: PersonaLike | undefined
+  ctx.inject(['autonomy'], (sub) => { autonomyService = sub.autonomy })
+  ctx.inject(['persona'], (sub) => { personaService = sub.persona as PersonaLike })
 
   const reviews = store.collection<ReviewRow>(REVIEW_COLLECTION)
   const proposals = store.collection<ProposalRow>('qm_review_proposal')
@@ -135,7 +136,7 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
     const turnRows = (await turns.find({})).filter((row) => inMonth(row.created_at))
     const taskRows = (await tasks.find({})).filter((row) => inMonth(row.created_at))
     const incidentRows = (await incidents.find({})).filter((row) => inMonth(row.first_at ?? row.created_at))
-    const autonomy = ctx.reflect.get('autonomy', false) as AutonomyService | undefined
+    const autonomy = autonomyService
     const state = autonomy ? await autonomy.status().catch(() => null) : null
 
     const errors = new Map<string, number>()
@@ -425,7 +426,7 @@ const MAX_TIMEOUT = 2_147_000_000
               created_at: Date.now(),
             })
           }
-          const persona = ctx.reflect.get('persona', false) as PersonaLike | undefined
+          const persona = personaService
           const hasPromptProposal = existing.some(
             (proposal) => proposal.kind === 'prompt' && proposal.status === 'proposed',
           )
@@ -526,7 +527,7 @@ const MAX_TIMEOUT = 2_147_000_000
           res.status(404).send({ ok: false, error: '没有这条提案' })
           return
         }
-        const persona = ctx.reflect.get('persona', false) as PersonaLike | undefined
+        const persona = personaService
         if (!persona) {
           res.status(409).send({ ok: false, error: '人格服务未启用' })
           return

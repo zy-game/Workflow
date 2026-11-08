@@ -88,16 +88,16 @@ const WINDOWS: Window[] = [
 const COMMITMENT_WORDS = ['带饭', '吃饭', '提醒', '交', '做', '去', '见', '买', '写', '开会']
 
 export function apply(ctx: Context, config: OpenerConfig = {}): void {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  const llm = ctx.reflect.get('llm', false) as LlmService | undefined
-  const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
+  const store = ctx.store
+  const channel = ctx.channel
+  const gateway = ctx.gateway
   const useLlm = config.useLlm !== false
-  if (!store) throw new Error('[qm-opener] 缺少 store 服务')
-  if (!channel) throw new Error('[qm-opener] 缺少 channel 服务')
-  if (!gateway) throw new Error('[qm-opener] 缺少 gateway 服务')
-  const task = ctx.reflect.get('task', false) as TaskService | undefined
+  let llm: LlmService | undefined
+  let memory: MemoryService | undefined
+  let task: TaskService | undefined
+  ctx.inject(['llm'], (sub) => { llm = sub.llm })
+  ctx.inject(['memory'], (sub) => { memory = sub.memory })
+  ctx.inject(['task'], (sub) => { task = sub.task })
 
   const commitments = store.collection<CommitmentRow>('qm_commitment')
   const openings = store.collection<OpeningRow>('qm_opening')

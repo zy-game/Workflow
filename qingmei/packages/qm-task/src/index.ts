@@ -77,7 +77,7 @@ export class TaskRunner extends TaskRunnerService {
 
   /** harness 是可选依赖，且比本插件晚加载——每次派发时再取，不能在建插件时捕获 */
   private harness(): HarnessService | undefined {
-    return this.ctx.reflect.get('harness', false) as HarnessService | undefined
+    return this.ctx.get('harness', false) as HarnessService | undefined
   }
 
   dispatch(run: TaskRun): void {
@@ -384,7 +384,7 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   const task = ctx.task
   const gateway = ctx.gateway
   /** harness 是可选依赖：开发环境可能没装 DSH，此时派发返回「没有可用的 harness」 */
-  const harness = ctx.reflect.get('harness', false) as HarnessService | undefined
+  const harness = ctx.get('harness', false) as HarnessService | undefined
 
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const resumeOnRestart = config.resumeOnRestart !== false

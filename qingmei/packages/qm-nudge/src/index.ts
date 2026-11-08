@@ -94,11 +94,10 @@ export function lastProgressAt(run: TaskRun): number {
 }
 
 export function apply(ctx: Context, config: NudgeConfig = {}): void {
-  const task = ctx.reflect.get('task', false) as TaskService | undefined
-  const channel = ctx.reflect.get('channel', false) as ChannelService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  if (!task) throw new Error('[qm-nudge] 缺少 task 服务')
+  const task = ctx.task
+  const channel = ctx.channel
+  const gateway = ctx.gateway
+  const store = ctx.store
   if (!channel) throw new Error('[qm-nudge] 缺少 channel 服务')
   if (!gateway) throw new Error('[qm-nudge] 缺少 gateway 服务')
   if (!store) throw new Error('[qm-nudge] 缺少 store 服务')

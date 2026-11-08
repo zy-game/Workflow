@@ -128,10 +128,8 @@ function toThread(row: ThreadRow): ThreadRecord {
 }
 
 export function apply(ctx: Context): void {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!store) throw new Error('[qm-thread] 缺少 store 服务')
-  if (!gateway) throw new Error('[qm-thread] 缺少 gateway 服务')
+  const store = ctx.store
+  const gateway = ctx.gateway
   const threads = new SqliteThreads(ctx, store)
 
   ctx.effect(() =>

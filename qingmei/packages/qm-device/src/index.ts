@@ -104,6 +104,10 @@ export function deviceClassOf(platform: string): string {
 export function apply(ctx: Context, config: DeviceConfig = {}): void {
   const store = ctx.store
   const gateway = ctx.gateway
+  let llmService: LlmService | undefined
+  let memoryService: MemoryService | undefined
+  ctx.inject(['llm'], (sub) => { llmService = sub.llm })
+  ctx.inject(['memory'], (sub) => { memoryService = sub.memory })
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
   const tasks = store.collection<DeviceTaskRow>(TASK_COLLECTION)
   const digests = store.collection<DigestRow>('qm_session_digest')
@@ -330,7 +334,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   )
 
   async function optimize(summary: string, events: unknown[]): Promise<string[]> {
-    const llm = ctx.reflect.get('llm', false) as LlmService | undefined
+    const llm = llmService
     if (!llm || events.length === 0) return []
     const transcript = `${summary}\n${JSON.stringify(events).slice(0, 6000)}`
     const { text } = await llm.complete({
@@ -352,8 +356,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
     }
   }
   async function distill(input: { summary: string; turns: unknown[]; facts: unknown[] }): Promise<MemoryRecord[]> {
-    const llm = ctx.reflect.get('llm', false) as LlmService | undefined
-    const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
+    const llm = llmService
+    const memory = memoryService
     if (!llm || !memory || input.facts.length > 0) return []
     const transcript = [input.summary, JSON.stringify(input.turns).slice(0, 4000)].join('\n').slice(0, 5000)
     if (transcript.trim().length < 10) return []
@@ -432,7 +436,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
           res.status(400).send({ ok: false, error: 'text 必填' })
           return
         }
-        const memory = ctx.reflect.get('memory', false) as MemoryService | undefined
+        const memory = memoryService
         if (!memory) {
           res.status(200).send({ ok: true, text: '', facts: [] })
           return

@@ -59,7 +59,7 @@ export class SqliteSchedule extends ScheduleService {
   constructor(ctx: Context, config: ScheduleConfig = {}) {
     super(ctx)
     this.ctx = ctx
-    const store = ctx.reflect.get('store', false) as StoreService | undefined
+    const store = ctx.store
     if (!store) throw new Error('[provider-schedule-sqlite] 缺少 store 服务')
     this.collection = store.collection<ScheduleRow>(COLLECTION)
     this.tickMs = config.tickMs ?? 1000

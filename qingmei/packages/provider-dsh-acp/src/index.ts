@@ -50,10 +50,14 @@ export class DshHarness extends HarnessService {
   private readonly conversations = new Map<string, string>()
   /** sessionId → 当前回合的事件队列 */
   private readonly turns = new Map<string, AsyncQueue<HarnessEvent>>()
+  private approvalService: ApprovalService | undefined
+  private taskService: TaskService | undefined
 
   constructor(ctx: Context, config: DshHarnessConfig = {}) {
     super(ctx)
     this.config = { ...DEFAULTS, ...config }
+    ctx.inject(['approval'], (sub) => { this.approvalService = sub.approval })
+    ctx.inject(['task'], (sub) => { this.taskService = sub.task })
     // Service 的 ctx 就是插件 fiber 的 context：卸载时杀子进程
     ctx.effect(() => () => this.stop())
   }
@@ -169,7 +173,7 @@ export class DshHarness extends HarnessService {
    * 任务会话等待期间把 run 标成 needs_approval，界面上能看出「卡在等人」。
    */
   private async requestPermission(request: AcpPermissionRequest): Promise<string | null> {
-    const approval = this.ctx.reflect.get('approval', false) as ApprovalService | undefined
+    const approval = this.approvalService
     const tool = request.toolCall ?? {}
     const title = tool.title ?? tool.name ?? (typeof tool.kind === 'string' ? tool.kind : '敏感工具调用')
     const kind = typeof tool.kind === 'string' ? tool.kind : ''
@@ -177,7 +181,7 @@ export class DshHarness extends HarnessService {
 
     const conversationId = this.conversations.get(request.sessionId) ?? ''
     const runId = conversationId.startsWith('task_') ? conversationId.slice('task_'.length) : null
-    const task = this.ctx.reflect.get('task', false) as TaskService | undefined
+    const task = this.taskService
     const run = runId && task ? await task.get(runId).catch(() => null) : null
     const lines = [
       `子 agent 请求执行：${title}`,

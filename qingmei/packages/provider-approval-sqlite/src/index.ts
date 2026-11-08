@@ -52,7 +52,7 @@ export class SqliteApproval extends ApprovalService {
   constructor(ctx: Context) {
     super(ctx)
     this.ctx = ctx
-    const store = ctx.reflect.get('store', false) as StoreService | undefined
+    const store = ctx.store
     if (!store) throw new Error('[provider-approval-sqlite] 缺少 store 服务')
     this.collection = store.collection<ApprovalRow>(COLLECTION)
   }

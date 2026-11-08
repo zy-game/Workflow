@@ -204,15 +204,14 @@ export class SqliteMemory extends MemoryService {
 
   constructor(ctx: Context, config: MemoryConfig = {}) {
     super(ctx)
-    const store = ctx.reflect.get('store', false) as StoreService | undefined
-    if (!store) throw new Error('[provider-memory-sqlite] 缺少 store 服务')
+    const store = ctx.store
     this.collection = store.collection<FactRow>(COLLECTION)
     this.synapses = store.collection<SynapseRow>(SYNAPSE_COLLECTION)
     this.provenance = store.collection<ProvenanceRow>(PROVENANCE_COLLECTION)
     this.events = store.collection<EventRow>(EVENT_COLLECTION)
     this.episodes = store.collection<EpisodeRow>(EPISODE_COLLECTION)
     this.workingRows = store.collection<WorkingRow>(WORKING_COLLECTION)
-    this.embedding = ctx.reflect.get('embedding', false) as EmbeddingService | undefined
+    this.embedding = ctx.get('embedding', false) as EmbeddingService | undefined
     this.messages = store.collection<MessageRow>('qm_message')
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6

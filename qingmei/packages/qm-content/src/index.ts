@@ -189,12 +189,9 @@ function assertStatus(value: unknown): ItemStatus {
 }
 
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
-  const store = ctx.reflect.get('store', false) as StoreService | undefined
-  if (!store) throw new Error('[qm-content] 缺少 store 服务')
-  const gateway = ctx.reflect.get('gateway', false) as GatewayService | undefined
-  if (!gateway) throw new Error('[qm-content] 缺少 gateway 服务')
-  const audit = ctx.reflect.get('audit', false) as AuditService | undefined
-  if (!audit) throw new Error('[qm-content] 缺少 audit 服务')
+  const store = ctx.store
+  const gateway = ctx.gateway
+  const audit = ctx.audit
 
   const gates = mergeConfig(config)
   const items = store.collection<ContentItem>('qm_content_item')
