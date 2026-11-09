@@ -38,7 +38,7 @@ interface ApprovalRow extends Row {
 }
 
 export class SqliteApproval extends ApprovalService {
-  private readonly ctx: Context
+  readonly ctx: Context
   /** 同一毫秒内的审批也要有稳定先后 */
   private lastCreatedAt = 0
   private readonly collection

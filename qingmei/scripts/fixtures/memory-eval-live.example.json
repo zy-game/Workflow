@@ -1,0 +1,8 @@
+{
+  "queries": [
+    { "text": "手冲咖啡", "expect": "手冲咖啡" },
+    { "text": "杭州出差", "expect": "杭州出差" },
+    { "text": "pnpm monorepo", "expect": "pnpm" },
+    { "text": "Cordis", "expect": "Cordis" }
+  ]
+}

@@ -22,8 +22,11 @@
     "artifacts": "node scripts/check-artifacts.mjs",
     "gate": "node scripts/gate.mjs",
     "gate:smoke": "node scripts/gate.mjs --with-smoke",
-    "typecheck": "tsc -p packages/core/tsconfig.json && tsc -p packages/provider-neuron-memory/tsconfig.json && tsc -p packages/qm-autonomy/tsconfig.json && tsc -p packages/qm-agent/tsconfig.json && tsc -p packages/qm-history/tsconfig.json && tsc -p packages/host-gateway/tsconfig.json",
-    "memory:eval": "node scripts/eval-memory.mjs"
+    "typecheck": "tsc -p tsconfig.packages.json",
+    "memory:eval": "node scripts/eval-memory.mjs",
+    "typecheck:all": "tsc -p tsconfig.packages.json",
+    "memory:live": "node scripts/eval-memory-live.mjs",
+    "memory:browser": "node scripts/browser-test-memories.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

@@ -11,14 +11,14 @@ import { tokenize } from '../src/index.ts'
 
 const ORIGIN = { kind: 'channel' as const, id: 's_neuron' }
 
-async function setup() {
+async function setup(config: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-neuron-'))
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'memory.db') })
   await storeFiber
   const historyFiber = ctx.plugin(historyPlugin)
   await historyFiber
-  const memoryFiber = ctx.plugin(memoryPlugin, { limit: 5, ticks: 4 })
+  const memoryFiber = ctx.plugin(memoryPlugin, { limit: 5, ticks: 4, ...config })
   await memoryFiber
   return {
     ctx,
@@ -185,6 +185,48 @@ test('概念 split：跨 session 过载概念可安全拆分并回滚', async ()
     assert.ok((await memory.stats()).concepts > before)
     assert.equal(await memory.rollbackConceptChange(applied!.changeId), true)
     assert.equal((await memory.stats()).concepts, before)
+  } finally {
+    await dispose()
+  }
+})
+
+test('自动沉淀：低风险 merge 自动应用且可回滚', async () => {
+  const { ctx, dispose } = await setup({ autoApplyConcepts: true })
+  try {
+    for (const text of ['手冲咖啡好喝', '手冲咖啡早上喝', '手冲咖啡下午喝']) {
+      await ctx.memory.ingest([{ kind: 'episode', subject: 'session:s1', predicate: '说', object: text, confidence: 0.9, sensitivity: 'private', origin: ORIGIN }])
+    }
+    const memory = ctx.memory as unknown as {
+      consolidate(): Promise<{ autoApplied: string | null }>
+      conceptChanges(): Promise<Array<{ id: string; status: string }>>
+      rollbackConceptChange(id: string): Promise<boolean>
+    }
+    const report = await memory.consolidate()
+    assert.ok(report.autoApplied, '低风险概念变更应自动应用')
+    const changes = await memory.conceptChanges()
+    assert.ok(changes.some((item) => item.status === 'applied'))
+    assert.equal(await memory.rollbackConceptChange(report.autoApplied!), true)
+  } finally {
+    await dispose()
+  }
+})
+
+test('自动沉淀：重复跨 session 概念可自动 split 并回滚', async () => {
+  const { ctx, dispose } = await setup({ autoApplyConcepts: true })
+  try {
+    for (let i = 0; i < 9; i += 1) {
+      await ctx.memory.ingest([{ kind: 'episode', subject: i < 4 ? 'session:s1' : 'session:s2', predicate: '说', object: `手冲咖啡第${i}次`, confidence: 0.9, sensitivity: 'private', origin: ORIGIN }])
+    }
+    const memory = ctx.memory as unknown as {
+      consolidate(): Promise<{ autoApplied: string | null }>
+      conceptChanges(): Promise<Array<{ id: string; kind: string; status: string }>>
+      rollbackConceptChange(id: string): Promise<boolean>
+    }
+    const report = await memory.consolidate()
+    assert.ok(report.autoApplied)
+    const change = (await memory.conceptChanges()).find((item) => item.id === report.autoApplied)
+    assert.equal(change?.kind, 'split')
+    assert.equal(await memory.rollbackConceptChange(report.autoApplied!), true)
   } finally {
     await dispose()
   }

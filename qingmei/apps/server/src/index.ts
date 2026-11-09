@@ -199,7 +199,7 @@ export async function startApp(options: StartOptions = {}): Promise<App> {
       } catch (error) {
         throw new Error(`加载插件失败 @ ${entry.name}（${messageOf(error)}）`)
       }
-      const fiber = ctx.plugin(module, entry.config)
+      const fiber = ctx.plugin(module as never, (entry.config ?? {}) as never)
       plugins.push({ ...entry, fiber })
     }
     await settle(plugins, options.timeoutMs ?? STARTUP_TIMEOUT_MS, options.tolerate ?? false)

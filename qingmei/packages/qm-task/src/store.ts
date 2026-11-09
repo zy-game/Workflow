@@ -73,7 +73,7 @@ interface TaskRow extends Row {
 }
 
 export class SqliteTask extends TaskService {
-  private readonly ctx: Context
+  readonly ctx: Context
   private readonly collection
   private readonly workspaceRoot: string
   private readonly executorId: string

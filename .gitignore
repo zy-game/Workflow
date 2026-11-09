@@ -3,3 +3,5 @@
 worker-*.json
 *.apk
 *.tgz
+chrome-cdp-profile/
+

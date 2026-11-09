@@ -327,7 +327,10 @@ async function createRealTransport(
       return { messageId: response.data?.message_id ?? '' }
     },
     async updateCard({ messageId, card }) {
-      const response = await client.im.message.patch({
+      const patch = (client.im.message as unknown as {
+        patch: (input: { path: { message_id: string }; data: { content: string; msg_type: string } }) => Promise<{ code?: number; msg?: string }>
+      }).patch
+      const response = await patch({
         path: { message_id: messageId },
         data: { content: JSON.stringify(card), msg_type: 'interactive' },
       })

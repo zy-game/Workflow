@@ -234,7 +234,7 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
             run.sessionId,
         )
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
-      sessionId = previous?.sessionId ?? null
+      sessionId = previous?.sessionId ?? ''
     }
     return {
       target: {

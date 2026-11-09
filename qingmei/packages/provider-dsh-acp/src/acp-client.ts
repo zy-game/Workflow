@@ -328,7 +328,7 @@ export class AcpClient {
     })
 
     const terminal: TerminalHandle = {
-      child,
+      child: child as unknown as ChildProcessWithoutNullStreams,
       output: '',
       truncated: false,
       limit,

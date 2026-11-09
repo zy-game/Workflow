@@ -5,3 +5,6 @@ config-snapshots/
 dist/
 .pnpm-store/
 tmp/
+browser-*.png
+browser-report.json
+chrome-cdp-profile/

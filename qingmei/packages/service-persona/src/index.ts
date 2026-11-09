@@ -195,9 +195,10 @@ export function apply(ctx: Context, config: Config = {}): void {
   let gateway: GatewayService | undefined
   ctx.inject(['gateway'], (sub) => { gateway = sub.gateway })
   if (!gateway) return
+  const gw = gateway
 
   ctx.effect(() =>
-    gateway.route({
+    gw.route({
       method: 'GET',
       path: '/api/v1/persona/history',
       async handler(_req: GatewayRequest, res: GatewayResponse) {
@@ -207,7 +208,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   )
 
   ctx.effect(() =>
-    gateway.route({
+    gw.route({
       method: 'POST',
       path: '/api/v1/persona/apply',
       async handler(req: GatewayRequest, res: GatewayResponse) {
@@ -228,7 +229,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   )
 
   ctx.effect(() =>
-    gateway.route({
+    gw.route({
       method: 'POST',
       path: '/api/v1/persona/rollback',
       async handler(req: GatewayRequest, res: GatewayResponse) {

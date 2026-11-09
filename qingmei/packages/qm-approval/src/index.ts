@@ -298,3 +298,7 @@ export function apply(ctx: Context): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}

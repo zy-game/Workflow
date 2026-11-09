@@ -24,6 +24,7 @@
   config:
     limit: 5
     minConfidence: 0.6
+    autoApplyConcepts: true
 
 # 仅本地开发/测试：生产默认不装配任何 LLM
 - name: '@qingmei/provider-llm-echo'

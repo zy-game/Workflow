@@ -54,6 +54,8 @@ export interface NeuronMemoryConfig {
   conceptMinSupport?: number
   /** 单次沉淀最多形成多少个概念 */
   maxConceptsPerRun?: number
+  /** 自动应用低风险概念变更（每次沉淀最多一条） */
+  autoApplyConcepts?: boolean
 }
 
 export const name = 'provider-neuron-memory'
@@ -181,6 +183,7 @@ export class NeuronMemory extends MemoryService {
   private readonly pruneBelow: number
   private readonly conceptMinSupport: number
   private readonly maxConceptsPerRun: number
+  private readonly autoApplyConcepts: boolean
   private readonly byLabel = new Map<string, string>()
   private readonly byId = new Map<string, RuntimeNeuron>()
   private readonly outgoing = new Map<string, SynapseRow[]>()
@@ -208,6 +211,7 @@ export class NeuronMemory extends MemoryService {
     this.pruneBelow = clamp(config.pruneBelow ?? 0.015, 0.001, 0.5)
     this.conceptMinSupport = Math.max(2, Math.round(config.conceptMinSupport ?? 2))
     this.maxConceptsPerRun = Math.max(1, Math.min(100, Math.round(config.maxConceptsPerRun ?? 20)))
+    this.autoApplyConcepts = config.autoApplyConcepts === true
     this.ready = this.load()
     void this.ready.then(() => this.backfill()).catch(() => undefined)
     if ((config.consolidateEveryMs ?? DEFAULT_CONSOLIDATE_MS) > 0) {
@@ -396,11 +400,15 @@ export class NeuronMemory extends MemoryService {
     const episodes = (await this.episodes.find({})).filter((row) => visibleEpisode(row, audience))
     if (facts.length === 0 && episodes.length === 0) return { facts: [], text: '' }
 
-    const seeds = tokenize(query.text)
+    const rawTokens = tokenize(query.text)
+    const semanticTokens = rawTokens.filter((token) => token.length >= 2)
+    const hasSemanticNeuron = semanticTokens.some((token) => this.byLabel.has(token))
+    const queryTokens = hasSemanticNeuron ? semanticTokens : rawTokens
+    const seeds = queryTokens
       .map((token) => this.byLabel.get(token))
       .filter((id): id is string => Boolean(id))
     if (seeds.length === 0) {
-      if (query.text.trim()) return this.lexicalFallback(facts, episodes, query.text, limit)
+      if (query.text.trim()) return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
       return this.recent(facts, episodes, limit)
     }
 
@@ -415,7 +423,7 @@ export class NeuronMemory extends MemoryService {
       for (const binding of bindings) score += (scores.get(binding.neuron_id) ?? 0) * binding.weight
       if (score > 0) ranked.push({ score, id: ownerId, kind: factRows.has(ownerId) ? 'fact' : 'episode' })
     }
-    if (ranked.length === 0) return this.lexicalFallback(facts, episodes, query.text, limit)
+    if (ranked.length === 0) return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
 
     ranked.sort((a, b) => b.score - a.score)
     const recalled: RecalledFact[] = []
@@ -470,8 +478,8 @@ export class NeuronMemory extends MemoryService {
     return { facts: recalled, text: recalled.map(formatFact).join('\n') }
   }
 
-  private lexicalFallback(facts: FactRow[], episodes: EpisodeRow[], text: string, limit: number): RecallResult {
-    const tokens = tokenize(text)
+  private lexicalFallback(facts: FactRow[], episodes: EpisodeRow[], text: string, limit: number, preferred?: string[]): RecallResult {
+    const tokens = preferred && preferred.length > 0 ? preferred : tokenize(text)
     if (tokens.length === 0) return this.recent(facts, episodes, limit)
     const score = (haystack: string): number => {
       const value = haystack.toLowerCase()
@@ -586,6 +594,7 @@ export class NeuronMemory extends MemoryService {
 
   async consolidate() {
     await this.ready
+    const beforeConsolidate = await this.snapshotGraph()
     const episodes = (await this.episodes.find({}))
       .filter((row) => !row.valid_to)
       .sort((a, b) => (b.salience + b.created_at / 1e15) - (a.salience + a.created_at / 1e15))
@@ -614,10 +623,31 @@ export class NeuronMemory extends MemoryService {
       }
     }
     const concepts = await this.formConcepts(episodes)
-    return { at: new Date(), scanned: episodes.length, replayed, concepts, compressed: [] as string[] }
+    const autoApplied = this.autoApplyConcepts ? await this.applySafeConceptChange(beforeConsolidate) : null
+    return { at: new Date(), scanned: episodes.length, replayed, concepts, autoApplied, compressed: [] as string[] }
   }
 
   /** 从重复共现的 token 对形成概念神经元，并绑定到 episode。 */
+  /** 只应用低风险变更：100% 回放的 merge，或分组明确的 split。 */
+  private async applySafeConceptChange(beforeSnapshot?: GraphSnapshot): Promise<string | null> {
+    const proposals = await this.conceptProposals()
+    for (const proposal of proposals) {
+      const evaluation = await this.evaluateConceptChange(proposal)
+      if (!evaluation?.canApply) continue
+      if (proposal.kind === 'merge') {
+        if (evaluation.overlap < 0.99 || evaluation.affectedEpisodes > 20) continue
+      } else if (proposal.kind === 'split') {
+        const groups = proposal.payload?.groups ?? []
+        if (groups.length < 2 || evaluation.affectedEpisodes > 30) continue
+      } else {
+        continue
+      }
+      const applied = await this.applyConceptChange(proposal, beforeSnapshot)
+      if (applied) return applied.changeId
+    }
+    return null
+  }
+
   private async formConcepts(episodes: EpisodeRow[]): Promise<number> {
     const support = new Map<string, { a: string; b: string; episodes: Set<string> }>()
     for (const episode of episodes) {
@@ -757,15 +787,15 @@ export class NeuronMemory extends MemoryService {
     return null
   }
 
-  async applyConceptChange(proposal: ConceptProposal): Promise<{ changeId: string } | null> {
+  async applyConceptChange(proposal: ConceptProposal, beforeSnapshot?: GraphSnapshot): Promise<{ changeId: string } | null> {
     await this.ready
-    if (proposal.kind === 'split') return this.applySplit(proposal)
+    if (proposal.kind === 'split') return this.applySplit(proposal, beforeSnapshot)
     if (proposal.kind !== 'merge' || !proposal.sourceId || !proposal.targetId) return null
     const source = this.byId.get(proposal.sourceId)
     const target = this.byId.get(proposal.targetId)
     if (!source || !target || source.row.kind !== 'concept' || target.row.kind !== 'concept') return null
     if (source.row.valid_to || target.row.valid_to) return null
-    const before = JSON.stringify(await this.snapshotGraph())
+    const before = JSON.stringify(beforeSnapshot ?? await this.snapshotGraph())
     for (const [ownerId, bindings] of [...this.byOwner.entries()]) {
       const sourceBindings = bindings.filter((row) => row.neuron_id === proposal.sourceId)
       if (sourceBindings.length === 0) continue
@@ -794,12 +824,12 @@ export class NeuronMemory extends MemoryService {
     return { changeId: change.id }
   }
 
-  private async applySplit(proposal: ConceptProposal): Promise<{ changeId: string } | null> {
+  private async applySplit(proposal: ConceptProposal, beforeSnapshot?: GraphSnapshot): Promise<{ changeId: string } | null> {
     const source = this.byId.get(proposal.conceptId ?? '')
     if (!source || source.row.kind !== 'concept' || source.row.valid_to) return null
     const groups = proposal.payload?.groups?.filter((group) => Array.isArray(group) && group.length > 0) ?? []
     if (groups.length < 2) return null
-    const before = JSON.stringify(await this.snapshotGraph())
+    const before = JSON.stringify(beforeSnapshot ?? await this.snapshotGraph())
     for (let index = 0; index < groups.length; index += 1) {
       const concept = await this.neuron(`${source.row.label}:split${index + 1}`, 'concept')
       for (const episodeId of groups[index]!) {

@@ -50,7 +50,7 @@ interface ScheduleRow extends Row {
 }
 
 export class SqliteSchedule extends ScheduleService {
-  private readonly ctx: Context
+  readonly ctx: Context
   private readonly collection
   private readonly tickMs: number
   private readonly defaultTimezone: string

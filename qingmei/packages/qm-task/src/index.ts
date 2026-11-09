@@ -45,6 +45,8 @@ export interface TaskConfig {
   urgentPriority?: number
   /** 测试/恢复用：只注册服务和路由，不自动启动 runner */
   startPaused?: boolean
+  /** 进程重启后恢复排队/执行中的 run；默认 true */
+  resumeOnRestart?: boolean
   /** 排队最长等待；超过后失败，默认 24h */
   queueTimeoutMs?: number
 }
@@ -70,7 +72,7 @@ interface RunnerDeps {
 }
 
 export class TaskRunner extends TaskRunnerService {
-  private readonly ctx: Context
+  readonly ctx: Context
   private readonly deps: RunnerDeps
   private readonly queue: TaskRun[] = []
   private readonly activeRuns = new Map<string, TaskRun>()

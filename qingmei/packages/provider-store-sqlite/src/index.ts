@@ -7,7 +7,7 @@
  */
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { uid, type Migration, type Row } from '@qingmei/core'
 import { StoreService, type Collection, type Query } from '@qingmei/core'
 import type { Context } from 'cordis'
@@ -228,7 +228,7 @@ class SqliteCollection<T extends Row> implements Collection<T> {
     // 字段名不安全或值不是标量时退回 JS 过滤，语义不变
     if (!where.ok || !order.ok) return this.findInJs(query)
 
-    const params: unknown[] = [this.name, ...where.params]
+    const params: SQLInputValue[] = [this.name, ...where.params]
     // 没给排序时保持插入顺序（rowid），与老实现的确定性一致
     let sql = `SELECT id, json FROM records WHERE name = ?${where.clause}${order.clause || ' ORDER BY rowid ASC'}`
     if (query.limit !== undefined) {
@@ -427,14 +427,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 const FIELD_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 type WherePlan =
-  | { ok: true; clause: string; params: unknown[] }
+  | { ok: true; clause: string; params: SQLInputValue[] }
   | { ok: false; raw: Record<string, unknown> }
 
 /** 把 where 折成 SQL：只推标量等值；null 只匹配 JSON null，不匹配缺失字段 */
 function buildWhere(where: Record<string, unknown> | undefined): WherePlan {
   const raw = where ?? {}
   const clauses: string[] = []
-  const params: unknown[] = []
+  const params: SQLInputValue[] = []
   for (const [key, value] of Object.entries(raw)) {
     if (!FIELD_RE.test(key)) return { ok: false, raw }
     if (value === null) {
@@ -445,7 +445,7 @@ function buildWhere(where: Record<string, unknown> | undefined): WherePlan {
     if (type !== 'string' && type !== 'number' && type !== 'boolean') return { ok: false, raw }
     clauses.push(`json_extract(json, '$.${key}') = ?`)
     // SQLite 不认 JS boolean：JSON true/false 存的是 1/0
-    params.push(type === 'boolean' ? (value ? 1 : 0) : value)
+    params.push(type === 'boolean' ? (value ? 1 : 0) : (value as SQLInputValue))
   }
   return { ok: true, clause: clauses.length > 0 ? ` AND ${clauses.join(' AND ')}` : '', params }
 }
