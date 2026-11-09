@@ -46,6 +46,10 @@ export interface NeuronMemoryConfig {
   pruneBelow?: number
   /** 夜间沉淀间隔；0 关闭 */
   consolidateEveryMs?: number
+  /** 一对 token 至少在多少个 episode 中共现才形成概念 */
+  conceptMinSupport?: number
+  /** 单次沉淀最多形成多少个概念 */
+  maxConceptsPerRun?: number
 }
 
 export const name = 'provider-neuron-memory'
@@ -160,6 +164,8 @@ export class NeuronMemory extends MemoryService {
   private readonly learnRate: number
   private readonly synapseDecay: number
   private readonly pruneBelow: number
+  private readonly conceptMinSupport: number
+  private readonly maxConceptsPerRun: number
   private readonly byLabel = new Map<string, string>()
   private readonly byId = new Map<string, RuntimeNeuron>()
   private readonly outgoing = new Map<string, SynapseRow[]>()
@@ -184,6 +190,8 @@ export class NeuronMemory extends MemoryService {
     this.learnRate = clamp(config.learnRate ?? 0.08, 0.001, 1)
     this.synapseDecay = clamp(config.synapseDecay ?? 0.002, 0, 0.2)
     this.pruneBelow = clamp(config.pruneBelow ?? 0.015, 0.001, 0.5)
+    this.conceptMinSupport = Math.max(2, Math.round(config.conceptMinSupport ?? 2))
+    this.maxConceptsPerRun = Math.max(1, Math.min(100, Math.round(config.maxConceptsPerRun ?? 20)))
     this.ready = this.load()
     void this.ready.then(() => this.backfill()).catch(() => undefined)
     if ((config.consolidateEveryMs ?? DEFAULT_CONSOLIDATE_MS) > 0) {
@@ -589,17 +597,96 @@ export class NeuronMemory extends MemoryService {
         }
       }
     }
-    return { at: new Date(), scanned: episodes.length, replayed, compressed: [] as string[] }
+    const concepts = await this.formConcepts(episodes)
+    return { at: new Date(), scanned: episodes.length, replayed, concepts, compressed: [] as string[] }
+  }
+
+  /** 从重复共现的 token 对形成概念神经元，并绑定到 episode。 */
+  private async formConcepts(episodes: EpisodeRow[]): Promise<number> {
+    const support = new Map<string, { a: string; b: string; episodes: Set<string> }>()
+    for (const episode of episodes) {
+      const ids = [...new Set((this.byOwner.get(episode.id) ?? [])
+        .map((row) => row.neuron_id)
+        .filter((id) => this.byId.get(id)?.row.kind === 'token'))].slice(0, 24)
+      for (let i = 0; i < ids.length; i += 1) {
+        for (let j = i + 1; j < ids.length; j += 1) {
+          const a = ids[i]!
+          const b = ids[j]!
+          const key = a < b ? `${a}|${b}` : `${b}|${a}`
+          const entry = support.get(key) ?? { a, b, episodes: new Set<string>() }
+          entry.episodes.add(episode.id)
+          support.set(key, entry)
+        }
+      }
+    }
+    const candidates = [...support.values()]
+      .filter((entry) => entry.episodes.size >= this.conceptMinSupport)
+      .sort((a, b) => b.episodes.size - a.episodes.size)
+      .slice(0, this.maxConceptsPerRun)
+    let created = 0
+    for (const candidate of candidates) {
+      const left = this.byId.get(candidate.a)
+      const right = this.byId.get(candidate.b)
+      if (!left || !right) continue
+      const label = `concept:${left.row.label}+${right.row.label}`
+      const concept = await this.neuron(label, 'concept')
+      let fresh = false
+      if (!this.byId.get(concept.id) || this.byId.get(concept.id)!.row.created_at === concept.created_at) fresh = true
+      await this.link(candidate.a, concept.id, 0.45)
+      await this.link(candidate.b, concept.id, 0.45)
+      await this.link(concept.id, candidate.a, 0.25)
+      await this.link(concept.id, candidate.b, 0.25)
+      for (const episodeId of candidate.episodes) {
+        const existing = this.byOwner.get(episodeId)?.some((row) => row.neuron_id === concept.id)
+        if (existing) continue
+        const binding = await this.bindings.insert({
+          owner_id: episodeId,
+          owner_kind: 'episode',
+          neuron_id: concept.id,
+          weight: 0.7,
+          position: 999,
+        })
+        const list = this.byOwner.get(episodeId) ?? []
+        list.push(binding)
+        this.byOwner.set(episodeId, list)
+      }
+      if (fresh) created += 1
+    }
+    return created
+  }
+
+  private async link(fromId: string, toId: string, weight: number): Promise<void> {
+    const rows = this.outgoing.get(fromId) ?? []
+    const existing = rows.find((row) => row.to_id === toId && !row.valid_to)
+    if (existing) {
+      if (existing.weight < weight) {
+        await this.synapses.update(existing.id, { weight })
+        existing.weight = weight
+      }
+      return
+    }
+    const row = await this.synapses.insert({
+      from_id: fromId,
+      to_id: toId,
+      weight,
+      kind: 'association',
+      last_fired: Date.now(),
+      created_at: Date.now(),
+      valid_to: null,
+    })
+    rows.push(row)
+    this.outgoing.set(fromId, rows)
   }
 
   /** 当前图规模，供自治观察 */
-  async stats(): Promise<{ neurons: number; synapses: number; episodes: number; facts: number }> {
+  async stats(): Promise<{ neurons: number; synapses: number; episodes: number; facts: number; concepts: number }> {
     await this.ready
     return {
       neurons: this.byId.size,
       synapses: [...this.outgoing.values()].reduce((sum, list) => sum + list.filter((row) => !row.valid_to).length, 0),
       episodes: (await this.episodes.find({})).filter((row) => !row.valid_to).length,
       facts: (await this.facts.find({})).filter((row) => !row.valid_to).length,
+      concepts: [...this.byId.values()].filter((item) => item.row.kind === 'concept' && !item.row.valid_to).length,
     }
   }
 }

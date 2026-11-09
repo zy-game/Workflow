@@ -457,6 +457,21 @@ export function apply(ctx: Context, config: AgentConfig): void {
       problems.push(`渠道发送失败：${messageOf(error)}`)
     }
 
+    // 对话本身落为 episode，供神经元记忆 replay/沉淀；不做 LLM 抽取。
+    if (memory && reply && userText) {
+      void memory.ingest([{
+        kind: 'episode',
+        subject: `session:${sessionId}`,
+        predicate: '对话',
+        object: `用户：${userText.slice(0, 500)}\n青梅：${reply.slice(0, 800)}`,
+        confidence: 0.8,
+        salience: problems.length === 0 ? 0.45 : 0.25,
+        sensitivity: 'private',
+        audience,
+        origin: { kind: 'channel', id: sessionId },
+      }]).catch(() => undefined)
+    }
+
     // 渠道结果也是回合结果的一部分，所以 turn/end 放在发送之后，ok/error 才是真实状态
     const end: TurnEnd = {
       sessionId,

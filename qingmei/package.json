@@ -21,7 +21,8 @@
     "arch": "node scripts/check-architecture.mjs --strict",
     "artifacts": "node scripts/check-artifacts.mjs",
     "gate": "node scripts/gate.mjs",
-    "gate:smoke": "node scripts/gate.mjs --with-smoke"
+    "gate:smoke": "node scripts/gate.mjs --with-smoke",
+    "typecheck": "tsc -p packages/provider-neuron-memory/tsconfig.json"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -31,5 +32,9 @@
   },
   "dependencies": {
     "cordis": "4.0.0-rc.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "5.9.3"
   }
 }

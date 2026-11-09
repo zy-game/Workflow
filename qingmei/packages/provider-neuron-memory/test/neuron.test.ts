@@ -98,6 +98,31 @@ test('episode：事件文本会作为可召回记忆', async () => {
   }
 })
 
+test('沉淀：重复共现形成概念神经元并参与召回', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    for (const text of ['早上喝手冲咖啡', '下午也喝手冲咖啡', '手冲咖啡很好喝']) {
+      await ctx.memory.ingest([{
+        kind: 'episode',
+        subject: 'session:s1',
+        predicate: '说',
+        object: text,
+        confidence: 0.9,
+        sensitivity: 'private',
+        origin: ORIGIN,
+      }])
+    }
+    const report = await (ctx.memory as unknown as { consolidate(): Promise<{ concepts: number }> }).consolidate()
+    assert.ok(report.concepts >= 1)
+    const stats = await (ctx.memory as unknown as { stats(): Promise<{ concepts: number }> }).stats()
+    assert.ok(stats.concepts >= 1)
+    const hit = await ctx.memory.recall({ text: '手冲' })
+    assert.ok(hit.facts.some((item) => item.kind === 'episode'))
+  } finally {
+    await dispose()
+  }
+})
+
 test('stats：图规模可用于自治观察', async () => {
   const { ctx, dispose } = await setup()
   try {

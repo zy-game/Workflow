@@ -26,6 +26,7 @@ import {
   type GatewayRequest,
   type GatewayResponse,
   type ChannelService,
+  type MemoryService,
   type ChannelTargetService,
   type GatewayService,
   type Row,
@@ -145,6 +146,7 @@ class AutonomyRunner extends AutonomyService {
   private readonly gateway: GatewayService
   private readonly channel: ChannelService
   private readonly taskRunner: TaskRunnerService
+  private memory: MemoryService | undefined
   private channelTargets: ChannelTargetService | undefined
   private lastAt = 0
 
@@ -159,6 +161,7 @@ class AutonomyRunner extends AutonomyService {
     this.channel = ctx.channel
     this.taskRunner = ctx.taskRunner
     ctx.inject(['channelTargets'], (sub) => { this.channelTargets = sub.channelTargets })
+    ctx.inject(['memory'], (sub) => { this.memory = sub.memory })
     this.traces = store.collection<TraceRow>(TRACE)
     this.states = store.collection<StateRow>(STATE)
   }
@@ -479,6 +482,21 @@ class AutonomyRunner extends AutonomyService {
         risk: 'low',
         payload: { scheduleId: upcoming[0]!.id },
       })
+    }
+
+    if (this.memory) {
+      const stats = await this.memory.stats().catch(() => null)
+      if (stats && Number(stats.episodes) >= 3 && Number(stats.concepts) === 0) {
+        list.push({
+          id: 'memory.consolidate.suggest',
+          action: 'notify.self',
+          title: '记忆可以沉淀了',
+          reason: '已经有多个事件但没有概念神经元；建议手动触发一次记忆整理',
+          value: 55,
+          risk: 'low',
+          payload: { stats },
+        })
+      }
     }
 
     if (snapshot.failedTasks > 0) {

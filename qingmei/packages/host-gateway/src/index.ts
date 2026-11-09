@@ -402,7 +402,27 @@ async function routeRequest(
       const snapshot = method === 'POST' ? await persona.reload() : persona.current()
       sendJson(res, 200, { persona: snapshot })
       return
-    }    if (pathname === '/api/v1/memory/facts' && method === 'GET') {
+    }    if (pathname === '/api/v1/memory/stats' && method === 'GET') {
+      const memory = deps.resources.memory
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      sendJson(res, 200, { ok: true, stats: await memory.stats() })
+      return
+    }
+
+    if (pathname === '/api/v1/memory/consolidate' && method === 'POST') {
+      const memory = deps.resources.memory
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      sendJson(res, 200, { ok: true, report: await memory.consolidate() })
+      return
+    }
+
+    if (pathname === '/api/v1/memory/facts' && method === 'GET') {
       const memory = deps.resources.memory
       if (!memory) {
         sendJson(res, 503, { ok: false, error: 'no memory service' })

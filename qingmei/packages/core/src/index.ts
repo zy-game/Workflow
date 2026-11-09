@@ -767,6 +767,11 @@ export abstract class MemoryService extends Service {
   async profile(_query?: ProfileQuery): Promise<ProfileEntry[]> {
     return []
   }
+
+  /** 图规模/健康度；默认 null，神经元 provider 可覆盖 */
+  async stats(): Promise<Record<string, number> | null> {
+    return null
+  }
 }
 
 export interface PersonaSnapshot {
