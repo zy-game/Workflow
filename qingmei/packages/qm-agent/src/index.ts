@@ -191,6 +191,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
     messages: ChatMessage[],
     signal: AbortSignal,
   ): Promise<string> {
+    if (!llm) throw new Error('没有可用的 LLM')
     const parts: string[] = []
     for await (const chunk of llm.chat({ messages, signal })) {
       if (chunk.type === 'done') break

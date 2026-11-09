@@ -208,7 +208,7 @@ export function apply(ctx: Context): void {
     if (outbound.editTarget) {
       await enqueue(async () => {
         const sessionId = conversationSessionId(outbound.conversationId)
-        const rows = await collection.find({ session_id: sessionId, platform_message_id: outbound.editTarget })
+        const rows = await collection.find({ where: { session_id: sessionId, platform_message_id: outbound.editTarget } })
         const row = rows[0]
         if (!row) return
         await collection.update(row.id, {
