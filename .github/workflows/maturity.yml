@@ -1,0 +1,27 @@
+name: maturity-gate
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: qingmei
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: qingmei/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm gate
+        env:
+          NODE_OPTIONS: ''
