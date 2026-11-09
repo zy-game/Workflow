@@ -5,7 +5,8 @@
  * 默认执行：
  *   1. 架构检查
  *   2. 神经元记忆类型检查
- *   3. 全量单元/集成测试
+ *   3. 神经元记忆质量评估
+ *   4. 全量单元/集成测试
  * 可选：
  *   --with-smoke 额外启动 smoke（需要本机可启动 server）
  *
@@ -19,6 +20,7 @@ const steps = [
   { name: 'architecture', args: ['scripts/check-architecture.mjs', '--strict'] },
   { name: 'typecheck:memory', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/provider-neuron-memory/tsconfig.json'] },
   { name: 'typecheck:autonomy', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/qm-autonomy/tsconfig.json'] },
+  { name: 'memory:eval', args: ['scripts/eval-memory.mjs'] },
   { name: 'tests', args: ['--test', '--test-concurrency=1'] },
 ]
 if (withSmoke) steps.push({ name: 'smoke', args: ['scripts/smoke.mjs'] })

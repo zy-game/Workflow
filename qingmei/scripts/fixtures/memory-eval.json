@@ -1,0 +1,18 @@
+{
+  "facts": [
+    { "subject": "主人", "predicate": "喜欢", "object": "手冲咖啡" },
+    { "subject": "主人", "predicate": "下周三要去", "object": "杭州出差" },
+    { "subject": "青梅项目", "predicate": "使用", "object": "pnpm 管理依赖" },
+    { "subject": "主人", "predicate": "养", "object": "一只橘猫" },
+    { "subject": "主人", "predicate": "使用", "object": "DeepSeek Harness 作为执行器" },
+    { "subject": "青梅", "predicate": "运行在", "object": "139.155.78.241" }
+  ],
+  "queries": [
+    { "text": "手冲咖啡", "expect": "手冲咖啡" },
+    { "text": "杭州出差", "expect": "杭州出差" },
+    { "text": "pnpm 依赖", "expect": "pnpm" },
+    { "text": "橘猫", "expect": "橘猫" },
+    { "text": "DeepSeek Harness 执行器", "expect": "DeepSeek Harness" },
+    { "text": "139.155.78.241", "expect": "139.155.78.241" }
+  ]
+}
