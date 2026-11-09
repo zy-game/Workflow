@@ -16,6 +16,6 @@
   },
   "devDependencies": {
     "@qingmei/provider-store-sqlite": "workspace:*",
-    "@qingmei/provider-memory-sqlite": "workspace:*"
+    "@qingmei/provider-neuron-memory": "workspace:*"
   }
 }

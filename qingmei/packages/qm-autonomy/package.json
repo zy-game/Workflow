@@ -1,5 +1,5 @@
 {
-  "name": "@qingmei/provider-memory-sqlite",
+  "name": "@qingmei/qm-autonomy",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,11 +8,14 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@qingmei/core": "workspace:*",
-    "cordis": "4.0.0-rc.12"
+    "cordis": "4.0.0-rc.12",
+    "@qingmei/core": "workspace:*"
   },
   "devDependencies": {
     "@qingmei/provider-store-sqlite": "workspace:*",
+    "@qingmei/service-gateway": "workspace:*",
+    "@qingmei/service-channel": "workspace:*",
+    "@qingmei/qm-task": "workspace:*",
     "@qingmei/qm-history": "workspace:*"
   }
 }

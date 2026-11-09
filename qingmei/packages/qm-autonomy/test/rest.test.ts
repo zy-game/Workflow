@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
+import * as historyPlugin from '@qingmei/qm-history'
 import * as restPlugin from '../src/modules/rest.ts'
 import {
   ChannelService,
@@ -61,6 +62,7 @@ async function setup(clock: Date) {
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'rest.db') })
   await storeFiber
   await ctx.plugin(gatewayPlugin)
+  await ctx.plugin(historyPlugin)
   const channel = new FakeChannel(ctx)
   const restFiber = ctx.plugin(restPlugin, {
     tickMs: 0,
@@ -103,7 +105,7 @@ async function seedUserMessages(h, at: number[], prefix = 'm'): Promise<void> {
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(restPlugin.name, 'qm-rest')
-  assert.deepEqual(restPlugin.inject, ['store', 'channel', 'gateway'])
+  assert.deepEqual(restPlugin.inject, ['store', 'channel', 'gateway', 'history'])
 })
 
 test('连续活跃 90 分钟 → 建议休息，同一周期不重复', async () => {

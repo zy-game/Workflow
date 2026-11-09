@@ -20,7 +20,7 @@
   config:
     path: './data/qm.db'
 
-- name: '@qingmei/provider-memory-sqlite'
+- name: '@qingmei/provider-neuron-memory'
   config:
     limit: 5
     minConfidence: 0.6
@@ -56,6 +56,14 @@
 - name: '@qingmei/qm-history'
 
 # 日程到点投递：订阅 qm/schedule/due
+
+# 自治循环：只产生建议，先观察再提案
+- name: '@qingmei/qm-autonomy'
+  config:
+    tickMs: 300000
+    dailyBudget: 3
+    quietStart: 23
+    quietEnd: 8
 
 # 把任务派给 harness；没有 harness 时 POST /api/v1/tasks 返回 503
 - name: '@qingmei/qm-task'

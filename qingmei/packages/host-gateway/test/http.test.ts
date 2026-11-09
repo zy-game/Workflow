@@ -23,7 +23,7 @@ import type { GatewayHub } from '@qingmei/service-gateway'
 import * as ChannelPlugin from '@qingmei/service-channel'
 import * as WebChannelPlugin from '@qingmei/channel-web'
 import * as StorePlugin from '@qingmei/provider-store-sqlite'
-import * as MemoryPlugin from '@qingmei/provider-memory-sqlite'
+import * as MemoryPlugin from '@qingmei/provider-neuron-memory'
 import HostGateway, { getServerInfo } from '../src/index.ts'
 
 const TOKEN = 'test-token'

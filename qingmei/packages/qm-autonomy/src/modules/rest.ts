@@ -15,6 +15,7 @@ import {
   type GatewayResponse,
   type GatewayService,
   type Row,
+  type HistoryService,
   type StoreService,
 } from '@qingmei/core'
 
@@ -30,7 +31,7 @@ export interface RestConfig {
 }
 
 export const name = 'qm-rest'
-export const inject = ['store', 'channel', 'gateway']
+export const inject = ['store', 'channel', 'gateway', 'history']
 
 interface RestRow extends Row {
   last_break_at: number
@@ -38,22 +39,17 @@ interface RestRow extends Row {
   last_streak_week: string
 }
 
-interface MessageRow extends Row {
-  role: string
-  created_at: number
-}
-
 const HOUR = 60 * 60 * 1000
 const DAY = 24 * HOUR
 
 export function apply(ctx: Context, config: RestConfig = {}): void {
   const store = ctx.store
+  const history = ctx.history
   const channel = ctx.channel
   const gateway = ctx.gateway
   if (!channel) throw new Error('[qm-rest] 缺少 channel 服务')
   if (!gateway) throw new Error('[qm-rest] 缺少 gateway 服务')
 
-  const messages = store.collection<MessageRow>('qm_message')
   const states = store.collection<RestRow>('qm_rest_state')
   const now = () => (config.clock ? config.clock() : new Date())
   const focusMs = Math.max(30, config.focusMinutes ?? 90) * 60_000
@@ -74,11 +70,7 @@ export function apply(ctx: Context, config: RestConfig = {}): void {
   }
 
   async function userActivity(fromMs: number, toMs: number): Promise<number[]> {
-    const rows = await messages.find({})
-    return rows
-      .filter((row) => row.role === 'user' && row.created_at >= fromMs && row.created_at <= toMs)
-      .map((row) => row.created_at)
-      .sort((a, b) => a - b)
+    return history.activity(fromMs, toMs)
   }
 
   async function tick(): Promise<string[]> {

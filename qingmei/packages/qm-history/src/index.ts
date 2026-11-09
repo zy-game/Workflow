@@ -71,6 +71,14 @@ class HistoryReader extends HistoryService {
     this.collection = ctx.store.collection<StoredMessage>(MESSAGE_COLLECTION)
   }
 
+  async activity(fromMs: number, toMs: number): Promise<number[]> {
+    const rows = await this.collection.find({})
+    return rows
+      .filter((row) => row.role === 'user' && row.created_at >= fromMs && row.created_at <= toMs)
+      .map((row) => row.created_at)
+      .sort((a, b) => a - b)
+  }
+
   async recent(conversationId: string, limit = 50): Promise<HistoryMessage[]> {
     const wanted = conversationSessionId(conversationId)
     const rows = await this.collection.find({})

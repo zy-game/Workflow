@@ -16,7 +16,6 @@
     "@qingmei/qm-agent": "workspace:*",
     "@qingmei/qm-history": "workspace:*",
     "@qingmei/provider-schedule-sqlite": "workspace:*",
-    "@qingmei/provider-memory-sqlite": "workspace:*",
     "@qingmei/qm-task": "workspace:*",
     "@qingmei/qm-approval": "workspace:*",
     "@qingmei/qm-identity": "workspace:*",
@@ -29,6 +28,8 @@
     "js-yaml": "^5.5.0",
     "@qingmei/service-persona": "workspace:*",
     "@qingmei/qm-device": "workspace:*",
-    "@qingmei/qm-content": "workspace:*"
+    "@qingmei/qm-content": "workspace:*",
+    "@qingmei/provider-neuron-memory": "workspace:*",
+    "@qingmei/qm-autonomy": "workspace:*"
   }
 }
