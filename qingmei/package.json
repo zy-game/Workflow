@@ -22,7 +22,7 @@
     "artifacts": "node scripts/check-artifacts.mjs",
     "gate": "node scripts/gate.mjs",
     "gate:smoke": "node scripts/gate.mjs --with-smoke",
-    "typecheck": "tsc -p packages/provider-neuron-memory/tsconfig.json && tsc -p packages/qm-autonomy/tsconfig.json",
+    "typecheck": "tsc -p packages/provider-neuron-memory/tsconfig.json && tsc -p packages/qm-autonomy/tsconfig.json && tsc -p packages/host-gateway/tsconfig.json",
     "memory:eval": "node scripts/eval-memory.mjs"
   },
   "pnpm": {

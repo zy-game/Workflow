@@ -20,6 +20,7 @@ const steps = [
   { name: 'architecture', args: ['scripts/check-architecture.mjs', '--strict'] },
   { name: 'typecheck:memory', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/provider-neuron-memory/tsconfig.json'] },
   { name: 'typecheck:autonomy', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/qm-autonomy/tsconfig.json'] },
+  { name: 'typecheck:host', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/host-gateway/tsconfig.json'] },
   { name: 'memory:eval', args: ['scripts/eval-memory.mjs'] },
   { name: 'tests', args: ['--test', '--test-concurrency=1'] },
 ]

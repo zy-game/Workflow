@@ -23,6 +23,7 @@ import {
   type GatewayService,
   type InboundMessage,
   type MemoryService,
+  type HistoryService,
   type MemoryQueueService,
   type PersonaService,
   type Row,
@@ -84,6 +85,7 @@ interface ResourceServices {
   memoryQueue?: MemoryQueueService
   schedule?: ScheduleService
   channel?: ChannelService
+  history?: HistoryService
 }
 
 interface HandlerDeps {
@@ -318,7 +320,7 @@ async function routeRequest(
   }
 
   if (pathname === '/api/v1/login' && method === 'POST') {
-    const body = await readJsonBody(req).catch(() => ({}))
+    const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, unknown>
     const user = (typeof body.user === 'string' ? body.user.trim() : '').toLowerCase()
     const password = (typeof body.password === 'string' ? body.password : '').trim()
     const expectedUser = deps.options.adminUser.trim().toLowerCase()
@@ -787,7 +789,7 @@ async function receiveMessage(
     throw new HttpError(400, 'conversationId 必须是字符串')
   }
   const conversationId =
-    rawConversationId !== undefined && rawConversationId.trim() !== '' ? rawConversationId : 'owner'
+    typeof rawConversationId === 'string' && rawConversationId.trim() !== '' ? rawConversationId : 'owner'
   const deviceId = typeof record.deviceId === 'string' ? record.deviceId.trim().slice(0, 40) : undefined
 
   const message: InboundMessage = {
