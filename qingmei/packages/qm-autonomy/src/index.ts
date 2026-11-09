@@ -41,6 +41,8 @@ import {
 export interface AutonomyConfig {
   /** tick 间隔；0 表示只手动触发（测试用） */
   tickMs?: number
+  /** 是否装配同包自治子模块 */
+  modules?: boolean
   mode?: AutonomyLevel
   /** 每日主动建议上限 */
   dailyBudget?: number
@@ -152,7 +154,7 @@ class AutonomyRunner extends AutonomyService {
 
   constructor(ctx: Context, config: AutonomyConfig = {}) {
     super(ctx)
-    this.config = { ...DEFAULTS, ...config }
+    this.config = { ...DEFAULTS, ...config } as Required<AutonomyConfig>
     const store = ctx.store
     this.approval = ctx.approval
     this.task = ctx.task
@@ -408,12 +410,12 @@ class AutonomyRunner extends AutonomyService {
     try {
       let route = this.config.notify?.[kind] ?? this.config.notify?.default
       if (!route) {
-        const preferred = kind === 'casual' ? 'qq' : 'feishu'
+        const preferred = kind === 'casual' ? ('qq' as const) : ('feishu' as const)
         const target = (await this.channelTargets?.list() ?? []).find((row) => row.channel === preferred)
         if (target) route = { channel: preferred, conversationId: target.conversationId }
       }
       const result = await this.channel.send({
-        channel: route?.channel ?? 'web',
+        channel: (route?.channel ?? 'web') as never,
         conversationId: route?.conversationId ?? 'owner',
         blocks: [{ type: 'text', text }],
       })
@@ -495,6 +497,21 @@ class AutonomyRunner extends AutonomyService {
           value: 55,
           risk: 'low',
           payload: { stats },
+        })
+      }
+    }
+
+    if (this.memory) {
+      const proposals = await this.memory.conceptProposals().catch(() => [])
+      if (proposals.length > 0) {
+        list.push({
+          id: 'memory.concept.review',
+          action: 'notify.self',
+          title: `${proposals.length} 条概念变更待评估`,
+          reason: '概念合并/分裂只发提案，不自动执行；可在记忆页评估后应用',
+          value: 50,
+          risk: 'low',
+          payload: { proposals: proposals.slice(0, 3) },
         })
       }
     }

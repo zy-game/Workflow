@@ -123,6 +123,36 @@ test('沉淀：重复共现形成概念神经元并参与召回', async () => {
   }
 })
 
+test('概念变更：提案、评估、应用、回滚', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    for (const text of ['手冲咖啡很好喝', '手冲咖啡早上喝', '手冲咖啡下午喝']) {
+      await ctx.memory.ingest([{ kind: 'episode', subject: 'session:s1', predicate: '说', object: text, confidence: 0.9, sensitivity: 'private', origin: ORIGIN }])
+    }
+    await (ctx.memory as unknown as { consolidate(): Promise<unknown> }).consolidate()
+    const memory = ctx.memory as unknown as {
+      conceptProposals(): Promise<Array<{ id: string; kind: string; sourceId?: string; targetId?: string }>>
+      evaluateConceptChange(p: unknown): Promise<{ canApply: boolean } | null>
+      applyConceptChange(p: unknown): Promise<{ changeId: string } | null>
+      rollbackConceptChange(id: string): Promise<boolean>
+      stats(): Promise<{ concepts: number }>
+    }
+    const proposals = await memory.conceptProposals()
+    const merge = proposals.find((item) => item.kind === 'merge')
+    assert.ok(merge, '重复 episode 应产生合并提案')
+    const evaluation = await memory.evaluateConceptChange(merge)
+    assert.equal(evaluation?.canApply, true)
+    const before = (await memory.stats()).concepts
+    const applied = await memory.applyConceptChange(merge)
+    assert.ok(applied?.changeId)
+    assert.ok((await memory.stats()).concepts < before)
+    assert.equal(await memory.rollbackConceptChange(applied!.changeId), true)
+    assert.equal((await memory.stats()).concepts, before)
+  } finally {
+    await dispose()
+  }
+})
+
 test('stats：图规模可用于自治观察', async () => {
   const { ctx, dispose } = await setup()
   try {

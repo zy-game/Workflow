@@ -772,6 +772,45 @@ export abstract class MemoryService extends Service {
   async stats(): Promise<Record<string, number> | null> {
     return null
   }
+
+  /** 概念合并/分裂提案；默认空，神经元 provider 可覆盖 */
+  async conceptProposals(): Promise<ConceptProposal[]> {
+    return []
+  }
+
+  /** 评估提案（只读）；默认 null */
+  async evaluateConceptChange(_proposal: ConceptProposal): Promise<ConceptEvaluation | null> {
+    return null
+  }
+
+  /** 应用提案；默认不支持 */
+  async applyConceptChange(_proposal: ConceptProposal): Promise<{ changeId: string } | null> {
+    return null
+  }
+
+  /** 回滚概念变更；默认不支持 */
+  async rollbackConceptChange(_changeId: string): Promise<boolean> {
+    return false
+  }
+}
+
+export interface ConceptProposal {
+  id: string
+  kind: 'merge' | 'split'
+  sourceId?: string
+  targetId?: string
+  conceptId?: string
+  reason: string
+  risk: 'low' | 'medium' | 'high'
+}
+
+export interface ConceptEvaluation {
+  kind: 'merge' | 'split'
+  affectedConcepts: number
+  affectedEpisodes: number
+  overlap: number
+  canApply: boolean
+  risk: 'low' | 'medium' | 'high'
 }
 
 export interface PersonaSnapshot {

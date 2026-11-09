@@ -157,17 +157,18 @@ export function apply(ctx: Context, config: NudgeConfig = {}): void {
         }
 
         const contract = run.contract
+        const deadline = contract.deadline?.getTime()
         let target = 1
         if (behind > 40 || row.ignored >= 2) target = 2
         if (
           behind > 60 &&
-          contract.deadline.getTime() - nowMs < 8 * HOUR &&
+          deadline !== undefined && deadline - nowMs < 8 * HOUR &&
           row.ignored >= 1 &&
           (contract.enforcement === 'strict' || contract.enforcement === 'contract')
         ) {
           target = 3
         }
-        if (nowMs > contract.deadline.getTime() && contract.enforcement === 'contract') target = 4
+        if (deadline !== undefined && nowMs > deadline && contract.enforcement === 'contract') target = 4
         // 一次只升一级，避免首个提醒直接跳到 L2
         target = Math.min(target, row.level + 1)
 

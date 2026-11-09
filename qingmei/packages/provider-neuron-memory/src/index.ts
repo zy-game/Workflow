@@ -25,6 +25,9 @@ import {
   type RecalledFact,
   type Row,
   type HistoryService,
+  type Collection,
+  type ConceptProposal,
+  type ConceptEvaluation,
 } from '@qingmei/core'
 
 export interface NeuronMemoryConfig {
@@ -60,6 +63,7 @@ const SYNAPSE = 'qm_synapse'
 const EPISODE = 'qm_episode'
 const BINDING = 'qm_neuron_binding'
 const FACT = 'qm_mem_fact'
+const CHANGE = 'qm_neuron_change'
 const DEFAULT_CONSOLIDATE_MS = 6 * 60 * 60_000
 
 interface NeuronRow extends Row {
@@ -101,6 +105,15 @@ interface BindingRow extends Row {
   neuron_id: string
   weight: number
   position: number
+}
+
+interface ChangeRow extends Row {
+  kind: 'merge' | 'split'
+  proposal_json: string
+  before_json: string
+  after_json: string
+  status: 'applied' | 'rolled_back'
+  created_at: number
 }
 
 interface FactRow extends Row {
@@ -155,6 +168,7 @@ export class NeuronMemory extends MemoryService {
   private readonly episodes
   private readonly bindings
   private readonly facts
+  private readonly changes
   private history: HistoryService | undefined
   private readonly limit: number
   private readonly minConfidence: number
@@ -181,6 +195,7 @@ export class NeuronMemory extends MemoryService {
     this.episodes = store.collection<EpisodeRow>(EPISODE)
     this.bindings = store.collection<BindingRow>(BINDING)
     this.facts = store.collection<FactRow>(FACT)
+    this.changes = store.collection<ChangeRow>(CHANGE)
     ctx.inject(['history'], (sub) => { this.history = sub.history })
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
@@ -679,6 +694,147 @@ export class NeuronMemory extends MemoryService {
   }
 
   /** 当前图规模，供自治观察 */
+  async conceptProposals(): Promise<ConceptProposal[]> {
+    await this.ready
+    const sets = await this.conceptEpisodeSets()
+    const concepts = [...this.byId.values()].filter((item) => item.row.kind === 'concept' && !item.row.valid_to)
+    const proposals: ConceptProposal[] = []
+    for (let i = 0; i < concepts.length; i += 1) {
+      for (let j = i + 1; j < concepts.length; j += 1) {
+        const a = sets.get(concepts[i]!.row.id)
+        const b = sets.get(concepts[j]!.row.id)
+        if (!a || !b || a.size < 2 || b.size < 2) continue
+        const overlap = [...a].filter((id) => b.has(id)).length / new Set([...a, ...b]).size
+        if (overlap < 0.8) continue
+        const source = a.size <= b.size ? concepts[i]!.row.id : concepts[j]!.row.id
+        const target = source === concepts[i]!.row.id ? concepts[j]!.row.id : concepts[i]!.row.id
+        proposals.push({ id: `merge:${source}:${target}`, kind: 'merge', sourceId: source, targetId: target, reason: `episode 重叠 ${(overlap * 100).toFixed(0)}%`, risk: 'medium' })
+      }
+    }
+    for (const concept of concepts) {
+      const set = sets.get(concept.row.id)
+      if (set && set.size >= 8) {
+        proposals.push({ id: `split:${concept.row.id}`, kind: 'split', conceptId: concept.row.id, reason: `绑定了 ${set.size} 个 episode，建议人工检查是否过载`, risk: 'high' })
+      }
+    }
+    return proposals.slice(0, 20)
+  }
+
+  async evaluateConceptChange(proposal: ConceptProposal): Promise<ConceptEvaluation | null> {
+    await this.ready
+    const sets = await this.conceptEpisodeSets()
+    if (proposal.kind === 'merge') {
+      const a = sets.get(proposal.sourceId ?? '') ?? new Set<string>()
+      const b = sets.get(proposal.targetId ?? '') ?? new Set<string>()
+      if (a.size === 0 || b.size === 0) return null
+      return {
+        kind: 'merge',
+        affectedConcepts: 2,
+        affectedEpisodes: new Set([...a, ...b]).size,
+        overlap: [...a].filter((id) => b.has(id)).length / new Set([...a, ...b]).size,
+        canApply: true,
+        risk: 'medium',
+      }
+    }
+    if (proposal.kind === 'split') {
+      const set = sets.get(proposal.conceptId ?? '') ?? new Set<string>()
+      if (set.size === 0) return null
+      return { kind: 'split', affectedConcepts: 1, affectedEpisodes: set.size, overlap: 0, canApply: false, risk: 'high' }
+    }
+    return null
+  }
+
+  async applyConceptChange(proposal: ConceptProposal): Promise<{ changeId: string } | null> {
+    await this.ready
+    if (proposal.kind !== 'merge' || !proposal.sourceId || !proposal.targetId) return null
+    const source = this.byId.get(proposal.sourceId)
+    const target = this.byId.get(proposal.targetId)
+    if (!source || !target || source.row.kind !== 'concept' || target.row.kind !== 'concept') return null
+    if (source.row.valid_to || target.row.valid_to) return null
+    const before = JSON.stringify(await this.snapshotGraph())
+    for (const [ownerId, bindings] of [...this.byOwner.entries()]) {
+      const sourceBindings = bindings.filter((row) => row.neuron_id === proposal.sourceId)
+      if (sourceBindings.length === 0) continue
+      const hasTarget = bindings.some((row) => row.neuron_id === proposal.targetId)
+      for (const binding of sourceBindings) {
+        if (hasTarget) await this.bindings.delete(binding.id)
+        else await this.bindings.update(binding.id, { neuron_id: proposal.targetId })
+        void ownerId
+      }
+    }
+    await this.neurons.update(proposal.sourceId, { valid_to: Date.now() })
+    const after = JSON.stringify(await this.snapshotGraph())
+    const change = await this.changes.insert({
+      kind: 'merge',
+      proposal_json: JSON.stringify(proposal),
+      before_json: before,
+      after_json: after,
+      status: 'applied',
+      created_at: Date.now(),
+    })
+    this.byId.clear()
+    this.byLabel.clear()
+    this.outgoing.clear()
+    this.byOwner.clear()
+    await this.load()
+    return { changeId: change.id }
+  }
+
+  async rollbackConceptChange(changeId: string): Promise<boolean> {
+    await this.ready
+    const change = await this.changes.get(changeId)
+    if (!change || change.status !== 'applied') return false
+    await this.restoreGraph(JSON.parse(change.before_json) as GraphSnapshot)
+    await this.changes.update(changeId, { status: 'rolled_back' })
+    return true
+  }
+
+  private async conceptEpisodeSets(): Promise<Map<string, Set<string>>> {
+    const sets = new Map<string, Set<string>>()
+    for (const [ownerId, bindings] of this.byOwner) {
+      const episode = await this.episodes.get(ownerId)
+      if (!episode || episode.valid_to) continue
+      for (const binding of bindings) {
+        const neuron = this.byId.get(binding.neuron_id)
+        if (!neuron || neuron.row.kind !== 'concept') continue
+        const set = sets.get(binding.neuron_id) ?? new Set<string>()
+        set.add(ownerId)
+        sets.set(binding.neuron_id, set)
+      }
+    }
+    return sets
+  }
+
+  private async snapshotGraph(): Promise<GraphSnapshot> {
+    return {
+      neurons: await this.neurons.find({}),
+      synapses: await this.synapses.find({}),
+      bindings: await this.bindings.find({}),
+    }
+  }
+
+  private async restoreGraph(snapshot: GraphSnapshot): Promise<void> {
+    await this.restoreRows(this.neurons, snapshot.neurons)
+    await this.restoreRows(this.synapses, snapshot.synapses)
+    await this.restoreRows(this.bindings, snapshot.bindings)
+    this.byId.clear()
+    this.byLabel.clear()
+    this.outgoing.clear()
+    this.byOwner.clear()
+    await this.load()
+  }
+
+  private async restoreRows<T extends Row>(collection: Collection<T>, rows: T[]): Promise<void> {
+    const current = await collection.find({})
+    const wanted = new Map(rows.map((row) => [row.id, row]))
+    for (const row of current) if (!wanted.has(row.id)) await collection.delete(row.id)
+    for (const row of rows) {
+      const existing = await collection.get(row.id)
+      if (existing) await collection.update(row.id, row)
+      else await collection.insert(row)
+    }
+  }
+
   async stats(): Promise<{ neurons: number; synapses: number; episodes: number; facts: number; concepts: number }> {
     await this.ready
     return {
@@ -689,6 +845,12 @@ export class NeuronMemory extends MemoryService {
       concepts: [...this.byId.values()].filter((item) => item.row.kind === 'concept' && !item.row.valid_to).length,
     }
   }
+}
+
+interface GraphSnapshot {
+  neurons: NeuronRow[]
+  synapses: SynapseRow[]
+  bindings: BindingRow[]
 }
 
 function normalize(record: MemoryRecord): MemoryRecord | null {

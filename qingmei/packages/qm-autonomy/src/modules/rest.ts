@@ -70,7 +70,7 @@ export function apply(ctx: Context, config: RestConfig = {}): void {
   }
 
   async function userActivity(fromMs: number, toMs: number): Promise<number[]> {
-    return history.activity(fromMs, toMs)
+    return (history as unknown as { activity(fromMs: number, toMs: number): Promise<number[]> }).activity(fromMs, toMs)
   }
 
   async function tick(): Promise<string[]> {

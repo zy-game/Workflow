@@ -17,7 +17,8 @@ const node = process.execPath
 const withSmoke = process.argv.includes('--with-smoke')
 const steps = [
   { name: 'architecture', args: ['scripts/check-architecture.mjs', '--strict'] },
-  { name: 'typecheck', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/provider-neuron-memory/tsconfig.json'] },
+  { name: 'typecheck:memory', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/provider-neuron-memory/tsconfig.json'] },
+  { name: 'typecheck:autonomy', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/qm-autonomy/tsconfig.json'] },
   { name: 'tests', args: ['--test', '--test-concurrency=1'] },
 ]
 if (withSmoke) steps.push({ name: 'smoke', args: ['scripts/smoke.mjs'] })

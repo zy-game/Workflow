@@ -412,6 +412,16 @@ async function routeRequest(
       return
     }
 
+    if (pathname === '/api/v1/memory/concepts/proposals' && method === 'GET') {
+      const memory = deps.resources.memory
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      sendJson(res, 200, { ok: true, proposals: await memory.conceptProposals() })
+      return
+    }
+
     if (pathname === '/api/v1/memory/consolidate' && method === 'POST') {
       const memory = deps.resources.memory
       if (!memory) {
@@ -549,6 +559,32 @@ async function routeRequest(
           return
         }
         sendJson(res, 200, { ok: true, state: action.action === 'pause' ? 'paused' : 'active' })
+        return
+      }
+    }
+
+    if (pathname.startsWith('/api/v1/memory/concepts/') && method === 'POST') {
+      const memory = deps.resources.memory
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      const body = await readJsonBody(req).catch(() => ({}))
+      const proposal = parseBodyRecord(body)
+      if (pathname === '/api/v1/memory/concepts/evaluate') {
+        const evaluation = await memory.evaluateConceptChange(proposal as never)
+        sendJson(res, evaluation ? 200 : 400, evaluation ? { ok: true, evaluation } : { ok: false, error: '提案无效或不可评估' })
+        return
+      }
+      if (pathname === '/api/v1/memory/concepts/apply') {
+        const result = await memory.applyConceptChange(proposal as never)
+        sendJson(res, result ? 200 : 400, result ? { ok: true, ...result } : { ok: false, error: '提案无效或不可应用' })
+        return
+      }
+      if (pathname === '/api/v1/memory/concepts/rollback') {
+        const changeId = typeof proposal.changeId === 'string' ? proposal.changeId : ''
+        const rolled = changeId ? await memory.rollbackConceptChange(changeId) : false
+        sendJson(res, rolled ? 200 : 400, rolled ? { ok: true } : { ok: false, error: '变更不存在或不可回滚' })
         return
       }
     }
@@ -843,6 +879,30 @@ function scheduleActionOf(pathname: string): { id: string; action: 'pause' | 're
  *
  * 只接受显式给出的字段；一个字段都没有视为无效请求，避免「静默什么都没改」。
  */
+function conceptProposalFrom(req: GatewayRequest): Record<string, unknown> {
+  const body = parseBodyRecord(req.body)
+  if (Object.keys(body).length > 0) return body
+  const raw = typeof req.query.proposal === 'string' ? req.query.proposal : ''
+  if (!raw) return {}
+  try {
+    return parseBodyRecord(JSON.parse(raw))
+  } catch {
+    return {}
+  }
+}
+
+function parseBodyRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+    } catch {
+      return {}
+    }
+  }
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
 function schedulePatchFrom(body: Record<string, unknown>): SchedulePatch {
   const patch: SchedulePatch = {}
   if (typeof body.text === 'string') patch.text = body.text

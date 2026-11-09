@@ -156,7 +156,7 @@ class SqliteConversationProfile extends ConversationProfileService {
         await this.historyRows.insert({
           id: uid('snap'),
           profile_id: id,
-          tags_json: existing.tags_json,
+          tags_json: (existing as unknown as { tags_json: string }).tags_json,
           title: existing.title,
           status: existing.status,
           at: now,
@@ -201,7 +201,7 @@ class SqliteConversationProfile extends ConversationProfileService {
         await this.historyRows.insert({
           id: uid('snap'),
           profile_id: id,
-          tags_json: existing.tags_json,
+          tags_json: (existing as unknown as { tags_json: string }).tags_json,
           title: existing.title,
           status: existing.status,
           at: now,
