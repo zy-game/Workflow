@@ -28,6 +28,7 @@ import {
   type Collection,
   type ConceptProposal,
   type ConceptEvaluation,
+  type ConceptChangeSummary,
 } from '@qingmei/core'
 
 export interface NeuronMemoryConfig {
@@ -699,6 +700,7 @@ export class NeuronMemory extends MemoryService {
     const sets = await this.conceptEpisodeSets()
     const concepts = [...this.byId.values()].filter((item) => item.row.kind === 'concept' && !item.row.valid_to)
     const proposals: ConceptProposal[] = []
+    const merges: ConceptProposal[] = []
     for (let i = 0; i < concepts.length; i += 1) {
       for (let j = i + 1; j < concepts.length; j += 1) {
         const a = sets.get(concepts[i]!.row.id)
@@ -708,16 +710,26 @@ export class NeuronMemory extends MemoryService {
         if (overlap < 0.8) continue
         const source = a.size <= b.size ? concepts[i]!.row.id : concepts[j]!.row.id
         const target = source === concepts[i]!.row.id ? concepts[j]!.row.id : concepts[i]!.row.id
-        proposals.push({ id: `merge:${source}:${target}`, kind: 'merge', sourceId: source, targetId: target, reason: `episode 重叠 ${(overlap * 100).toFixed(0)}%`, risk: 'medium' })
+        merges.push({ id: `merge:${source}:${target}`, kind: 'merge', sourceId: source, targetId: target, reason: `episode 重叠 ${(overlap * 100).toFixed(0)}%`, risk: 'medium' })
       }
     }
     for (const concept of concepts) {
       const set = sets.get(concept.row.id)
-      if (set && set.size >= 8) {
-        proposals.push({ id: `split:${concept.row.id}`, kind: 'split', conceptId: concept.row.id, reason: `绑定了 ${set.size} 个 episode，建议人工检查是否过载`, risk: 'high' })
+      if (!set || set.size < 8) continue
+      const sessions = new Map<string, string[]>()
+      for (const episodeId of set) {
+        const episode = await this.episodes.get(episodeId)
+        if (!episode || episode.valid_to) continue
+        const list = sessions.get(episode.session_id) ?? []
+        list.push(episodeId)
+        sessions.set(episode.session_id, list)
+      }
+      const groups = [...sessions.values()].filter((group) => group.length > 0)
+      if (groups.length >= 2) {
+        proposals.push({ id: `split:${concept.row.id}`, kind: 'split', conceptId: concept.row.id, reason: `绑定了 ${set.size} 个 episode、${groups.length} 个 session，建议拆成独立概念`, risk: 'medium', payload: { groups } })
       }
     }
-    return proposals.slice(0, 20)
+    return [...proposals, ...merges].slice(0, 20)
   }
 
   async evaluateConceptChange(proposal: ConceptProposal): Promise<ConceptEvaluation | null> {
@@ -739,13 +751,15 @@ export class NeuronMemory extends MemoryService {
     if (proposal.kind === 'split') {
       const set = sets.get(proposal.conceptId ?? '') ?? new Set<string>()
       if (set.size === 0) return null
-      return { kind: 'split', affectedConcepts: 1, affectedEpisodes: set.size, overlap: 0, canApply: false, risk: 'high' }
+      const groups = proposal.payload?.groups?.filter((group) => Array.isArray(group) && group.length > 0) ?? []
+      return { kind: 'split', affectedConcepts: 1, affectedEpisodes: set.size, overlap: 0, canApply: groups.length >= 2, risk: 'medium' }
     }
     return null
   }
 
   async applyConceptChange(proposal: ConceptProposal): Promise<{ changeId: string } | null> {
     await this.ready
+    if (proposal.kind === 'split') return this.applySplit(proposal)
     if (proposal.kind !== 'merge' || !proposal.sourceId || !proposal.targetId) return null
     const source = this.byId.get(proposal.sourceId)
     const target = this.byId.get(proposal.targetId)
@@ -780,6 +794,57 @@ export class NeuronMemory extends MemoryService {
     return { changeId: change.id }
   }
 
+  private async applySplit(proposal: ConceptProposal): Promise<{ changeId: string } | null> {
+    const source = this.byId.get(proposal.conceptId ?? '')
+    if (!source || source.row.kind !== 'concept' || source.row.valid_to) return null
+    const groups = proposal.payload?.groups?.filter((group) => Array.isArray(group) && group.length > 0) ?? []
+    if (groups.length < 2) return null
+    const before = JSON.stringify(await this.snapshotGraph())
+    for (let index = 0; index < groups.length; index += 1) {
+      const concept = await this.neuron(`${source.row.label}:split${index + 1}`, 'concept')
+      for (const episodeId of groups[index]!) {
+        const episode = await this.episodes.get(episodeId)
+        if (!episode || episode.valid_to) continue
+        const tokens = (this.byOwner.get(episodeId) ?? [])
+          .map((row) => this.byId.get(row.neuron_id))
+          .filter((item): item is RuntimeNeuron => item !== undefined && item.row.kind === 'token')
+        for (const token of tokens) {
+          await this.link(token.row.id, concept.id, 0.4)
+          await this.link(concept.id, token.row.id, 0.2)
+        }
+        const exists = this.byOwner.get(episodeId)?.some((row) => row.neuron_id === concept.id)
+        if (!exists) {
+          const binding = await this.bindings.insert({
+            owner_id: episodeId,
+            owner_kind: 'episode',
+            neuron_id: concept.id,
+            weight: 0.7,
+            position: 999,
+          })
+          const list = this.byOwner.get(episodeId) ?? []
+          list.push(binding)
+          this.byOwner.set(episodeId, list)
+        }
+      }
+    }
+    await this.neurons.update(source.row.id, { valid_to: Date.now() })
+    const after = JSON.stringify(await this.snapshotGraph())
+    const change = await this.changes.insert({
+      kind: 'split',
+      proposal_json: JSON.stringify(proposal),
+      before_json: before,
+      after_json: after,
+      status: 'applied',
+      created_at: Date.now(),
+    })
+    this.byId.clear()
+    this.byLabel.clear()
+    this.outgoing.clear()
+    this.byOwner.clear()
+    await this.load()
+    return { changeId: change.id }
+  }
+
   async rollbackConceptChange(changeId: string): Promise<boolean> {
     await this.ready
     const change = await this.changes.get(changeId)
@@ -789,6 +854,28 @@ export class NeuronMemory extends MemoryService {
     return true
   }
 
+  async conceptChanges(limit = 20): Promise<ConceptChangeSummary[]> {
+    await this.ready
+    return (await this.changes.find({}))
+      .sort((a, b) => b.created_at - a.created_at)
+      .slice(0, Math.max(1, Math.min(100, limit)))
+      .map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        status: row.status,
+        createdAt: new Date(row.created_at),
+        proposal: parseJson(row.proposal_json),
+      }))
+  }
+
+  async rollbackConceptChanges(changeIds: string[]): Promise<{ rolled: number }> {
+    let rolled = 0
+    for (const id of [...new Set(changeIds)]) {
+      if (await this.rollbackConceptChange(id)) rolled += 1
+    }
+    return { rolled }
+  }
+
   private async conceptEpisodeSets(): Promise<Map<string, Set<string>>> {
     const sets = new Map<string, Set<string>>()
     for (const [ownerId, bindings] of this.byOwner) {
@@ -796,7 +883,7 @@ export class NeuronMemory extends MemoryService {
       if (!episode || episode.valid_to) continue
       for (const binding of bindings) {
         const neuron = this.byId.get(binding.neuron_id)
-        if (!neuron || neuron.row.kind !== 'concept') continue
+        if (!neuron || neuron.row.kind !== 'concept' || neuron.row.valid_to) continue
         const set = sets.get(binding.neuron_id) ?? new Set<string>()
         set.add(ownerId)
         sets.set(binding.neuron_id, set)
@@ -851,6 +938,14 @@ interface GraphSnapshot {
   neurons: NeuronRow[]
   synapses: SynapseRow[]
   bindings: BindingRow[]
+}
+
+function parseJson<T>(value: string): T | null {
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return null
+  }
 }
 
 function normalize(record: MemoryRecord): MemoryRecord | null {

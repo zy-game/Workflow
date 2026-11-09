@@ -5,6 +5,7 @@ import { apiJson, apiSend } from '../lib/api.js'
 
 const facts = ref([])
 const proposals = ref([])
+const changes = ref([])
 const stats = ref(null)
 const evaluations = ref({})
 const lastChangeId = ref('')
@@ -14,18 +15,21 @@ const loading = ref(false)
 const busy = ref('')
 
 const conceptCount = computed(() => Number(stats.value?.concepts ?? 0))
+const appliedChanges = computed(() => changes.value.filter((item) => item.status === 'applied'))
 
 async function load() {
   loading.value = true
   try {
-    const [factBody, statBody, proposalBody] = await Promise.all([
+    const [factBody, statBody, proposalBody, changeBody] = await Promise.all([
       apiJson(ENDPOINTS.memoryFacts),
       apiJson(ENDPOINTS.memoryStats).catch(() => ({ stats: null })),
       apiJson(ENDPOINTS.conceptProposals).catch(() => ({ proposals: [] })),
+      apiJson(ENDPOINTS.conceptChanges).catch(() => ({ changes: [] })),
     ])
     facts.value = Array.isArray(factBody?.facts) ? factBody.facts : []
     stats.value = statBody?.stats ?? null
     proposals.value = Array.isArray(proposalBody?.proposals) ? proposalBody.proposals : []
+    changes.value = Array.isArray(changeBody?.changes) ? changeBody.changes : []
     error.value = ''
   } catch (err) {
     error.value = err instanceof TypeError ? '无法连接服务' : err.message || '读取记忆失败'
@@ -49,7 +53,7 @@ async function evaluate(proposal) {
 async function apply(proposal) {
   const evaluation = evaluations.value[proposal.id]
   if (!evaluation?.canApply) return
-  if (!window.confirm('应用这次概念合并？会保存快照，可回滚。')) return
+  if (!window.confirm('应用这次概念变更？会保存快照，可回滚。')) return
   busy.value = proposal.id
   try {
     const body = await apiSend(ENDPOINTS.conceptApply, { body: proposal })
@@ -57,6 +61,35 @@ async function apply(proposal) {
     await load()
   } catch (err) {
     error.value = err.message || '应用失败'
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function rollbackChange(change) {
+  busy.value = change.id
+  try {
+    await apiSend(ENDPOINTS.conceptRollback, { body: { changeId: change.id } })
+    lastChangeId.value = ''
+    await load()
+  } catch (err) {
+    error.value = err.message || '回滚失败'
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function rollbackAll() {
+  const ids = appliedChanges.value.map((item) => item.id)
+  if (ids.length === 0) return
+  if (!window.confirm(`回滚最近 ${ids.length} 次概念变更？`)) return
+  busy.value = 'rollback-batch'
+  try {
+    await apiSend(ENDPOINTS.conceptRollbackBatch, { body: { changeIds: ids } })
+    lastChangeId.value = ''
+    await load()
+  } catch (err) {
+    error.value = err.message || '批量回滚失败'
   } finally {
     busy.value = ''
   }
@@ -200,6 +233,39 @@ onMounted(load)
           </div>
         </li>
       </ul>
+
+      <div v-if="changes.length" class="memory-history">
+        <div class="view-actions">
+          <h3>最近概念变更</h3>
+          <button
+            class="btn small danger"
+            type="button"
+            :disabled="busy === 'rollback-batch' || appliedChanges.length === 0"
+            @click="rollbackAll"
+          >
+            {{ busy === 'rollback-batch' ? '批量回滚中…' : `回滚全部 (${appliedChanges.length})` }}
+          </button>
+        </div>
+        <ul class="list">
+          <li v-for="change in changes" :key="change.id" class="item">
+            <div class="item-main">
+              <p class="item-title">{{ change.kind === 'merge' ? '合并' : '拆分' }} · {{ change.status }}</p>
+              <p class="item-meta">{{ change.id }} · {{ new Date(change.createdAt).toLocaleString() }}</p>
+            </div>
+            <div class="item-actions">
+              <button
+                v-if="change.status === 'applied'"
+                class="btn small danger"
+                type="button"
+                :disabled="busy === change.id"
+                @click="rollbackChange(change)"
+              >
+                回滚
+              </button>
+            </div>
+          </li>
+        </ul>
+      </div>
     </template>
   </section>
 </template>

@@ -792,6 +792,16 @@ export abstract class MemoryService extends Service {
   async rollbackConceptChange(_changeId: string): Promise<boolean> {
     return false
   }
+
+  /** 概念变更历史；默认空 */
+  async conceptChanges(_limit?: number): Promise<ConceptChangeSummary[]> {
+    return []
+  }
+
+  /** 批量回滚；默认不支持 */
+  async rollbackConceptChanges(_changeIds: string[]): Promise<{ rolled: number }> {
+    return { rolled: 0 }
+  }
 }
 
 export interface ConceptProposal {
@@ -802,6 +812,16 @@ export interface ConceptProposal {
   conceptId?: string
   reason: string
   risk: 'low' | 'medium' | 'high'
+  /** split 的分组 episode id；merge 可省略 */
+  payload?: { groups?: string[][] }
+}
+
+export interface ConceptChangeSummary {
+  id: string
+  kind: 'merge' | 'split'
+  status: 'applied' | 'rolled_back'
+  createdAt: Date
+  proposal: ConceptProposal | null
 }
 
 export interface ConceptEvaluation {

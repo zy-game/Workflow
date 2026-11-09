@@ -13,6 +13,8 @@ export const ENDPOINTS = {
   conceptEvaluate: './api/v1/memory/concepts/evaluate',
   conceptApply: './api/v1/memory/concepts/apply',
   conceptRollback: './api/v1/memory/concepts/rollback',
+  conceptChanges: './api/v1/memory/concepts/changes',
+  conceptRollbackBatch: './api/v1/memory/concepts/rollback-batch',
   schedules: './api/v1/schedules',
   tasks: './api/v1/tasks',
   devices: './api/v1/devices',

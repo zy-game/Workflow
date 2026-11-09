@@ -422,6 +422,16 @@ async function routeRequest(
       return
     }
 
+    if (pathname === '/api/v1/memory/concepts/changes' && method === 'GET') {
+      const memory = deps.resources.memory
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      sendJson(res, 200, { ok: true, changes: await memory.conceptChanges(50) })
+      return
+    }
+
     if (pathname === '/api/v1/memory/consolidate' && method === 'POST') {
       const memory = deps.resources.memory
       if (!memory) {
@@ -579,6 +589,12 @@ async function routeRequest(
       if (pathname === '/api/v1/memory/concepts/apply') {
         const result = await memory.applyConceptChange(proposal as never)
         sendJson(res, result ? 200 : 400, result ? { ok: true, ...result } : { ok: false, error: '提案无效或不可应用' })
+        return
+      }
+      if (pathname === '/api/v1/memory/concepts/rollback-batch') {
+        const ids = Array.isArray(proposal.changeIds) ? proposal.changeIds.map(String) : []
+        const result = ids.length > 0 ? await memory.rollbackConceptChanges(ids) : { rolled: 0 }
+        sendJson(res, result.rolled > 0 ? 200 : 400, result.rolled > 0 ? { ok: true, ...result } : { ok: false, error: '没有可回滚的变更' })
         return
       }
       if (pathname === '/api/v1/memory/concepts/rollback') {

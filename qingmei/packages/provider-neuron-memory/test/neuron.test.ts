@@ -153,6 +153,43 @@ test('概念变更：提案、评估、应用、回滚', async () => {
   }
 })
 
+test('概念 split：跨 session 过载概念可安全拆分并回滚', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    for (let i = 0; i < 9; i += 1) {
+      await ctx.memory.ingest([{
+        kind: 'episode',
+        subject: i < 4 ? 'session:s1' : 'session:s2',
+        predicate: '说',
+        object: `手冲咖啡第${i}次`,
+        confidence: 0.9,
+        sensitivity: 'private',
+        origin: ORIGIN,
+      }])
+    }
+    const memory = ctx.memory as unknown as {
+      consolidate(): Promise<unknown>
+      conceptProposals(): Promise<Array<{ id: string; kind: string; conceptId?: string; payload?: { groups?: string[][] } }>>
+      evaluateConceptChange(p: unknown): Promise<{ canApply: boolean } | null>
+      applyConceptChange(p: unknown): Promise<{ changeId: string } | null>
+      rollbackConceptChange(id: string): Promise<boolean>
+      stats(): Promise<{ concepts: number }>
+    }
+    await memory.consolidate()
+    const split = (await memory.conceptProposals()).find((item) => item.kind === 'split' && (item.payload?.groups?.length ?? 0) >= 2)
+    assert.ok(split, '跨 session 概念应产生 split 提案')
+    assert.equal((await memory.evaluateConceptChange(split))?.canApply, true)
+    const before = (await memory.stats()).concepts
+    const applied = await memory.applyConceptChange(split)
+    assert.ok(applied?.changeId)
+    assert.ok((await memory.stats()).concepts > before)
+    assert.equal(await memory.rollbackConceptChange(applied!.changeId), true)
+    assert.equal((await memory.stats()).concepts, before)
+  } finally {
+    await dispose()
+  }
+})
+
 test('stats：图规模可用于自治观察', async () => {
   const { ctx, dispose } = await setup()
   try {
