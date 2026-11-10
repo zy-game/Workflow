@@ -69,11 +69,28 @@ QM_SERVER_URL=https://139.155.78.241:8710 QM_TOKEN=... pnpm --filter @qingmei/de
 
 窗口隐藏时，普通通知会走 Windows 系统通知；点击通知恢复桌宠。
 
+## 免安装 ZIP（推荐给被 SmartScreen/NSIS 拦截的机器）
+
+```text
+E:\Workflow\qingmei-desktop-0.1.3-portable.zip
+```
+
+解压后：
+
+```text
+START-QINGMEI.cmd        直接启动
+INSTALL-QINGMEI.ps1      安装到 %LOCALAPPDATA% 并创建桌面快捷方式
+UNINSTALL-QINGMEI.ps1    卸载
+README-INSTALL.txt       说明
+```
+
+ZIP 使用 ASCII 文件名 `Qingmei.exe`，避免中文文件名在 Windows 解压时乱码。
+
 ## 打包
 
 ```bash
-pnpm --filter @qingmei/desktop dist        # 免安装 portable exe
-pnpm --filter @qingmei/desktop dist:nsis   # NSIS 安装包；当前环境需把 TEMP 指到可写目录
+pnpm --filter qingmei-desktop dist        # 免安装 portable exe
+pnpm --filter qingmei-desktop dist:nsis   # NSIS 安装包；当前环境需把 TEMP 指到可写目录
 ```
 
 产物在 `apps/desktop/dist/`。应用图标在 `apps/desktop/build/icon.ico`（由桌宠预览图生成）。`n`n签名与自动更新的环境变量见 [SIGNING.md](SIGNING.md)。
