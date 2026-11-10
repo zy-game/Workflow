@@ -40,7 +40,6 @@ const el = {
   pet: document.getElementById('pet'),
   petOrb: document.getElementById('pet-orb'),
   petStage: document.getElementById('pet-stage'),
-  statusDot: document.getElementById('status-dot'),
   hint: document.getElementById('hint'),
   onboarding: document.getElementById('onboarding'),
   onboardingStart: document.getElementById('onboarding-start'),
@@ -146,7 +145,7 @@ function playClip(src, { loop = true, duration = 0 } = {}) {
   clearTimeout(clipTimer)
   if (duration > 0) {
     clipTimer = window.setTimeout(() => {
-      if (!['dragging', 'sleeping', 'thinking'].includes(el.app.dataset.state)) {
+      if (!['dragging', 'sleeping', 'thinking', 'offline', 'unstable'].includes(el.app.dataset.state)) {
         setPetState(isOnline() ? 'idle' : 'offline')
       }
     }, duration)
@@ -168,15 +167,15 @@ function setPetState(state) {
     return
   }
   el.app.dataset.state = state
-  if (state === 'idle' || state === 'offline') {
-    if (previous !== 'idle' && previous !== 'offline') idleClip()
+  if (state === 'idle') {
+    if (previous !== 'idle') idleClip()
     return
   }
-  if (state === 'sleeping') {
+  if (state === 'offline' || state === 'sleeping') {
     playClip(VIDEOS.sleep)
     return
   }
-  if (state === 'thinking') {
+  if (state === 'unstable' || state === 'thinking') {
     playClip(VIDEOS.think)
     return
   }
@@ -250,11 +249,31 @@ function isOnline() {
   return Boolean(source) && source.readyState === EventSource.OPEN
 }
 
+let connection = 'offline'
+let offlineTimer = 0
+
+function setConnection(state) {
+  const previous = connection
+  connection = state
+  if (state !== 'online' && !el.chat.hidden) el.chatTyping.hidden = true
+  if (state === 'online') {
+    clearTimeout(offlineTimer)
+    if (previous !== 'online') setPetState('idle')
+    return
+  }
+  if (state === 'unstable') {
+    if (previous !== 'unstable') {
+      setPetState('unstable')
+      pushBubble('网…网络…有点…不稳，我在重连…', 'pet')
+    }
+    return
+  }
+  if (state === 'offline') setPetState('offline')
+  else setPetState('unstable')
+}
+
 function setOnline(online) {
-  el.statusDot.classList.toggle('online', online)
-  el.statusDot.classList.toggle('offline', !online)
-  el.statusDot.title = online ? '已连接' : '未连接'
-  if (!online && !el.chat.hidden) el.chatTyping.hidden = true
+  setConnection(online ? 'online' : 'offline')
 }
 
 function showError(message, isOk = false) {
@@ -296,13 +315,12 @@ function connect() {
   try {
     source = new EventSource(url)
   } catch {
-    setOnline(false)
+    setConnection('offline')
     return
   }
-  setOnline(false)
+  setConnection('connecting')
   source.addEventListener('open', () => {
-    setOnline(true)
-    setPetState('idle')
+    setConnection('online')
     void loadHistory()
     void flushOutbox()
   })
@@ -310,8 +328,11 @@ function connect() {
     if (!el.chat.hidden) appendChunk(event.data)
   })
   source.addEventListener('error', () => {
-    setOnline(false)
-    if (!['thinking', 'happy', 'alert', 'dragging'].includes(el.app.dataset.state)) setPetState('offline')
+    setConnection('unstable')
+    clearTimeout(offlineTimer)
+    offlineTimer = window.setTimeout(() => {
+      if (!isOnline()) setConnection('offline')
+    }, 15_000)
   })
   for (const type of ['assistant', 'approval-requested', 'task-finished']) {
     source.addEventListener(type, (event) => {
@@ -1121,7 +1142,7 @@ function bind() {
   window.addEventListener('mousemove', (event) => {
     const target = document.elementFromPoint(event.clientX, event.clientY)
     const interactive = Boolean(
-      target?.closest('#pet, #bubble, #chat, #drag-handle, #chat-button, #settings-button, #settings-modal, #onboarding, #onboarding-skip, #onboarding-start'),
+      target?.closest('#pet, #bubble, #chat, #chat-button, #settings-button, #settings-modal, #onboarding, #onboarding-skip, #onboarding-start'),
     )
     const next = !interactive
     if (next !== ignoringMouse) {
@@ -1137,7 +1158,7 @@ function bind() {
       el.app.dataset.state !== 'thinking'
     ) {
       setPetState('sleeping')
-    }
+      }
   }, 5000)
   desktop.onOpenSettings(() => openSettings())
   desktop.onReconnect(() => connect())

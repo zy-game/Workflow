@@ -38,29 +38,6 @@ input {
 }
 
 /* 拖动条：只有这里能拖窗口，其它区域留给点击/输入 */
-#drag-handle {
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  width: 52px;
-  height: 12px;
-  margin-left: -26px;
-  border-radius: 999px;
-  background: rgba(47, 107, 79, 0.16);
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  -webkit-app-region: drag;
-  cursor: grab;
-  z-index: 30;
-}
-
-#drag-handle::after {
-  content: "";
-  position: absolute;
-  inset: 4px 10px;
-  border-radius: 999px;
-  background: rgba(47, 107, 79, 0.28);
-}
-
 /* 气泡 */
 .bubble {
   position: absolute;
@@ -430,25 +407,6 @@ input {
   opacity: 0.82;
 }
 
-.status-dot {
-  position: absolute;
-  left: 20px;
-  bottom: 24px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #b7c4bd;
-  box-shadow: 0 0 0 3px rgba(255, 253, 246, 0.7);
-}
-
-.status-dot.online {
-  background: #47b06f;
-}
-
-.status-dot.offline {
-  background: #c9a24a;
-}
-
 .hint {
   position: absolute;
   left: 0;
@@ -658,7 +616,8 @@ input {
   letter-spacing: 6px;
 }
 
-#app[data-state="sleeping"] .zzz {
+#app[data-state="sleeping"] .zzz,
+#app[data-state="offline"] .zzz {
   display: block;
   visibility: visible;
   opacity: 1;
@@ -1021,4 +980,20 @@ video.pet {
 #chat,
 .settings-card {
   zoom: var(--font-scale);
+}
+
+/* 网络不稳定：宠物轻微结巴抖动，不显示独立状态点 */
+#app[data-state="unstable"] .pet {
+  animation: pet-stutter 180ms steps(2, end) infinite;
+}
+
+#app[data-state="unstable"] .zzz {
+  display: none;
+  visibility: hidden;
+}
+
+@keyframes pet-stutter {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px) rotate(-0.6deg); }
+  75% { transform: translateX(2px) rotate(0.6deg); }
 }

@@ -328,7 +328,6 @@ function createWindow() {
               const info = await win.webContents.executeJavaScript(`
                 JSON.stringify({
                   state: document.getElementById('app')?.dataset.state,
-                  dot: document.getElementById('status-dot')?.className,
                   bubbleHidden: document.getElementById('bubble')?.hidden,
                   bubbleText: document.getElementById('bubble-text')?.textContent,
                   chatHidden: document.getElementById('chat')?.hidden,

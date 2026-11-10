@@ -38,7 +38,6 @@ test('preload 只暴露最小 API', () => {
 
 test('界面元素齐全', () => {
   for (const id of [
-    'drag-handle',
     'bubble',
     'bubble-text',
     'bubble-close',
@@ -89,7 +88,6 @@ test('交互：点击/右键/拖动/设置', () => {
   assert.match(app, /addEventListener\('click'/)
   assert.match(app, /addEventListener\('contextmenu'/)
   assert.match(app, /popupMenu/)
-  assert.match(css, /-webkit-app-region:\s*drag/)
   assert.match(css, /-webkit-app-region:\s*no-drag/)
   assert.match(main, /摸摸头/);
   assert.match(main, /选个动作/);
@@ -113,5 +111,8 @@ test('交互：点击/右键/拖动/设置', () => {
   assert.match(main, /fullscreen\.exe/);
   assert.match(main, /setIgnoreMouseEvents/)
   assert.match(preload, /setIgnoreMouseEvents/)
-  assert.match(html, /id="drag-handle"/)
+  assert.doesNotMatch(html, /id="drag-handle"|id="status-dot"/)
+  assert.match(app, /dataset\.state/)
+  assert.match(app, /unstable/)
+  assert.match(css, /pet-stutter/)
 })
