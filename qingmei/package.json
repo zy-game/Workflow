@@ -21,6 +21,7 @@
     "arch": "node scripts/check-architecture.mjs --strict",
     "config:check": "node scripts/check-config.mjs",
     "backup": "node scripts/backup.mjs",
+    "export": "node scripts/export.mjs",
     "artifacts": "node scripts/check-artifacts.mjs",
     "gate": "node scripts/gate.mjs",
     "gate:smoke": "node scripts/gate.mjs --with-smoke",

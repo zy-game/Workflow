@@ -13,6 +13,7 @@
 | `packages/host-gateway/src/index.ts` | CORS 预检放行 `HEAD/PATCH/DELETE`：服务端本来就处理日程、记忆事实的 PATCH/DELETE，之前跨源调用会被预检挡下 |
 | `packages/qm-autonomy/src/modules/conversation-profile.ts` | 删掉 `conversations/suggestions*` 三个路由的重复注册（第二份整块是死代码，48 行） |
 | `scripts/backup.mjs`（新） | `VACUUM INTO` 在线快照 + `integrity_check` + 保留最近 N 份；`--restore` 覆盖前先给现库留底。`pnpm backup` |
+| `scripts/export.mjs`（新） | 账本导出成 JSON（事实/任务/日程/审批/审计），`secret` 事实默认剔除；`--all` 才含消息。`pnpm export` |
 | `scripts/release-desktop.mjs`（新） | 生成 electron-updater 要的 `latest.yml`（sha512 base64 + ISO `releaseDate`）并暂存到 `updates/desktop/`；上一版 latest.yml 的 releaseDate 是没展开的 PowerShell 表达式 |
 | `docs/30-备份与恢复.md`（新） | 备份时机、快照/恢复命令、换机器流程 |
 | `docs/19`、`docs/23`、`apps/desktop/README.md`、`README.md` | 同步 worker 权限行为、插件/服务清单、更新源做法、备份文档入口 |
