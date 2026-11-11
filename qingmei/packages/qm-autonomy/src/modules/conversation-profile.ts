@@ -513,54 +513,6 @@ export function apply(ctx: Context, config: ConversationProfileConfig = {}): voi
   ctx.effect(() =>
     gateway.route({
       method: 'GET',
-      path: '/api/v1/conversations/suggestions',
-      async handler(_req: GatewayRequest, res: GatewayResponse) {
-        res.status(200).send({ ok: true, items: await profiles.listSuggestions() })
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'POST',
-      path: '/api/v1/conversations/suggestions/accept',
-      async handler(req: GatewayRequest, res: GatewayResponse) {
-        const body = (req.body ?? {}) as Record<string, unknown>
-        const id = typeof body.id === 'string' ? body.id.trim() : ''
-        if (!id) {
-          res.status(400).send({ ok: false, error: 'id 必填' })
-          return
-        }
-        const profile = await profiles.acceptSuggestion(id)
-        if (!profile) {
-          res.status(404).send({ ok: false, error: '没有这条建议' })
-          return
-        }
-        res.status(200).send({ ok: true, profile, policy: profiles.policy(profile) })
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'POST',
-      path: '/api/v1/conversations/suggestions/dismiss',
-      async handler(req: GatewayRequest, res: GatewayResponse) {
-        const body = (req.body ?? {}) as Record<string, unknown>
-        const id = typeof body.id === 'string' ? body.id.trim() : ''
-        if (!id) {
-          res.status(400).send({ ok: false, error: 'id 必填' })
-          return
-        }
-        const ok = await profiles.dismissSuggestion(id)
-        res.status(ok ? 200 : 404).send(ok ? { ok: true } : { ok: false, error: '没有这条建议' })
-      },
-    }),
-  )
-
-  ctx.effect(() =>
-    gateway.route({
-      method: 'GET',
       path: '/api/v1/conversations',
       async handler(_req: GatewayRequest, res: GatewayResponse) {
         res.status(200).send({ ok: true, items: await profiles.list() })

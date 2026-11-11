@@ -10,6 +10,8 @@
 | `packages/qm-task/src/index.ts` | `leaseTimeoutMs`（默认 30 分钟，0 关闭）：设备任务 running 且超过该时长没有进展 → failed「设备失联」；本地 run 仍走自己的执行超时 |
 | `scripts/harness-worker.mjs` | 权限请求默认落服务端审批队列（建单 + 轮询决定），发不出去/超时按拒绝，不静默放行；`--auto-approve true` 才自动批准；传给 dsh 的环境变量同样剔除青梅密钥 |
 | `apps/server/src/cli.ts` | `qm doctor` 不再要求 `llm` 服务——生产本来就不装 LLM，之前 prod 清单会被误判「异常」 |
+| `packages/host-gateway/src/index.ts` | CORS 预检放行 `HEAD/PATCH/DELETE`：服务端本来就处理日程、记忆事实的 PATCH/DELETE，之前跨源调用会被预检挡下 |
+| `packages/qm-autonomy/src/modules/conversation-profile.ts` | 删掉 `conversations/suggestions*` 三个路由的重复注册（第二份整块是死代码，48 行） |
 | `scripts/backup.mjs`（新） | `VACUUM INTO` 在线快照 + `integrity_check` + 保留最近 N 份；`--restore` 覆盖前先给现库留底。`pnpm backup` |
 | `scripts/release-desktop.mjs`（新） | 生成 electron-updater 要的 `latest.yml`（sha512 base64 + ISO `releaseDate`）并暂存到 `updates/desktop/`；上一版 latest.yml 的 releaseDate 是没展开的 PowerShell 表达式 |
 | `docs/30-备份与恢复.md`（新） | 备份时机、快照/恢复命令、换机器流程 |

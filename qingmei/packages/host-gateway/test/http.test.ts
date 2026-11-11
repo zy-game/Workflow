@@ -169,6 +169,9 @@ test('CORS 预检：桌面跨域请求可带 Authorization', async () => {
   assert.equal(preflight.status, 204)
   assert.equal(preflight.headers.get('access-control-allow-origin'), '*')
   assert.match(preflight.headers.get('access-control-allow-headers') ?? '', /authorization/i)
+  // 服务端实际处理 PATCH（日程/记忆事实）与 DELETE，预检放行的名单要跟得上
+  assert.match(preflight.headers.get('access-control-allow-methods') ?? '', /PATCH/)
+  assert.match(preflight.headers.get('access-control-allow-methods') ?? '', /DELETE/)
 })
 test('图片上传与消息图片块', async () => {
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
