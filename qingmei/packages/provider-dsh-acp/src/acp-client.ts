@@ -76,6 +76,23 @@ interface TerminalCreateParams {
   outputByteLimit?: number
 }
 
+/**
+ * harness 子进程的环境变量：父进程全量继承，但去掉青梅自己的密钥。
+ * 子 agent 有 shell 工具，能看到这些变量；QM_DSH_API_KEY 属于 DSH 自己，必须保留。
+ */
+const SECRET_ENV = /^(QM_TOKEN|QM_ADMIN_PASSWORD|QM_MCP_TOKEN|QM_LLM_KEY|QM_FEISHU_APP_SECRET|QM_QQ_CLIENT_SECRET)$/
+
+export function harnessEnv(
+  base: NodeJS.ProcessEnv = process.env,
+  extra: Record<string, string | undefined> = {},
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(base)) {
+    if (!SECRET_ENV.test(key)) env[key] = value
+  }
+  return { ...env, ...extra }
+}
+
 export class AcpClient {
   private readonly options: AcpClientOptions
   private child: ChildProcessWithoutNullStreams | null = null
@@ -85,6 +102,8 @@ export class AcpClient {
   private readonly sessions = new Map<string, string>()
   private readonly terminals = new Map<string, TerminalHandle>()
   private ready = false
+  /** 子进程起不来时记住原因，后续请求直接失败而不是等到超时 */
+  private spawnError: string | null = null
 
   constructor(options: AcpClientOptions) {
     this.options = { timeoutMs: 120_000, ...options }
@@ -162,14 +181,30 @@ export class AcpClient {
   }
 
   private spawnChild(): void {
+    this.spawnError = null
     const child = spawn(this.options.command, this.options.args, {
       cwd: this.options.cwd,
-      env: { ...process.env, ...this.options.env },
+      env: harnessEnv(process.env, this.options.env),
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: this.options.shell === true,
     })
     this.child = child
     this.buffer = ''
+
+    // 命令不存在（ENOENT）、没有权限（EACCES）等以 error 事件到达。
+    // 不接住它，Node 会把它升级成未捕获异常，整个服务进程退出。
+    child.on('error', (error: Error) => {
+      this.spawnError = `[acp] 无法启动子进程：${error.message}`
+      this.child = null
+      this.ready = false
+      for (const [, pending] of this.pending) {
+        clearTimeout(pending.timer)
+        pending.reject(new Error(this.spawnError))
+      }
+      this.pending.clear()
+      this.options.onStderr?.(`${this.spawnError}\n`)
+      this.options.onExit?.(null)
+    })
 
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => this.receive(chunk))
@@ -378,6 +413,7 @@ export class AcpClient {
   }
 
   private request(method: string, params: unknown): Promise<unknown> {
+    if (this.spawnError) return Promise.reject(new Error(this.spawnError))
     const id = ++this.seq
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -385,7 +421,14 @@ export class AcpClient {
         reject(new Error(`[acp] 请求超时：${method}`))
       }, this.options.timeoutMs)
       this.pending.set(id, { resolve, reject, timer })
-      this.write({ jsonrpc: '2.0', id, method, params })
+      try {
+        this.write({ jsonrpc: '2.0', id, method, params })
+      } catch (error) {
+        // stdin 已随子进程销毁：立刻失败，不要留一个等 120 秒的 pending
+        clearTimeout(timer)
+        this.pending.delete(id)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
     })
   }
 

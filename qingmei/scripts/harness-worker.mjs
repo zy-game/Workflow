@@ -9,6 +9,10 @@
  * 用法：
  *   node scripts/harness-worker.mjs --server https://139.155.78.241:8710 --token <QM_TOKEN>
  * 配置默认写到 ~/.qingmei/worker.json；也可用 --config 指定。
+ *
+ * 子 agent 请求权限时，默认落到服务端审批队列（Web「任务 → 待确认」、飞书卡片、QQ「批准/拒绝」）；
+ * 发不出去或超时就按拒绝处理。只有完全信任的机器才加 --auto-approve true 跳过人审。
+ * 青梅自己的密钥（QM_TOKEN / QM_ADMIN_PASSWORD / QM_LLM_KEY…）不会传给 dsh 子进程。
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -19,6 +23,91 @@ import { AcpClient } from '../packages/provider-dsh-acp/src/acp-client.ts'
 
 const ROOT = path.join(homedir(), '.qingmei')
 const DEFAULT_CONFIG = path.join(ROOT, 'worker.json')
+/** 审批轮询间隔与默认等待时长（主人可能在 QQ/飞书上才看到这条） */
+const PERMISSION_POLL_MS = 2_000
+const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
+
+/**
+ * 不传给 harness 子进程的青梅密钥。
+ * 子 agent 有 shell 工具，环境变量对它完全可见；QM_DSH_API_KEY 必须保留，
+ * 那是 DSH 自己的模型凭据。
+ */
+const SECRET_ENV = /^(QM_TOKEN|QM_ADMIN_PASSWORD|QM_MCP_TOKEN|QM_LLM_KEY|QM_FEISHU_APP_SECRET|QM_QQ_CLIENT_SECRET)$/
+
+function safeEnv() {
+  const env = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!SECRET_ENV.test(key)) env[key] = value
+  }
+  return env
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function allowOption(event) {
+  const option = event.options?.find((item) => item.kind === 'allow_once' || item.kind === 'allow_always')
+  return option?.optionId ?? null
+}
+
+function denyOption(event) {
+  const option = event.options?.find((item) => item.kind === 'reject_once' || item.kind === 'reject_always')
+  return option?.optionId ?? null
+}
+
+function describePermission(event) {
+  const title = String(event.toolCall?.title ?? event.toolCall?.name ?? '子 agent 请求权限')
+  const options = (event.options ?? []).map((item) => item.name).filter(Boolean)
+  return options.length > 0 ? `${title}（可选：${options.join(' / ')}）` : title
+}
+
+/**
+ * 权限请求的去处。
+ *
+ * 默认走服务端审批队列（Web「任务 → 待确认」、飞书卡片、QQ 回复「批准」），
+ * 与主路径一致；发不出去就拒绝，不静默放行。
+ * 只在完全信任的机器上用 --auto-approve true 跳过人审。
+ */
+function permissionHandler(config) {
+  if (config.autoApprove === true) {
+    return async (event) => allowOption(event)
+  }
+  return async (event) => {
+    const prompt = describePermission(event)
+    let created
+    try {
+      created = await request(config, 'POST', '/api/v1/approvals', {
+        action: `acp:${prompt}`,
+        prompt,
+        requester: `worker:${config.deviceId}`,
+      })
+    } catch (error) {
+      console.error(`[worker] 审批发不出去，按拒绝处理：${error instanceof Error ? error.message : String(error)}`)
+      return denyOption(event)
+    }
+    const id = created?.item?.id
+    if (!id) return denyOption(event)
+    const deadline = Date.now() + config.approvalTimeoutMs
+    while (Date.now() < deadline) {
+      await sleep(PERMISSION_POLL_MS)
+      let row
+      try {
+        const list = await request(config, 'GET', '/api/v1/approvals')
+        row = (list?.items ?? []).find((item) => item.id === id)
+      } catch (error) {
+        console.error(`[worker] 查审批失败：${error instanceof Error ? error.message : String(error)}`)
+        continue
+      }
+      if (!row) continue
+      if (row.status === 'allowed') return allowOption(event)
+      if (row.status === 'denied') return denyOption(event)
+    }
+    console.error(`[worker] 审批超时，按拒绝处理：${prompt}`)
+    return denyOption(event)
+  }
+}
+
 
 function parseArgs(argv) {
   const args = {}
@@ -44,6 +133,9 @@ function loadConfig(args) {
     dshCommand: String(args['dsh-command'] ?? stored.dshCommand ?? 'dsh'),
     workdir: path.resolve(args.workdir ?? stored.workdir ?? path.join(ROOT, 'workspaces')),
     localPort: Number(args.port ?? stored.localPort ?? 7431),
+    // 默认走服务端审批；只有明确信任的机器才跳过人审
+    autoApprove: args['auto-approve'] === 'true' || stored.autoApprove === true,
+    approvalTimeoutMs: Number(args['approval-timeout'] ?? stored.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS),
   }
   if (!config.token) throw new Error('缺少 QM_TOKEN：用 --token 或配置 token')
   if (!config.deviceId) config.deviceId = `dev-${hostname().replace(/[^a-zA-Z0-9]+/g, '-')}-${Math.random().toString(36).slice(2, 8)}`
@@ -102,11 +194,8 @@ async function runDsh(config, task) {
     },
     shell: process.platform === 'win32',
     onStderr: (text) => console.error('[dsh] ' + text),
-    env: { ...process.env },
-    onPermissionRequest: async (event) => {
-      const option = event.options?.find((item) => item.kind === 'allow_once' || item.kind === 'allow_always')
-      return option?.optionId ?? null
-    },
+    env: safeEnv(),
+    onPermissionRequest: permissionHandler(config),
   })
   try {
     await client.start()
@@ -150,7 +239,7 @@ async function createAcpSession(config, input) {
     args: args.length > 0 ? args : ['--profile', 'acp'],
     cwd,
     shell: process.platform === 'win32',
-    env: { ...process.env },
+    env: safeEnv(),
     onUpdate: (event) => {
       state.events.push(event)
       const update = event.update ?? {}
@@ -162,10 +251,7 @@ async function createAcpSession(config, input) {
         }
       }
     },
-    onPermissionRequest: async (event) => {
-      const option = event.options?.find((item) => item.kind === 'allow_once' || item.kind === 'allow_always')
-      return option?.optionId ?? null
-    },
+    onPermissionRequest: permissionHandler(config),
   })
   await client.start()
   state.client = client

@@ -1,6 +1,8 @@
 node_modules/
 data/
 config-snapshots/
+# 发布物暂存目录（安装包 + latest.yml），只用于上传，不进仓库
+updates/
 *.log
 dist/
 .pnpm-store/

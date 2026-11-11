@@ -115,6 +115,7 @@ async function setup(
     quietHours?: { start: string; end: string }
     urgentPriority?: number
     queueTimeoutMs?: number
+    leaseTimeoutMs?: number
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-task-orch-'))
@@ -131,6 +132,7 @@ async function setup(
     ...(options.maxConcurrent ? { maxConcurrent: options.maxConcurrent } : {}),
     ...(options.quietHours ? { quietHours: options.quietHours } : {}),
     ...(options.queueTimeoutMs !== undefined ? { queueTimeoutMs: options.queueTimeoutMs } : {}),
+    ...(options.leaseTimeoutMs !== undefined ? { leaseTimeoutMs: options.leaseTimeoutMs } : {}),
     ...(options.urgentPriority !== undefined ? { urgentPriority: options.urgentPriority } : {}),
   })
   await orchestratorFiber
@@ -181,6 +183,43 @@ test('排队超时：没有执行器接管时转 failed，不无限 queued', asy
     const [expired] = await h.task.list(10)
     assert.equal(expired?.status, 'failed')
     assert.match(expired?.error ?? '', /排队超时/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('设备租约：running 的设备任务没有进展就收为 failed，不再永远 running', async () => {
+  const h = await setup({}, {
+    leaseTimeoutMs: 1_000,
+    pre: async (task) => {
+      const run = await task.create({ prompt: '设备任务', target: { executorId: 'device:dev-1' } })
+      await task.start(run.id)
+    },
+  })
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+    await (h.ctx.taskRunner as unknown as { sweepExpired(): Promise<void> }).sweepExpired()
+    const [run] = await h.task.list(10)
+    assert.equal(run?.status, 'failed')
+    assert.match(run?.error ?? '', /设备失联/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('设备租约：刚报过进展的设备任务不被误杀', async () => {
+  const h = await setup({}, {
+    leaseTimeoutMs: 1_000,
+    pre: async (task) => {
+      const run = await task.create({ prompt: '设备任务', target: { executorId: 'device:dev-2' } })
+      await task.start(run.id)
+      await task.reportProgress(run.id, { phase: '读文件', percent: 20 })
+    },
+  })
+  try {
+    await (h.ctx.taskRunner as unknown as { sweepExpired(): Promise<void> }).sweepExpired()
+    const [run] = await h.task.list(10)
+    assert.equal(run?.status, 'running')
   } finally {
     await h.dispose()
   }

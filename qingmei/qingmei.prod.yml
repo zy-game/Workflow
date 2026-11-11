@@ -1,61 +1,53 @@
-# 青梅 · 生产组合（接真实模型）
+# 青梅 · 生产组合
 #
-# 与 qingmei.yml 的差别只有模型提供方：本文件用 OpenAI 兼容端点，
-# 密钥从环境变量读（systemd EnvironmentFile 或 shell export），不进仓库。
+# 与 qingmei.yml 的差别只有三处：
+#   1. 不装 provider-llm-echo：生产没有可用的 LLM，对话与任务都走 DSH（ACP）；
+#   2. 密钥一律从环境变量读（systemd EnvironmentFile /etc/qingmei/env），不进仓库；
+#   3. 静态资源与技能目录按 /opt/qingmei 的部署布局写死。
 #
 # 用法：
-#   QM_LLM_KEY=sk-... QM_TOKEN=... node apps/server/src/index.ts --config qingmei.prod.yml
+#   QM_TOKEN=... QM_ADMIN_PASSWORD=... QM_DSH_API_KEY=... \
+#     node apps/server/src/index.ts --config qingmei.prod.yml
+#
+# 改完先跑 `node scripts/check-config.mjs --env`：名字写错或少了环境变量，会在启动前报出来。
 
-- name: '@qingmei/service-store'
-- name: '@qingmei/service-llm'
+# ── 运行时服务（契约在 core）
 - name: '@qingmei/service-channel'
 - name: '@qingmei/service-gateway'
 
-# 技能包（M6）
+# 技能包：/opt/qingmei/skills 是部署时可写的目录，不跟随 release 回滚
 - name: '@qingmei/qm-skill'
   config:
     skillsDir: /opt/qingmei/skills
 
+# ── 提供方
 - name: '@qingmei/provider-store-sqlite'
   config:
     path: './data/qm.db'
 
-- name: '@qingmei/service-memory'
-
-- name: '@qingmei/provider-memory-sqlite'
+- name: '@qingmei/provider-neuron-memory'
   config:
     limit: 8
     minConfidence: 0.6
+    # 概念合并/分裂默认只提案；生产显式开启「每次沉淀最多自动应用一条」
+    autoApplyConcepts: true
 
-# 权限与审计：worker/ACP 的敏感动作仍走这里
-- name: '@qingmei/provider-permission-static'
-
-- name: '@qingmei/provider-audit-sqlite'
-
-# 待人确认的审批队列：permission 判 ask、或子 agent 请求权限时落一条
-- name: '@qingmei/provider-approval-sqlite'
-
-# 任务账本：qm-task 派发、子 agent 经 ACP 回传结果
-- name: '@qingmei/provider-task-sqlite'
-  config:
-    workspaceRoot: './data/workspaces'
-
-- name: '@qingmei/provider-llm-openai'
-  config:
-    baseURL: { $env: 'QM_LLM_BASE_URL' }
-    apiKey: { $env: 'QM_LLM_KEY' }
-    model: 'deepseek-chat'
-    maxTokens: 800
-
-# 对话车道：内嵌 DSH。密钥通过 env 传给子进程，不写进配置。
+# 对话与任务的唯一执行器：DSH 以 ACP 子进程方式拉起，密钥经 env 传进去
 - name: '@qingmei/provider-dsh-acp'
   config:
     command: '/usr/local/bin/dsh'
     args: ['--profile', 'acp']
-    cwd: './workspace'
+    cwd: '/opt/qingmei/workspace'
     env:
       QM_DSH_API_KEY: { $env: 'QM_DSH_API_KEY' }
 
+# 日程账本：at / everyMs / cron；到点由 provider 直接投递
+- name: '@qingmei/provider-schedule-sqlite'
+  config:
+    tickMs: 1000
+    defaultTimezone: 'Asia/Shanghai'
+
+# ── 业务
 - name: '@qingmei/service-persona'
   config:
     path: personas/qingmei.json
@@ -64,50 +56,44 @@
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
 
-# qm_message 的唯一写入方：对话、提醒、以后所有主动消息都经它落库
+# qm_message 的唯一写入方
 - name: '@qingmei/qm-history'
 
-# 把任务派给 harness（POST /api/v1/tasks），进度经 ACP 回到账本
+# 自主循环：默认建议模式；modules 打开督促/开场/休息/故障/群画像五个子模块
+- name: '@qingmei/qm-autonomy'
+  config:
+    tickMs: 300000
+    dailyBudget: 3
+    quietStart: 23
+    quietEnd: 8
+    modules: true
+
+# 任务账本与调度：同一时间最多 2 个 harness run，其余排队；重启后恢复
 - name: '@qingmei/qm-task'
   config:
-    workspaceRoot: './data/workspaces'
     timeoutMs: 600000
-    # 同时最多 2 个 harness run，其余排队；重启时排队任务会重新排队
     maxConcurrent: 2
-    # 静默时段：优先级 < 8 的任务不启动（跨午夜支持）
+    # 设备任务 60 分钟没有任何进展就收为 failed（设备崩溃不会让 run 永远 running）
+    leaseTimeoutMs: 3600000
     quietHours:
       start: '23:00'
       end: '08:00'
 
-# 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
+# 设备注册、claim/progress/finish、记忆回灌
 - name: '@qingmei/qm-device'
   config: {}
 
-- name: '@qingmei/qm-thread'
-
+# 审批队列的 HTTP 面与渠道推送（飞书卡片 / QQ 键盘）
 - name: '@qingmei/qm-approval'
 
-# 审计的只读查询面：GET /api/v1/audit
+# 审计只读查询面：GET /api/v1/audit
 - name: '@qingmei/qm-audit'
 
-# 自主循环（A1 建议模式）：每 5 分钟巡一次，值得打扰时给一条建议
-- name: '@qingmei/qm-autonomy'
-  config:
-    dailyBudget: 3
-    quietStart: 23
-    quietEnd: 8
+# 身份绑定：每渠道第一个私聊自动绑 owner
+- name: '@qingmei/qm-identity'
 
-# 回合结束后异步抽取事实；走 llm 车道，不阻塞回复
-- name: '@qingmei/provider-schedule-sqlite'
-  config:
-    tickMs: 1000
-    # cron 没带时区时按东八区算，服务器时区是 UTC 也不会偏 8 小时
-    defaultTimezone: 'Asia/Shanghai'
-
-- name: '@qingmei/qm-reminder'
-
-# 内容层（账号运维 docs/18）：content_item / variant / action 账本 + 人审状态机
-# 平台连接器未实现，connected 全 false；发布一律被闸门挡住，不会假装成功
+# 内容层（实验包）：台账 + 人审状态机；平台连接器未实现，发布一律被闸门挡住。
+# 不需要账号运维时整段删掉，Web 的「账号运维」页会变成 404。
 - name: '@qingmei/qm-content'
   config:
     daily: { publish: 2, reply: 20, mention: 10 }
@@ -115,53 +101,19 @@
     quietEnd: 8
     connected: { blog: false, weibo: false, bilibili: false, zhihu: false }
 
-- name: '@qingmei/qm-memory-extract'
-  config:
-    minConfidence: 0.7
-    maxFacts: 5
-
-# 夜间巩固：每天 4 点压缩同主题低价值事实
-- name: '@qingmei/qm-consolidate'
-  config:
-    hour: 4
-
-- name: '@qingmei/channel-web'
-
-# 群画像：未配置的群回「权限未配置」，打标签后按策略回复
-- name: '@qingmei/qm-conversation-profile'
-
-# 身份绑定：每渠道第一个私聊自动绑 owner
-- name: '@qingmei/qm-identity'
-
-# 自愈：失败回合/任务 → incident 指纹去重、提案、熔断、派诊断
-- name: '@qingmei/qm-incident'
-
-# 月度复盘：每月 1 号生成报告
+# 月度复盘（实验包）：每月 1 号生成报告
 - name: '@qingmei/qm-review'
   config:
     dayOfMonth: 1
     hour: 9
 
-# 记忆热点（A4）
-- name: '@qingmei/qm-memory-hotspot'
-  config:
-    hotHour: 3
-    weekDay: 1
-    weekHour: 9
+# ── 渠道与宿主
+- name: '@qingmei/channel-web'
 
-# 主动开场（A6/A7/A8）
-- name: '@qingmei/qm-opener'
-
-# 任务督促（W1/W2）：合同 + 进度阶梯
-- name: '@qingmei/qm-nudge'
-
-# 休息侧（W5）
-- name: '@qingmei/qm-rest'
-
-# 飞书渠道：配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET）才启用
+# 飞书：配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET）才启用
 - name: '@qingmei/channel-feishu'
 
-# QQ 机器人渠道：配置 appId/clientSecret（或 QM_QQ_APP_ID / QM_QQ_CLIENT_SECRET）才启用
+# QQ 机器人：配置 appId/clientSecret（或 QM_QQ_APP_ID / QM_QQ_CLIENT_SECRET）才启用
 - name: '@qingmei/channel-qq'
 
 - name: '@qingmei/host-gateway'
@@ -171,6 +123,5 @@
     token: { $env: 'QM_TOKEN' }
     adminUser: 'admin'
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
+    # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
-
-

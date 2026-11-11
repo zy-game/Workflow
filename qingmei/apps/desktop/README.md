@@ -93,7 +93,22 @@ pnpm --filter qingmei-desktop dist        # 免安装 portable exe
 pnpm --filter qingmei-desktop dist:nsis   # NSIS 安装包；当前环境需把 TEMP 指到可写目录
 ```
 
-产物在 `apps/desktop/dist/`。应用图标在 `apps/desktop/build/icon.ico`（由桌宠预览图生成）。`n`n签名与自动更新的环境变量见 [SIGNING.md](SIGNING.md)。
+产物在 `apps/desktop/dist/`。应用图标在 `apps/desktop/build/icon.ico`（由桌宠预览图生成）。
+签名与自动更新的环境变量见 [SIGNING.md](SIGNING.md)。
+
+## 更新源
+
+`electron-updater` 读 `https://<server>/updates/latest.yml`，按其中的 sha512 校验安装包。
+发版时不要手写 latest.yml——上一版把一段 PowerShell 表达式写进了 `releaseDate`，字段不是合法时间：
+
+```bash
+node scripts/release-desktop.mjs --file "apps/desktop/dist/青梅 Setup 0.1.3.exe" --version 0.1.3
+# → updates/desktop/Qingmei-Setup-0.1.3.exe + latest.yml（sha512 base64 + ISO releaseDate）
+scp -i ~/.ssh/company.pem updates/desktop/* ubuntu@139.155.78.241:/opt/qingmei/updates/
+```
+
+免安装 ZIP 不进自动更新通道：被 SmartScreen/NSIS 拦的机器走 ZIP + `INSTALL-QINGMEI.ps1`，
+需要用户手动下一次安装，之后由 NSIS 版本接管自动更新。
 
 ## 测试
 

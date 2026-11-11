@@ -19,6 +19,8 @@
     "worker": "node scripts/harness-worker.mjs",
     "test": "node --test --test-reporter=spec",
     "arch": "node scripts/check-architecture.mjs --strict",
+    "config:check": "node scripts/check-config.mjs",
+    "backup": "node scripts/backup.mjs",
     "artifacts": "node scripts/check-artifacts.mjs",
     "gate": "node scripts/gate.mjs",
     "gate:smoke": "node scripts/gate.mjs --with-smoke",

@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process'
 const node = process.execPath
 const withSmoke = process.argv.includes('--with-smoke')
 const steps = [
+  { name: 'config', args: ['scripts/check-config.mjs'] },
   { name: 'architecture', args: ['scripts/check-architecture.mjs', '--strict'] },
   { name: 'typecheck:all', args: ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.packages.json'] },
   { name: 'typecheck:core', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/core/tsconfig.json'] },

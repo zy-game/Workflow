@@ -1,3 +1,25 @@
+### 可交付性收尾：清单门禁 / 生产清单 / 设备租约 / worker 权限 / 备份（2026-11-11）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `scripts/check-config.mjs`（新） | 清单门禁：每个插件名必须对应工作区里真实存在的包，同名重复装配也报错；`--env` 额外核对 `{ $env }` 是否齐全。挂进 `gate.mjs` 第一步，也提供 `pnpm config:check` |
+| `scripts/check-config.test.mjs`（新） | 6 条用例；「仓库自带的 qingmei.yml / qingmei.prod.yml 全部可解析」就是防止生产清单再次腐烂的回归 |
+| `qingmei.prod.yml` | 重建：去掉 19 个已删除的包（`service-store` / `service-llm` / `qm-thread` / `provider-llm-openai`…）；不再装 LLM，对话与任务统一走 `provider-dsh-acp`；autonomy 打开 `modules`；`qm-task` 加 `leaseTimeoutMs: 3600000`；webRoot 指向 `current/apps/web/dist`。之前这份清单从 HEAD 部署会直接启动失败 |
+| `qingmei.yml` | 删掉错挂在 `qm-audit` 名下的 autonomy 配置（YAML 合法但配置落错插件），以及指向不存在插件的注释 |
+| `packages/provider-dsh-acp/src/acp-client.ts` | ① 接管子进程 `error` 事件：命令不存在/无权限时以前会把整个服务进程带崩，现在 reject 请求、`available=false`、原因进 stderr；② `harnessEnv()` 剔除青梅密钥（`QM_TOKEN` / `QM_ADMIN_PASSWORD` / `QM_LLM_KEY`…），保留 `QM_DSH_API_KEY` |
+| `packages/qm-task/src/index.ts` | `leaseTimeoutMs`（默认 30 分钟，0 关闭）：设备任务 running 且超过该时长没有进展 → failed「设备失联」；本地 run 仍走自己的执行超时 |
+| `scripts/harness-worker.mjs` | 权限请求默认落服务端审批队列（建单 + 轮询决定），发不出去/超时按拒绝，不静默放行；`--auto-approve true` 才自动批准；传给 dsh 的环境变量同样剔除青梅密钥 |
+| `apps/server/src/cli.ts` | `qm doctor` 不再要求 `llm` 服务——生产本来就不装 LLM，之前 prod 清单会被误判「异常」 |
+| `scripts/backup.mjs`（新） | `VACUUM INTO` 在线快照 + `integrity_check` + 保留最近 N 份；`--restore` 覆盖前先给现库留底。`pnpm backup` |
+| `scripts/release-desktop.mjs`（新） | 生成 electron-updater 要的 `latest.yml`（sha512 base64 + ISO `releaseDate`）并暂存到 `updates/desktop/`；上一版 latest.yml 的 releaseDate 是没展开的 PowerShell 表达式 |
+| `docs/30-备份与恢复.md`（新） | 备份时机、快照/恢复命令、换机器流程 |
+| `docs/19`、`docs/23`、`apps/desktop/README.md`、`README.md` | 同步 worker 权限行为、插件/服务清单、更新源做法、备份文档入口 |
+| `packages/provider-memory-sqlite`、`packages/provider-task-sqlite` | 删除：只剩 `node_modules` 的空壳，没有 package.json |
+
+验证：`pnpm gate` 全绿（config → arch → 7 组 typecheck → memory eval → 370 测试 0 失败），`node scripts/smoke.mjs` 通过；`qm doctor --config qingmei.prod.yml` 结论「健康」（22 插件 / 78 路由 / harness 不可拉起时降级而不是崩溃）。
+
+> 未做：生产部署与 `/updates/` 上传（`updates/desktop/` 已备好，等确认）；删空壳包后没有重跑 `pnpm install`，`node_modules` 里仍有旧链接。
+
 ### 账号运维内容层 + 前端迁移 Vue 3（2026-11-06）
 
 | 文件 | 改了什么 |

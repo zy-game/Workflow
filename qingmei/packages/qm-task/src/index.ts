@@ -49,6 +49,8 @@ export interface TaskConfig {
   resumeOnRestart?: boolean
   /** 排队最长等待；超过后失败，默认 24h */
   queueTimeoutMs?: number
+  /** 设备任务多久没有进展就判失联并收为 failed，默认 30 分钟；0 关闭 */
+  leaseTimeoutMs?: number
 }
 
 export const name = 'qm-task'
@@ -58,6 +60,7 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const LOCAL_EXECUTOR = 'local'
 const DEFAULT_MAX_CONCURRENT = 2
 const DEFAULT_QUEUE_TIMEOUT_MS = 24 * 60 * 60_000
+const DEFAULT_LEASE_TIMEOUT_MS = 30 * 60_000
 const LIST_LIMIT = 20
 
 interface RunnerDeps {
@@ -68,6 +71,7 @@ interface RunnerDeps {
   urgentPriority: number
   preemptPriority: number
   queueTimeoutMs: number
+  leaseTimeoutMs: number
   resumeOnRestart: boolean
 }
 
@@ -127,6 +131,18 @@ export class TaskRunner extends TaskRunnerService {
         error: `排队超时：${Math.round(this.deps.queueTimeoutMs / 1000)}s 内没有执行器接管`,
       })
       this.ctx.logger.warn(`[qm-task] 排队超时：${run.id}`)
+    }
+    if (this.deps.leaseTimeoutMs <= 0) return
+    // 设备任务被领走后，服务端只能等它回报。设备崩溃/断网时这一等没有尽头，
+    // 所以按「最后一次进展」判租约；本地 run 有自己的执行超时，不在这里处理。
+    for (const run of await this.deps.task.list(200)) {
+      if (run.status !== 'running' || run.target.executorId === LOCAL_EXECUTOR) continue
+      if (now - lastActivity(run) <= this.deps.leaseTimeoutMs) continue
+      await this.deps.task.finish(run.id, {
+        status: 'failed',
+        error: `设备失联：${Math.round(this.deps.leaseTimeoutMs / 1000)}s 没有进展（lease 超时）`,
+      })
+      this.ctx.logger.warn(`[qm-task] 设备租约超时：${run.id}`)
     }
   }
 
@@ -483,13 +499,17 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   const maxConcurrent = Math.max(1, Number(config.maxConcurrent) || DEFAULT_MAX_CONCURRENT)
   const quietHours = parseQuietHours(config.quietHours)
   const queueTimeoutMs = Math.max(1_000, Number(config.queueTimeoutMs) || DEFAULT_QUEUE_TIMEOUT_MS)
+  // 允许显式关掉（0）：设备侧长任务多的时候，宁可人工处理也不误杀
+  const leaseTimeoutMs = config.leaseTimeoutMs === 0
+    ? 0
+    : Math.max(1_000, Number(config.leaseTimeoutMs) || DEFAULT_LEASE_TIMEOUT_MS)
   const preemptPriority = Number.isFinite(Number(config.preemptPriority))
     ? Math.min(9, Math.max(0, Math.round(Number(config.preemptPriority))))
     : DEFAULT_PREEMPT_PRIORITY
   const urgentPriority = Number.isFinite(Number(config.urgentPriority))
     ? Math.min(9, Math.max(0, Math.round(Number(config.urgentPriority))))
     : DEFAULT_URGENT_PRIORITY
-  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority, preemptPriority, queueTimeoutMs, resumeOnRestart: config.resumeOnRestart !== false })
+  const runner = new TaskRunner(ctx, { task, timeoutMs, maxConcurrent, quietHours, urgentPriority, preemptPriority, queueTimeoutMs, leaseTimeoutMs, resumeOnRestart: config.resumeOnRestart !== false })
   if (!config.startPaused) runner.start()
   if (!config.startPaused) void runner.resumeOnRestart()
   ctx.effect(() => () => runner.stop())
@@ -603,6 +623,14 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
       },
     }),
   )
+}
+
+/** 最后一次有生命迹象的时间：开始执行或最后一条进度，晚者为准 */
+function lastActivity(run: TaskRun): number {
+  const started = run.startedAt?.getTime() ?? 0
+  const progress = run.progressHistory.at(-1)?.at
+  const reported = progress instanceof Date ? progress.getTime() : 0
+  return Math.max(started, reported, run.createdAt.getTime())
 }
 
 /** 把 runId 与上报方式写进 prompt：子 agent 只有知道 id 才能汇报 */

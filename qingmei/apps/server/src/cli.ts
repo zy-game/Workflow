@@ -34,8 +34,12 @@ const USAGE = `青梅 P1 命令行
 默认插件清单：${DEFAULT_CONFIG}
 `
 
-/** 组合根要求的最低服务集合；缺任何一个业务插件都跑不起来 */
-const REQUIRED_SERVICES = ['store', 'llm', 'channel', 'gateway'] as const
+/**
+ * 组合根要求的最低服务集合；缺任何一个业务插件都跑不起来。
+ * llm 不在其中：生产不装 LLM，对话与任务都走 DSH；本地 echo 只是自测方便。
+ * 缺 llm 且 harness 也不可用时，对话会明确报「没有可用的执行器」，而不是静默降级。
+ */
+const REQUIRED_SERVICES = ['store', 'channel', 'gateway'] as const
 
 interface RuntimeView {
   name?: string

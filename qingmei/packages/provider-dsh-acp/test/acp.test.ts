@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from 'cordis'
-import { AcpClient, type AcpPermissionRequest } from '../src/acp-client.ts'
+import { AcpClient, harnessEnv, type AcpPermissionRequest } from '../src/acp-client.ts'
 import {
   ApprovalService,
   type ApprovalRequest,
@@ -358,6 +358,34 @@ test('AcpClient：initialize 声明 fs 与 terminal 能力', async () => {
     const sessionId = await client.newSession(process.cwd())
     await client.prompt(sessionId, '看能力')
     assert.equal(texts.join(''), 'caps:ok', '不声明 clientCapabilities 的话，agent 不会给文件/终端工具')
+  } finally {
+    client.stop()
+  }
+})
+
+test('harnessEnv：不把青梅自己的密钥传给子进程', () => {
+  const env = harnessEnv(
+    { QM_TOKEN: 't', QM_ADMIN_PASSWORD: 'p', QM_DSH_API_KEY: 'k', PATH: '/bin' },
+    { EXTRA: '1' },
+  )
+  assert.equal(env.QM_TOKEN, undefined)
+  assert.equal(env.QM_ADMIN_PASSWORD, undefined)
+  assert.equal(env.QM_DSH_API_KEY, 'k', 'DSH 自己的模型凭据必须保留')
+  assert.equal(env.PATH, '/bin')
+  assert.equal(env.EXTRA, '1')
+})
+
+test('AcpClient：命令不存在时 start() 失败，而不是把进程带崩', async () => {
+  const errors: string[] = []
+  const client = new AcpClient({
+    command: 'qm-definitely-no-such-binary',
+    args: [],
+    cwd: process.cwd(),
+    onStderr: (text) => errors.push(text),
+  })
+  try {
+    await assert.rejects(() => client.start(), /无法启动子进程|ENOENT/)
+    assert.ok(errors.join('').includes('无法启动子进程'), '失败原因要写进 stderr，便于 doctor 复读')
   } finally {
     client.stop()
   }

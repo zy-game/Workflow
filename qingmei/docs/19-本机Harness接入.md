@@ -95,6 +95,11 @@ pnpm worker -- `
 
 - 领取任务后 spawn `dsh --profile acp`，通过 stdio ACP 执行。
 - 任务 cwd 使用 `task.cwd`，否则用配置 `workdir`。
+- 子 agent 请求权限时落到服务端审批队列（`POST /api/v1/approvals` 建单 + 轮询决定），
+  与主路径一致；发不出去或超时按拒绝处理，不静默放行。`--auto-approve true` 才自动批准，
+  只应在完全信任的机器上使用。
+- 传给 dsh 的环境变量会剔除青梅自己的密钥（`QM_TOKEN` / `QM_ADMIN_PASSWORD` / `QM_LLM_KEY` …），
+  只保留 DSH 自己的 `QM_DSH_API_KEY`。
 - 本地会话 API：
   ```text
   POST /session/new
