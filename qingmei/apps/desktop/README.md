@@ -89,26 +89,36 @@ ZIP 使用 ASCII 文件名 `Qingmei.exe`，避免中文文件名在 Windows 解�
 ## 打包
 
 ```bash
-pnpm --filter qingmei-desktop dist        # 免安装 portable exe
-pnpm --filter qingmei-desktop dist:nsis   # NSIS 安装包；当前环境需把 TEMP 指到可写目录
+node scripts/build-desktop-installer.mjs              # payload + Inno 安装包（推荐）
+node scripts/build-desktop-installer.mjs --skip-payload  # 只用已构建的 win-unpacked 重编
+pnpm --filter qingmei-desktop dist                    # 免安装 portable exe / ZIP
 ```
 
-产物在 `apps/desktop/dist/`。应用图标在 `apps/desktop/build/icon.ico`（由桌宠预览图生成）。
-签名与自动更新的环境变量见 [SIGNING.md](SIGNING.md)。
+安装器用 **Inno Setup 6** 编译（`installer/inno/qingmei.iss`），不再用 NSIS：
+
+- `PrivilegesRequired=lowest`：装到 `%LOCALAPPDATA%\Programs\Qingmei`，不弹 UAC；
+- 同一 AppId 覆盖安装，任意旧版本一步升到最新；
+- 编译前装一次 Inno Setup（`ISCC.exe` 在 `%LOCALAPPDATA%\Programs\Inno\`），或用 `INNO_ISCC` 指定。
+
+产物在 `apps/desktop/dist/`：`Qingmei-Setup-<版本>.exe`。应用图标在 `apps/desktop/build/icon.ico`。
+
+> `Compression=lzma2/normal`：`lzma2/max` 在这个 210MB payload 上会产出「双击没反应」的安装包，别改回去。
 
 ## 更新源
 
-`electron-updater` 读 `https://<server>/updates/latest.yml`，按其中的 sha512 校验安装包。
-发版时不要手写 latest.yml——上一版把一段 PowerShell 表达式写进了 `releaseDate`，字段不是合法时间：
+更新器是仓库自己的（`electron/updater.cjs`），不再依赖 `electron-updater`：读
+`https://<server>/updates/desktop/latest.json` → 比版本 → 下载 → 校验 sha256 → 静默运行安装包。
+**任意旧版本一步升到最新**，不需要逐版本。
 
 ```bash
-node scripts/release-desktop.mjs --file "apps/desktop/dist/青梅 Setup 0.1.3.exe" --version 0.1.3
-# → updates/desktop/Qingmei-Setup-0.1.3.exe + latest.yml（sha512 base64 + ISO releaseDate）
-scp -i ~/.ssh/company.pem updates/desktop/* ubuntu@139.155.78.241:/opt/qingmei/updates/
+node scripts/release-desktop.mjs --file apps/desktop/dist/Qingmei-Setup-0.1.4.exe --version 0.1.4 \
+  --notes "换 Inno Setup 安装包"
+# → updates/desktop/Qingmei-Setup-0.1.4.exe + latest.json
+node scripts/deploy.mjs --updates-only     # 上传到 /opt/qingmei/updates/desktop/
 ```
 
-免安装 ZIP 不进自动更新通道：被 SmartScreen/NSIS 拦的机器走 ZIP + `INSTALL-QINGMEI.ps1`，
-需要用户手动下一次安装，之后由 NSIS 版本接管自动更新。
+旧 NSIS 版本（0.1.2 / 0.1.3）读的是 `/updates/latest.yml`，Electron 的更新器驱动不了 Inno 安装包：
+**需要手动装一次 0.1.4**，之后由 Inno 版接管自动更新。免安装 ZIP 仍可用于被 SmartScreen 拦的机器。
 
 ## 测试
 

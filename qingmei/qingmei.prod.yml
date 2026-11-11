@@ -1,15 +1,15 @@
 # 青梅 · 生产组合
 #
 # 与 qingmei.yml 的差别只有三处：
-#   1. 不装 provider-llm-echo：生产没有可用的 LLM，对话与任务都走 DSH（ACP）；
+#   1. 不装 provider-llm-echo：生产对话与任务都走 DSH（ACP）；
 #   2. 密钥一律从环境变量读（systemd EnvironmentFile /etc/qingmei/env），不进仓库；
 #   3. 静态资源与技能目录按 /opt/qingmei 的部署布局写死。
 #
-# 用法：
-#   QM_TOKEN=... QM_ADMIN_PASSWORD=... QM_DSH_API_KEY=... \
-#     node apps/server/src/index.ts --config qingmei.prod.yml
+# 这份清单与线上 /opt/qingmei/qingmei.yml 的装配保持一致（20 项）；
+# 改完先跑 `node scripts/check-config.mjs --env`，名字写错或少了环境变量会在部署前报出来。
 #
-# 改完先跑 `node scripts/check-config.mjs --env`：名字写错或少了环境变量，会在启动前报出来。
+# 内容层（qm-content）与月度复盘（qm-review）是 experimental 包，当前不装；
+# 要启用就各自加一段 `- name: '@qingmei/qm-content'`，Web 对应页面才不会是 404。
 
 # ── 运行时服务（契约在 core）
 - name: '@qingmei/service-channel'
@@ -37,7 +37,7 @@
   config:
     command: '/usr/local/bin/dsh'
     args: ['--profile', 'acp']
-    cwd: '/opt/qingmei/workspace'
+    cwd: './workspace'
     env:
       QM_DSH_API_KEY: { $env: 'QM_DSH_API_KEY' }
 
@@ -59,18 +59,18 @@
 # qm_message 的唯一写入方
 - name: '@qingmei/qm-history'
 
-# 自主循环：默认建议模式；modules 打开督促/开场/休息/故障/群画像五个子模块
+# 自主循环：A1 建议模式，5 分钟巡一次；子模块（督促/开场/休息/故障/群画像）默认关闭
 - name: '@qingmei/qm-autonomy'
   config:
     tickMs: 300000
     dailyBudget: 3
     quietStart: 23
     quietEnd: 8
-    modules: true
 
 # 任务账本与调度：同一时间最多 2 个 harness run，其余排队；重启后恢复
 - name: '@qingmei/qm-task'
   config:
+    workspaceRoot: './data/workspaces'
     timeoutMs: 600000
     maxConcurrent: 2
     # 设备任务 60 分钟没有任何进展就收为 failed（设备崩溃不会让 run 永远 running）
@@ -91,21 +91,6 @@
 
 # 身份绑定：每渠道第一个私聊自动绑 owner
 - name: '@qingmei/qm-identity'
-
-# 内容层（实验包）：台账 + 人审状态机；平台连接器未实现，发布一律被闸门挡住。
-# 不需要账号运维时整段删掉，Web 的「账号运维」页会变成 404。
-- name: '@qingmei/qm-content'
-  config:
-    daily: { publish: 2, reply: 20, mention: 10 }
-    quietStart: 23
-    quietEnd: 8
-    connected: { blog: false, weibo: false, bilibili: false, zhihu: false }
-
-# 月度复盘（实验包）：每月 1 号生成报告
-- name: '@qingmei/qm-review'
-  config:
-    dayOfMonth: 1
-    hour: 9
 
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'

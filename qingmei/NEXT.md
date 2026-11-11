@@ -1,3 +1,31 @@
+### 发布链改造：Inno 安装包 + 跨版本更新 + 一键部署（2026-11-11）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `apps/desktop/installer/inno/qingmei.iss`（新） | Inno Setup 安装脚本：`PrivilegesRequired=lowest`（装到 `%LOCALAPPDATA%\Programs\Qingmei`，不弹 UAC）、同 AppId 覆盖安装、`/VERYSILENT` 可被更新器调起、安装前 taskkill 并静默卸载旧 NSIS 版本。`Compression=lzma2/normal`——`max` 在 210MB payload 上会产出「双击没反应」的包 |
+| `apps/desktop/installer/inno/ChineseSimplified.isl`（新） | Inno 6 不自带简体中文，从 issrc 取官方语言文件 |
+| `apps/desktop/electron/updater.cjs`（新） | 自研更新器替代 electron-updater：读 `/updates/desktop/latest.json` → 版本比较 → 下载 → sha256 校验 → 静默安装。任意旧版本一步升级 |
+| `apps/desktop/electron/main.cjs` | 接入新更新器：启动 8 秒后检查、托盘与右键菜单加「检查更新」、下载完弹框确认后安装并退出 |
+| `apps/desktop/package.json` | 版本 0.1.4；`executableName: Qingmei`（exe 用 ASCII 名，快捷方式仍叫青梅）；删掉 NSIS 构建配置 |
+| `scripts/build-desktop-installer.mjs`（新） | electron-builder 出 payload（`--dir`）+ ISCC 编译安装器；支持 `--skip-payload` |
+| `scripts/release-desktop.mjs` | 改为生成 `latest.json`（sha256/size/notes），不再写 electron-updater 的 latest.yml |
+| `scripts/deploy.mjs`（新） | 一键发布：gate → vite 构建 → 打 tar（排除 node_modules/data/desktop 产物）→ scp → sudo supervisor → healthz 校验 → 上传桌面/Android 更新源 |
+| `package.json` | 新增 `desktop:installer`、`deploy` |
+
+线上已执行：
+
+```text
+supervisor 部署 release 2026-11-11T04-47-06-089Z，healthz ok（web/feishu/qq 在线）
+/updates/desktop/latest.json → 0.1.4（107,903,516 B，sha256 2268d872…），安装包 HEAD 200
+更新器自测：currentVersion 0.1.3 → 返回 0.1.4（跨版本路径通）
+Android 更新源仍是 0.1.12（versionCode 13），本来就按 versionCode 一步升，无需改
+```
+
+本地验证：静默安装 `Qingmei-Setup-0.1.4.exe` → `%LOCALAPPDATA%\Programs\Qingmei`，exe 版本 0.1.4，
+HKCU 卸载项「青梅 0.1.4」；卸载后目录与注册表都清干净。
+
+> 未做：0.1.2 / 0.1.3（NSIS）客户端需手动装一次 0.1.4 才能进入新更新通道；`electron-updater` 依赖暂留（代码已不用），等下次动 lockfile 时删。
+
 ### 可交付性收尾：清单门禁 / 生产清单 / 设备租约 / worker 权限 / 备份（2026-11-11）
 
 | 文件 | 改了什么 |
@@ -227,20 +255,24 @@ P3 贾维斯感 = A1–A3；后面是 N/N+/G/W/S。现在的实际位置：
 ## 4. 运维速查（139.155.78.241，用户 ubuntu，密钥 company.pem）
 
 ```bash
+# 一键发布（gate → 前端构建 → 打包 → supervisor → healthz → 更新源上传）
+node scripts/deploy.mjs
+node scripts/deploy.mjs --skip-tests       # 只改了文档时
+node scripts/deploy.mjs --updates-only     # 只传 updates/desktop 与 Android
+node scripts/deploy.mjs --install          # 依赖有变动时才装（默认跳过，省时间）
+
 # 本地
 cd E:/Workflow/qingmei && node --test          # 全量测试
 node scripts/smoke.mjs                        # 端到端：起服务→发消息→落库→重启后还在
-tar -czf ../qingmei-m2.tgz -C . --exclude=node_modules --exclude=data --exclude=.git .
-
-# 上传 + 部署
-scp -i ~/.ssh/company.pem ../qingmei-m2.tgz ubuntu@139.155.78.241:/tmp/q.tgz
-ssh ... "cd /opt/qingmei && tar -xzf /tmp/q.tgz && cp qingmei.prod.yml qingmei.yml
-  && PATH=/opt/dsh/bin:/opt/node24/bin:\$PATH corepack pnpm install --prod --frozen-lockfile
-  && sudo systemctl restart qingmei"
 
 # 健康
 curl -s http://127.0.0.1:7410/healthz
 sudo journalctl -u qingmei -n 50 --no-pager
+
+# 回滚（supervisor 激活历史 release）
+ls /opt/qingmei/releases
+sudo -n /opt/node24/bin/node /opt/qingmei/scripts/shell.mjs activate <release-id> --root /opt/qingmei
+sudo systemctl restart qingmei
 ```
 
 密钥都在 `/etc/qingmei/env`（0600）：`QM_TOKEN` / `QM_LLM_*` / `QM_DSH_API_KEY` / `QM_MCP_TOKEN`。

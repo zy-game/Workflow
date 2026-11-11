@@ -4,7 +4,7 @@
  * 透明、无边框、置顶、跳过任务栏；渲染层只通过 preload 暴露的最小 API
  * 读写设置与退出，不直接拿 Node。
  */
-const { app, BrowserWindow, Notification, ipcMain, Menu, safeStorage, screen, session, shell, Tray, nativeImage } = require('electron')
+const { app, BrowserWindow, Notification, dialog, ipcMain, Menu, safeStorage, screen, session, shell, Tray, nativeImage } = require('electron')
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
@@ -144,6 +144,7 @@ function createTray() {
         { label: '隐藏青梅', click: () => win?.hide() },
         { type: 'separator' },
         { label: '设置…', click: () => { win?.show(); win?.webContents.send('open-settings') } },
+        { label: '检查更新', click: () => void checkForUpdate(updateFeed(process.env), { silent: false }) },
         { type: 'separator' },
         { label: '退出', click: () => app.quit() },
       ]),
@@ -163,14 +164,43 @@ function setupUpdates() {
   if (!app.isPackaged) return
   const feed = updateFeed(process.env)
   if (!feed) return
+  // 启动 8 秒后再查：先让登录与 SSE 建连，别和更新检查抢网络
+  setTimeout(() => void checkForUpdate(feed), 8000)
+}
+
+/**
+ * 检查更新：任意旧版本都能一步装到最新（Inno 覆盖安装），不要求逐版本升级。
+ * 下载 → sha256 校验 → 询问 → 静默安装 → 退出，安装器负责重启新版本。
+ */
+async function checkForUpdate(feed, { silent = false } = {}) {
   try {
-    const { autoUpdater } = require('electron-updater')
-    autoUpdater.setFeedURL({ provider: 'generic', url: feed })
-    autoUpdater
-      .checkForUpdatesAndNotify()
-      .catch((error) => console.error('[qingmei] 检查更新失败', error))
+    const updater = require('./updater.cjs')
+    const next = await updater.checkForUpdate({ feed, currentVersion: app.getVersion() })
+    if (!next) {
+      if (!silent) new Notification({ title: '青梅', body: '已经是最新版本' }).show()
+      return
+    }
+    const file = path.join(app.getPath('temp'), `Qingmei-Setup-${next.version}.exe`)
+    await updater.downloadFile(next.url, file)
+    if ((await updater.sha256File(file)) !== next.sha256) {
+      new Notification({ title: '青梅更新失败', body: `安装包校验不通过（${next.version}）` }).show()
+      return
+    }
+    const answer = dialog.showMessageBoxSync({
+      type: 'info',
+      title: '青梅有新版本',
+      message: `发现 ${next.version}（当前 ${app.getVersion()}）`,
+      detail: next.notes || '现在安装并重启？',
+      buttons: ['立即安装', '稍后'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    if (answer !== 0) return
+    await updater.runInstaller(file)
+    app.quit()
   } catch (error) {
-    console.error('[qingmei] 初始化自动更新失败', error)
+    console.error('[qingmei] 检查更新失败', error)
+    if (!silent) new Notification({ title: '青梅更新失败', body: String(error?.message ?? error) }).show()
   }
 }
 
@@ -489,6 +519,7 @@ if (!gotLock) {
         { type: 'separator' },
         { label: '设置…', click: () => win?.webContents.send('open-settings') },
         { label: '重新连接', click: () => win?.webContents.send('reconnect') },
+        { label: '检查更新', click: () => void checkForUpdate(updateFeed(process.env), { silent: false }) },
         { label: '躲起来', click: () => win?.hide() },
         { type: 'separator' },
         { label: '退出青梅', click: () => app.quit() },
