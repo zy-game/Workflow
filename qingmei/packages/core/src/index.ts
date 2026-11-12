@@ -960,6 +960,8 @@ export interface TaskRun {
   priority: number
   /** 前置 run id；未完成时排队等待，前置失败则本任务失败 */
   dependsOn: string[]
+  /** 由哪个失败的 run 重试而来；老数据为 null。有值表示「重试的再失败不再重试」 */
+  retryOf: string | null
   /** 任务合同；老数据为 null */
   contract: TaskContract | null
   /** 统一执行目标；所有位置/工作区/会话键都只在这里 */
@@ -1030,6 +1032,8 @@ export interface CreateTaskInput {
   kind?: 'task' | 'inventory'
   priority?: number
   dependsOn?: string[]
+  /** 标记这条是重试出来的（见 TaskRun.retryOf） */
+  retryOf?: string
   contract?: TaskContract
   target?: TaskTarget
   /** 创建时直接带入的执行器会话（仅用于同会话续跑） */
@@ -1401,3 +1405,4 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+

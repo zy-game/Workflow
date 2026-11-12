@@ -26,6 +26,7 @@ import {
   type ScheduleInput,
   type SchedulePatch,
   type TaskRun,
+  type CreateTaskInput,
 } from '@qingmei/core'
 
 class FakeApproval extends ApprovalService {
@@ -51,8 +52,16 @@ class FakeApproval extends ApprovalService {
 class FakeTask extends TaskService {
   runs: TaskRun[] = []
 
-  async create(input: { prompt: string; title?: string }): Promise<TaskRun> {
-    const run = taskRun({ id: `run_` + (this.runs.length + 1), title: input.title ?? '任务', prompt: input.prompt, status: 'queued' })
+  async create(input: CreateTaskInput): Promise<TaskRun> {
+    const run = taskRun({
+      id: `run_` + (this.runs.length + 1),
+      title: input.title ?? '任务',
+      prompt: input.prompt,
+      status: 'queued',
+      retryOf: input.retryOf ?? null,
+      ...(input.target ? { target: input.target } : {}),
+      ...(input.priority !== undefined ? { priority: input.priority } : {}),
+    })
     this.runs.push(run)
     return run
   }
@@ -160,6 +169,7 @@ function taskRun(overrides: Partial<TaskRun> = {}): TaskRun {
     kind: 'task',
     priority: 5,
     dependsOn: [],
+    retryOf: null,
     contract: null,
     target: { executorId: 'local', cwd: './data/workspaces/run_1' },
     sessionId: null,
@@ -446,6 +456,74 @@ test('执行：A2 才会真的重试失败任务，并带回执 runId', async ()
     assert.equal(h.channel.sent.length, 0, 'A2 直接执行，不再重复发建议')
     const created = h.task.runs.find((run) => run.id === trace.execution!.runId)
     assert.equal(created?.title, '重试：跑测试')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('执行：A2 重试保留原任务的目标与优先级', async () => {
+  const h = await setup({ mode: 'A2' })
+  try {
+    h.task.runs = [
+      taskRun({
+        id: 'run_failed',
+        status: 'failed',
+        error: '设备上的任务挂了',
+        finishedAt: new Date(),
+        target: { executorId: 'device:dev-1', workspaceId: 'ws-1' },
+        priority: 7,
+      }),
+    ]
+    const trace = await h.autonomy.tick('tick')
+    const created = h.task.runs.find((run) => run.id === trace.execution?.runId)
+    assert.equal(created?.target.executorId, 'device:dev-1', '设备任务不能因为重试悄悄跑到服务器上')
+    assert.equal(created?.target.workspaceId, 'ws-1')
+    assert.equal(created?.priority, 7)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('执行：同一个失败任务只重试一次，不产生重试风暴', async () => {
+  const h = await setup({ mode: 'A2' })
+  try {
+    const finishedAt = new Date()
+    h.task.runs = [
+      taskRun({ id: 'run_failed', status: 'failed', error: '测试挂了', finishedAt }),
+      taskRun({
+        id: 'run_retry',
+        title: '重试：跑测试',
+        status: 'done',
+        createdAt: new Date(finishedAt.getTime() + 1_000),
+        finishedAt: new Date(finishedAt.getTime() + 2_000),
+      }),
+    ]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.execution?.status, 'skipped')
+    assert.match(trace.execution?.detail ?? '', /已经重试过/)
+    assert.equal(h.taskRunner.dispatched.length, 0)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('执行：重试出来的任务再失败，不再继续重试', async () => {
+  const h = await setup({ mode: 'A2' })
+  try {
+    h.task.runs = [
+      taskRun({
+        id: 'run_retry',
+        title: '重试：跑测试',
+        status: 'failed',
+        retryOf: 'run_orig',
+        error: '重试也挂了',
+        finishedAt: new Date(),
+      }),
+    ]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.execution?.status, 'skipped')
+    assert.match(trace.execution?.detail ?? '', /本身是重试/)
+    assert.equal(h.taskRunner.dispatched.length, 0)
   } finally {
     await h.dispose()
   }
@@ -845,3 +923,6 @@ test('A5 回滚：没有可回滚动作时返回错误，不改级别', async ()
     await h.dispose()
   }
 })
+
+
+

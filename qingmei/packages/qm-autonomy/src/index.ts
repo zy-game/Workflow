@@ -370,10 +370,28 @@ class AutonomyRunner extends AutonomyService {
       if (!original) {
         return { status: 'failed', action: 'task.retry', detail: '找不到要重试的原任务', at }
       }
+      // 只重试「原始任务」一次：重试出来的再失败也不再重试，
+      // 否则失败会沿「重试：重试：…」一路滚下去。
+      if (original.retryOf) {
+        return { status: 'skipped', action: 'task.retry', detail: '这条本身是重试，不再继续重试', at }
+      }
+      const retryTitle = `重试：${original.title}`
+      const finishedAt = original.finishedAt?.getTime() ?? 0
+      const already = (await this.task.list(50)).some(
+        (run) => run.retryOf === original.id || (run.title === retryTitle && run.createdAt.getTime() >= finishedAt),
+      )
+      if (already) {
+        return { status: 'skipped', action: 'task.retry', detail: `「${original.title}」已经重试过，不再重复派发`, at }
+      }
       try {
         const run = await this.task.create({
           prompt: original.prompt,
-          title: `重试：${original.title}`,
+          title: retryTitle,
+          retryOf: original.id,
+          // 原任务是什么目标就还派到哪里：设备任务不能因为重试悄悄跑到服务器上
+          ...(original.target ? { target: original.target } : {}),
+          ...(original.priority !== undefined ? { priority: original.priority } : {}),
+          ...(original.contract ? { contract: original.contract } : {}),
         })
         this.taskRunner.dispatch(run)
         return { status: 'executed', action: 'task.retry', detail: `已重新派发 ${run.id}`, runId: run.id, at }

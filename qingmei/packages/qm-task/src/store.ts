@@ -54,6 +54,8 @@ interface TaskRow extends Row {
   /** 0-9，老数据没有这一列 */
   priority?: number
   depends_on_json?: string | null
+  /** 重试来源 run id；老数据没有 */
+  retry_of?: string | null
   /** W1 任务合同；老数据没有 */
   contract_json?: string | null
   /** 唯一执行目标；不再单独存 harness_id/cwd */
@@ -112,6 +114,7 @@ export class SqliteTask extends TaskService {
       kind: input.kind === 'inventory' ? 'inventory' : 'task',
       priority: clampPriority(input.priority),
       depends_on_json: JSON.stringify(normalizeDependsOn(input.dependsOn)),
+      retry_of: input.retryOf ?? null,
       contract_json: input.contract ? JSON.stringify(serializeContract(input.contract)) : null,
       target_json: JSON.stringify(target),
       session_id: input.sessionId ?? null,
@@ -307,6 +310,7 @@ function toRun(row: TaskRow): TaskRun {
     kind: row.kind === 'inventory' ? 'inventory' : 'task',
     priority: clampPriority(row.priority),
     dependsOn: parseDependsOn(row.depends_on_json),
+    retryOf: row.retry_of ?? null,
     contract: parseContract(row.contract_json),
     target: parseTarget(row.target_json),
     sessionId: row.session_id,
@@ -439,3 +443,4 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+

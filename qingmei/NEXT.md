@@ -1,3 +1,17 @@
+### P1-⑧ A2 自主动作实测：会动手，但重试有两处缺陷（2026-11-12）
+
+在生产上临时切 A2 跑 `scripts/verify-a2.mjs`，用「前置任务不存在」制造确定失败：
+04:14:27 A2 直接重试并成功（新 run done，trace 带 runId），随后同一分钟再次 tick 转向概念提案
+（`task.failed` 已进 4 小时冷却），04:20 两个候选都在冷却、`chosen=null`。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | `TaskRun.retryOf` / `CreateTaskInput.retryOf`：记录重试来源 |
+| `packages/qm-task/src/store.ts` | 持久化 `retry_of`，老数据读作 null |
+| `packages/qm-autonomy/src/index.ts` | 重试时带上 `target/priority/contract`（设备任务不会悄悄跑到服务器）；`retryOf` 的失败不再重试；同一原任务只重试一次（标题 + createdAt 双保险） |
+| `scripts/verify-a2.mjs`（新） | 可重复的 A2 验证：记原级别 → 切 A2 → 造失败 → tick → 检查回执 → 再 tick → 回滚 → 恢复级别；「第二次 tick 执行别的动作」不算风暴 |
+| `docs/13 §12.1` | 记录实测时间线、两条修复、冷却行为，以及「tokenBudget 当前无效（DSH 不回报 usage）」 |
+
 ### P1-⑦ 纠错复核与画像页（2026-11-12）
 
 | 文件 | 改了什么 |
