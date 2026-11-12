@@ -67,6 +67,9 @@ importers:
       '@qingmei/provider-dsh-acp':
         specifier: workspace:*
         version: link:../../packages/provider-dsh-acp
+      '@qingmei/provider-embedding-http':
+        specifier: workspace:*
+        version: link:../../packages/provider-embedding-http
       '@qingmei/provider-llm-echo':
         specifier: workspace:*
         version: link:../../packages/provider-llm-echo

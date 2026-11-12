@@ -975,6 +975,32 @@ export class NeuronMemory extends MemoryService {
     }
     return { entities: (await this.entities.find({})).length, edges: (await this.edges.find({})).length }
   }
+  /** 给已有事实补向量（升级后回填；幂等，有向量的跳过） */
+  async rebuildVectors(): Promise<{ embedded: number; skipped: number; failed: number }> {
+    await this.ready
+    if (!this.embedding) return { embedded: 0, skipped: 0, failed: 0 }
+    let embedded = 0
+    let skipped = 0
+    let failed = 0
+    for (const row of (await this.facts.find({})).filter((item) => !item.valid_to)) {
+      if (row.vector_json) {
+        skipped += 1
+        continue
+      }
+      try {
+        const [vector] = await this.embedding.embed([row.object])
+        if (vector && vector.length > 0) {
+          await this.facts.update(row.id, { vector_json: JSON.stringify(vector) })
+          embedded += 1
+        } else {
+          failed += 1
+        }
+      } catch {
+        failed += 1
+      }
+    }
+    return { embedded, skipped, failed }
+  }
   async consolidate() {
     await this.ready
     const beforeConsolidate = await this.snapshotGraph()
@@ -1577,6 +1603,8 @@ function cosineSimilarity(a: number[], b: number[]): number {
   if (normA === 0 || normB === 0) return 0
   return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
+
+
 
 
 

@@ -1,3 +1,19 @@
+### 语义召回上线：智谱 embedding-3（2026-11-12）
+
+- 装配 `provider-embedding-http` → 智谱 `https://open.bigmodel.cn/api/paas/v4/embeddings`，
+  模型 `embedding-3`（2048 维），key 放 `/etc/qingmei/env` 的 `QM_EMBEDDING_KEY`；
+- 事实入库时只嵌 `object`（整句里的「主人/喜欢」会稀释语义，实测区分度更差）；
+- 生产回填 170 条事实：`embedded=170 skipped=0 failed=0`；
+- 评估（同一套 40 题，生产环境跑 `--embedding`）：
+
+```text
+overlap 95% | near 90% | zero 20% → 70%
+```
+
+- 代价：每条消息多一次 embedding 调用（约 200–500ms）；token 成本可忽略（按我们的量一年几毛钱）；
+- 剩余 3/10 是模型区分度问题（「黑色苦饮料」对「手冲咖啡」0.55、对「龙井茶」0.59），
+  换更强模型或 query 改写才可能继续提升。
+
 ### 意图与成本 C：自省、task.create、余额、watchdog（2026-11-12）
 
 | 项 | 实现 | 证据 |

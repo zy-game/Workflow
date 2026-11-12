@@ -52,7 +52,13 @@ export class HttpEmbedding extends EmbeddingService {
 }
 
 export function apply(ctx: Context, config: EmbeddingConfig = {}): void {
-  void new HttpEmbedding(ctx, config)
+  const url = String(config.url ?? process.env.QM_EMBEDDING_URL ?? '').trim()
+  if (!url) {
+    // 没配端点就不注册服务：记忆继续词面匹配，不是故障
+    return
+  }
+  void new HttpEmbedding(ctx, { ...config, url, apiKey: config.apiKey ?? process.env.QM_EMBEDDING_KEY })
 }
 
 export const defaultExport = { name, inject, apply }
+

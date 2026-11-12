@@ -15,6 +15,7 @@ import { Context } from 'cordis'
 import * as storePlugin from '../packages/provider-store-sqlite/src/index.ts'
 import * as historyPlugin from '../packages/qm-history/src/index.ts'
 import * as memoryPlugin from '../packages/provider-neuron-memory/src/index.ts'
+import * as embeddingPlugin from '../packages/provider-embedding-http/src/index.ts'
 
 const debug = process.argv.includes('--debug')
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/memory-real-eval.json', import.meta.url), 'utf8'))
@@ -24,6 +25,13 @@ const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'eval.db') })
 await storeFiber
 const historyFiber = ctx.plugin(historyPlugin)
 await historyFiber
+if (process.argv.includes('--embedding') && process.env.QM_EMBEDDING_URL) {
+  await ctx.plugin(embeddingPlugin, {
+    url: process.env.QM_EMBEDDING_URL,
+    apiKey: process.env.QM_EMBEDDING_KEY,
+    model: process.env.QM_EMBEDDING_MODEL ?? 'embedding-3',
+  })
+}
 const memoryFiber = ctx.plugin(memoryPlugin, { limit: 8 })
 await memoryFiber
 
@@ -82,5 +90,6 @@ if ((summary.overlap?.recallAt5 ?? 0) < 0.8) {
   console.error(`[eval-memory-real] overlap recall@5 ${(summary.overlap.recallAt5 * 100).toFixed(0)}% < 80%`)
   process.exitCode = 1
 }
+
 
 

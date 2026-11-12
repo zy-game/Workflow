@@ -77,6 +77,12 @@
 - name: '@qingmei/qm-evolve'
   config:
     maxDrafts: 20
+# 可选语义向量：智谱 embedding-3（OpenAI 兼容）；没配 QM_EMBEDDING_URL 时自动不注册
+- name: '@qingmei/provider-embedding-http'
+  config:
+    url: $env:QM_EMBEDDING_URL
+    apiKey: $env:QM_EMBEDDING_KEY
+    model: embedding-3
 # 成本观测：读 DeepSeek 余额（只读），记录每日快照；没有 key 时静默
 - name: '@qingmei/qm-cost'
   config: {}
@@ -135,6 +141,7 @@
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
+
 
 
 
