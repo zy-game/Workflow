@@ -95,9 +95,6 @@ importers:
       '@qingmei/qm-autonomy':
         specifier: workspace:*
         version: link:../../packages/qm-autonomy
-      '@qingmei/qm-content':
-        specifier: workspace:*
-        version: link:../../experimental/qm-content
       '@qingmei/qm-device':
         specifier: workspace:*
         version: link:../../packages/qm-device
@@ -153,22 +150,6 @@ importers:
       vite:
         specifier: ^6.3.5
         version: 6.4.5(@types/node@26.6.6)(jiti@2.7.0)
-
-  experimental/qm-content:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-store-sqlite
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../../packages/service-gateway
 
   experimental/qm-review:
     dependencies:

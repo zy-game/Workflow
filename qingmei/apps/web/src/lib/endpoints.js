@@ -60,13 +60,6 @@ export const ENDPOINTS = {
   reviewProposalApply: './api/v1/review/proposals/apply',
   reviewProposalDismiss: './api/v1/review/proposals/dismiss',
   // 账号运维 · 内容层（docs/18 §10）
-  content: './api/v1/content',
-  contentItem: './api/v1/content/item',
-  contentUpdate: './api/v1/content/update',
-  contentTransition: './api/v1/content/transition',
-  contentRender: './api/v1/content/render',
-  contentPublish: './api/v1/content/publish',
-  contentStatus: './api/v1/content/status',
 }
 
 export function resolveEndpoint(path) {
@@ -75,4 +68,5 @@ export function resolveEndpoint(path) {
     typeof window !== 'undefined' ? String(window.__QM_SERVER_URL || '').replace(/\/+$/, '') : ''
   return base ? base + path.slice(1) : path
 }
+
 

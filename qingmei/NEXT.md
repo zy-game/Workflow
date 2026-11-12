@@ -1,3 +1,19 @@
+### P1-⑨ 实验包二选一：复盘提升、内容删除（2026-11-12）
+
+| 决定 | 依据 | 动作 |
+| --- | --- | --- |
+| `qm-review` **提升**进默认装配 | 报告由已有数据（回合/任务/故障）直接生成，不依赖外部平台；Web「复盘」页能用 | dev/prod 清单各加一项（22 项）；实测 `GET /api/v1/review` 返回 2026-11 报告、`/review/cards` 200 |
+| `qm-content` **删除** | 平台连接器一个没实现，发布永远 409；默认装配不加载它，Web 控制台是 404——留着只是死代码 | 删 `experimental/qm-content`、`ContentView.vue`、路由/导航/ENDPOINTS/SSE 订阅、server 依赖；`docs/18` 归档为设计参考 |
+
+副作用修正：
+
+- `pnpm-workspace.yaml` 去掉再恢复 `experimental/*` 的过程中，`check-architecture` 用「packages/ 之外不扫」的方式漏掉 qm-review——
+  这条**不是漏洞而是事实**：qm-review 直接读 `qm_message / qm_turn / qm_task_run / qm_incident`，搬进 `packages/` 会被门禁拦。
+  结论写进 `docs/23 §7`，并记为技术债：补历史/故障的只读服务契约后再搬。
+- Web 面板从 11 个减到 10 个（`ui-contract` 同步），打包产物 189.95 → 175.59 kB。
+
+验证：gate 410 测试全绿；生产 release `2026-11-12T04-25-51-678Z`，装配 22 项，`/api/v1/content` 已 404。
+
 ### P1-⑧ A2 自主动作实测：会动手，但重试有两处缺陷（2026-11-12）
 
 在生产上临时切 A2 跑 `scripts/verify-a2.mjs`，用「前置任务不存在」制造确定失败：

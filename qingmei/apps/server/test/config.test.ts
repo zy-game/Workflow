@@ -27,9 +27,9 @@ async function withYaml<T>(source: string, run: (file: string) => Promise<T>): P
   }
 }
 
-test('仓库自带的 qingmei.yml：二十一项插件，端口与数据库路径来自配置', () => {
+test('仓库自带的 qingmei.yml：二十二项插件，端口与数据库路径来自配置', () => {
   const entries = readPluginList(DEFAULT_CONFIG)
-  assert.equal(entries.length, 21)
+  assert.equal(entries.length, 22)
   assert.deepEqual(
     entries.map((entry) => entry.name),
     [
@@ -51,6 +51,7 @@ test('仓库自带的 qingmei.yml：二十一项插件，端口与数据库路�
       '@qingmei/qm-identity',
       '@qingmei/qm-distill',
       '@qingmei/channel-web',
+      '@qingmei/qm-review',
       '@qingmei/channel-feishu',
       '@qingmei/channel-qq',
       '@qingmei/host-gateway',
@@ -142,4 +143,6 @@ test('清单里的 ${NAME} 做字符串插值，缺失替换为空串', async ()
     delete process.env.QM_TEST_HOST
   }
 })
+
+
 

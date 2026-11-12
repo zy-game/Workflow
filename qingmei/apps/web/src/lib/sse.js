@@ -104,7 +104,7 @@ export function connect() {
   for (const type of ['approval-requested', 'approval-decided']) {
     next.addEventListener(type, (event) => routeEvent(type, parseEventData(event.data)))
   }
-  for (const type of ['autonomy-tick', 'content-updated']) {
+  for (const type of ['autonomy-tick']) {
     next.addEventListener(type, (event) => routeEvent(type, parseEventData(event.data)))
   }
 
@@ -123,3 +123,4 @@ export function connect() {
     scheduleReconnect()
   })
 }
+

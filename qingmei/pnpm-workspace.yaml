@@ -9,3 +9,5 @@ packages:
 onlyBuiltDependencies:
   - electron
   - electron-winstaller
+
+

@@ -11,13 +11,12 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const SRC = path.resolve(here, '../src')
 const REPO = path.resolve(here, '../../..')
 const GATEWAY = path.join(REPO, 'packages/host-gateway/src/index.ts')
-const QM_CONTENT = path.join(REPO, 'experimental/qm-content/src/index.ts')
 
 async function readSource(name: string): Promise<string> {
   return readFile(path.join(SRC, name), 'utf8')
 }
 
-test('ENDPOINTS 覆盖核心面板与账号运维内容层', () => {
+test('ENDPOINTS 覆盖核心面板', () => {
   const expected = {
     schedules: './api/v1/schedules',
     tasks: './api/v1/tasks',
@@ -28,32 +27,10 @@ test('ENDPOINTS 覆盖核心面板与账号运维内容层', () => {
     review: './api/v1/review',
     audit: './api/v1/audit',
     persona: './api/v1/persona',
-    content: './api/v1/content',
-    contentItem: './api/v1/content/item',
-    contentStatus: './api/v1/content/status',
-    contentTransition: './api/v1/content/transition',
-    contentRender: './api/v1/content/render',
-    contentPublish: './api/v1/content/publish',
   }
   for (const [key, value] of Object.entries(expected)) {
     assert.equal(ENDPOINTS[key], value, `ENDPOINTS.${key} 应为 ${value}`)
   }
-})
-
-test('qm-content 注册了内容层的全部路由并推送 content-updated', async () => {
-  const plugin = await readFile(QM_CONTENT, 'utf8')
-  for (const route of [
-    '/api/v1/content',
-    '/api/v1/content/item',
-    '/api/v1/content/status',
-    '/api/v1/content/update',
-    '/api/v1/content/transition',
-    '/api/v1/content/render',
-    '/api/v1/content/publish',
-  ]) {
-    assert.ok(plugin.includes(`'${route}'`), `qm-content 应注册 ${route}`)
-  }
-  assert.match(plugin, /'content-updated'/, 'qm-content 应把内容变更推到 SSE')
 })
 
 test('记忆页订阅候选/画像接口：采纳、恢复、撤回、画像', async () => {
@@ -66,7 +43,7 @@ test('记忆页订阅候选/画像接口：采纳、恢复、撤回、画像', a
   }
 })
 
-test('导航与路由表一致：11 个面板都能落到视图文件', async () => {
+test('导航与路由表一致：10 个面板都能落到视图文件', async () => {
   const router = await readSource('router.js')
   const nav = [
     ['/', 'ChatView.vue'],
@@ -78,7 +55,6 @@ test('导航与路由表一致：11 个面板都能落到视图文件', async ()
     ['/review', 'ReviewView.vue'],
     ['/incidents', 'IncidentsView.vue'],
     ['/audit', 'AuditView.vue'],
-    ['/content', 'ContentView.vue'],
     ['/settings', 'SettingsView.vue'],
   ]
   for (const [route, view] of nav) {
@@ -89,23 +65,13 @@ test('导航与路由表一致：11 个面板都能落到视图文件', async ()
   assert.equal((router.match(/name: '/g) ?? []).length, nav.length, '每条导航都应有对应的具名路由')
 })
 
-test('SSE 订阅覆盖任务、审批、主动与内容事件', async () => {
+test('SSE 订阅覆盖任务、审批与主动事件', async () => {
   const sse = await readSource('lib/sse.js')
-  for (const event of ['task-started', 'task-progress', 'task-finished', 'approval-requested', 'approval-decided', 'autonomy-tick', 'content-updated']) {
+  for (const event of ['task-started', 'task-progress', 'task-finished', 'approval-requested', 'approval-decided', 'autonomy-tick']) {
     assert.ok(sse.includes(`'${event}'`), `sse.js 应订阅 ${event}`)
   }
   assert.match(sse, /searchParams\.set\('token'/, 'EventSource 的令牌应走 query')
 })
-
-test('内容控制台订阅真实接口：渲染、状态迁移与发布闸门', async () => {
-  const view = await readSource('views/ContentView.vue')
-  for (const key of ['contentStatus', 'contentItem', 'contentUpdate', 'contentTransition', 'contentRender', 'contentPublish']) {
-    assert.ok(view.includes(`ENDPOINTS.${key}`), `ContentView 应调用 ENDPOINTS.${key}`)
-  }
-  assert.match(view, /素材分级|source/, 'ContentView 应有素材分级入口')
-  assert.match(view, /账号未接入|未接入/, 'ContentView 应明确平台未接入的闸门状态')
-})
-
 
 test('网关仍提供登录、会话与事件流入口', async () => {
   const gateway = await readFile(GATEWAY, 'utf8')
@@ -142,3 +108,4 @@ test('入口契约：Vue 挂载点、config.js 与登录门都在', async () => 
   assert.match(session, /qm\.token/, '令牌键名应与旧版一致')
   assert.match(session, /__QM_PERSIST_TOKEN__/, '持久化开关应与旧版一致')
 })
+

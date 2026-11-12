@@ -8,8 +8,8 @@
 # 这份清单与线上 /opt/qingmei/qingmei.yml 的装配保持一致（20 项）；
 # 改完先跑 `node scripts/check-config.mjs --env`，名字写错或少了环境变量会在部署前报出来。
 #
-# 内容层（qm-content）与月度复盘（qm-review）是 experimental 包，当前不装；
-# 要启用就各自加一段 `- name: '@qingmei/qm-content'`，Web 对应页面才不会是 404。
+# 月度复盘原在 experimental，2026-11-12 提升进默认装配（报告 + 评分 + 提案）。
+# 内容层（qm-content）已删除：没有平台连接器时发布永远是 409，留着只是死代码。
 
 # ── 运行时服务（契约在 core）
 - name: '@qingmei/service-channel'
@@ -99,6 +99,11 @@
     # 生产没有 LLM provider，模型补抽只能是关闭状态
     llmExtract: false
 
+# 月度复盘：每月 1 号出报告，可在「复盘」页评分、采纳 prompt 提案
+- name: '@qingmei/qm-review'
+  config:
+    dayOfMonth: 1
+    hour: 9
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 
@@ -117,3 +122,5 @@
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
+
+

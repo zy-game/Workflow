@@ -28,14 +28,14 @@ test('checkEntries：同名插件重复装配要报错', () => {
 test('workspacePackages：只认有 package.json 的目录', () => {
   const known = workspacePackages(REPO_ROOT)
   assert.equal(known.get('@qingmei/qm-agent'), 'packages/qm-agent')
-  assert.equal(known.get('@qingmei/qm-content'), 'experimental/qm-content')
+  assert.equal(known.get('@qingmei/qm-review'), 'experimental/qm-review')
   assert.equal(known.has('@qingmei/service-store'), false)
 })
 
 test('仓库自带的 qingmei.yml 全部可解析', () => {
   const result = checkFile(path.join(REPO_ROOT, 'qingmei.yml'))
   assert.deepEqual(result.errors, [])
-  assert.equal(result.count, 21)
+  assert.equal(result.count, 22)
 })
 
 test('仓库自带的 qingmei.prod.yml 全部可解析', () => {
@@ -50,4 +50,6 @@ test('envRefs：嵌套收集 { $env } 引用', () => {
   ])
   assert.deepEqual(refs, ['QM_LLM_KEY', 'QM_TOKEN'])
 })
+
+
 

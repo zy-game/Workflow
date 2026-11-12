@@ -77,7 +77,9 @@ export function buildTarball({ outFile }) {
 function pruneStalePackages() {
   const local = new Set()
   for (const group of ['packages', 'experimental']) {
-    for (const entry of readdirSync(path.join(REPO_ROOT, group), { withFileTypes: true })) {
+    const dir = path.join(REPO_ROOT, group)
+    if (!existsSync(dir)) continue
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.isDirectory()) local.add(`${group}/${entry.name}`)
     }
   }
@@ -222,3 +224,4 @@ if (invokedDirectly) {
     process.exitCode = 1
   })
 }
+
