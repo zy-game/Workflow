@@ -296,12 +296,14 @@ test('consolidateEpisodes：按天/周/月压缩，保护高 salience 与决定�
           occurredAt: new Date(now.getTime() - daysAgo * 86_400_000),
         },
       ])
-    await ingest('讨论记忆分层', 8)
-    await ingest('讨论了时间窗', 8)
-    await ingest('三周前的对话', 30)
-    await ingest('三个月前的对话', 100)
-    await ingest('决定用 SQLite', 8)
+    await ingest('讨论记忆分层', 31)
+    await ingest('讨论了时间窗', 31)
+    await ingest('三周前的对话', 95)
+    await ingest('三个月前的对话', 400)
+    await ingest('决定用 SQLite', 31)
     await ingest('最近的事', 1)
+    await ingest('上周的细节', 8)
+    await ingest('高显著细节', 100, 0.85)
 
     const report = await ctx.memory.consolidateEpisodes({ now })
     assert.ok(report.groups >= 3, `至少生成日/周/月三种摘要，实际 ${report.groups}`)
@@ -318,6 +320,10 @@ test('consolidateEpisodes：按天/周/月压缩，保护高 salience 与决定�
     assert.equal(protectedRow?.valid_to ?? null, null, '决定类原文不能被压缩')
     const recent = rows.find((row) => row.text === '最近的事')
     assert.equal(recent?.valid_to ?? null, null)
+    const lastWeek = rows.find((row) => row.text === '上周的细节')
+    assert.equal(lastWeek?.valid_to ?? null, null, '30 天内逐轮细节不压缩')
+    const salient = rows.find((row) => row.text === '高显著细节')
+    assert.equal(salient?.valid_to ?? null, null, 'salience ≥ 0.8 的逐轮细节永不被压缩')
 
     const again = await ctx.memory.consolidateEpisodes({ now })
     assert.equal(again.groups, 0, '重复跑不产生重复摘要')
@@ -458,4 +464,5 @@ test('关系图别名：包含已有实体名的新说法并入同一节点', as
     await dispose()
   }
 })
+
 

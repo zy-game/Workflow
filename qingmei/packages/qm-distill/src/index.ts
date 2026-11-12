@@ -279,7 +279,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
         typeof turn?.text === 'string' && turn.text.trim().length > 0,
     )
     const episodes: MemoryRecord[] = []
-    for (let index = 0; index < turns.length && episodes.length < 20; index += 1) {
+    for (let index = 0; index < turns.length && episodes.length < 100; index += 1) {
       const turn = turns[index]!
       if (turn.role !== 'user') continue
       const reply = turns[index + 1]?.role === 'assistant' ? turns[index + 1] : undefined
@@ -290,7 +290,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
         predicate: '会话',
         object: text,
         confidence: 0.7,
-        salience: 0.45,
+        salience: 0.85,
         sensitivity: 'private',
         audience: 'owner',
         origin: { kind: 'doc', id: `${deviceId}:${sessionId}:${index}` },
@@ -481,6 +481,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
 export const defaultExport = { name, inject, apply }
 export type { FactCandidate }
 export { extractCandidates }
+
 
 
 

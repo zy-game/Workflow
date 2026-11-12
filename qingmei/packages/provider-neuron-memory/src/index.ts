@@ -783,9 +783,9 @@ export class NeuronMemory extends MemoryService {
   ): Promise<EpisodeConsolidationReport> {
     await this.ready
     const now = options.now ?? new Date()
-    const dailyAfter = Math.max(1, options.dailyAfterDays ?? 7)
-    const weeklyAfter = Math.max(dailyAfter, options.weeklyAfterDays ?? 28)
-    const monthlyAfter = Math.max(weeklyAfter, options.monthlyAfterDays ?? 90)
+    const dailyAfter = Math.max(1, options.dailyAfterDays ?? 30)
+    const weeklyAfter = Math.max(dailyAfter, options.weeklyAfterDays ?? 90)
+    const monthlyAfter = Math.max(weeklyAfter, options.monthlyAfterDays ?? 365)
     const protectSalience = options.protectSalience ?? 0.8
     const rows = (await this.episodes.find({})).filter((row) => !row.valid_to)
 
@@ -1707,6 +1707,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
   if (normA === 0 || normB === 0) return 0
   return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
+
 
 
 
