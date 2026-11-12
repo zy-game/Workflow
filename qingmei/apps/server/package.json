@@ -31,6 +31,7 @@
     "@qingmei/provider-neuron-memory": "workspace:*",
     "@qingmei/qm-autonomy": "workspace:*",
     "@qingmei/qm-distill": "workspace:*",
-    "@qingmei/qm-evolve": "workspace:*"
+    "@qingmei/qm-evolve": "workspace:*",
+    "@qingmei/qm-cost": "workspace:*"
   }
 }

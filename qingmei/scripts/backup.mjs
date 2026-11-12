@@ -13,6 +13,7 @@
  *
  * 用 SQLite 的 VACUUM INTO 做快照：在线、一致性读，不需要停服务。
  */
+import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -27,7 +28,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i]
     if (!key.startsWith('--')) continue
-    if (key === '--keep' || key === '--data' || key === '--out' || key === '--restore') {
+    if (key === '--keep' || key === '--data' || key === '--out' || key === '--restore' || key === '--remote') {
       args[key.slice(2)] = argv[i + 1]
       i += 1
     }
@@ -119,3 +120,5 @@ if (invokedDirectly) {
     process.exitCode = 1
   }
 }
+
+

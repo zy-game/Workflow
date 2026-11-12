@@ -91,6 +91,9 @@ importers:
       '@qingmei/qm-autonomy':
         specifier: workspace:*
         version: link:../../packages/qm-autonomy
+      '@qingmei/qm-cost':
+        specifier: workspace:*
+        version: link:../../packages/qm-cost
       '@qingmei/qm-device':
         specifier: workspace:*
         version: link:../../packages/qm-device
@@ -356,6 +359,22 @@ importers:
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-cost:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway

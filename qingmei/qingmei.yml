@@ -67,11 +67,16 @@
     quietEnd: 8
     # 主动模块：开场、督促、休息、故障提案、群策略（测试环境可全开）
     modules: true
+    reflection: true
+    reflectionHour: 9
 
 # 自我进化：成功任务 → 技能草稿，人审后 install（技能自带版本备份与回滚）
 - name: '@qingmei/qm-evolve'
   config:
     maxDrafts: 20
+# 成本观测：读 DeepSeek 余额（只读），记录每日快照；没有 key 时静默
+- name: '@qingmei/qm-cost'
+  config: {}
 # 把任务派给 harness；没有 harness 时 POST /api/v1/tasks 返回 503
 - name: '@qingmei/qm-task'
 
@@ -115,6 +120,8 @@
     port: 7410
     token: 'dev-token'
     webRoot: './apps/web/dist'
+
+
 
 
 

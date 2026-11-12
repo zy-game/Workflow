@@ -46,6 +46,14 @@ export interface AutonomyConfig {
   mode?: AutonomyLevel
   /** 每日主动建议上限；0 = 不限量（只受静默时段与单规则冷却约束） */
   dailyBudget?: number
+  /** 每日自省：生成一条「想法」候选；false 关闭 */
+  reflection?: boolean
+  /** 自省从几点开始（本地小时） */
+  reflectionHour?: number
+  /** 自省冷却，默认 20 小时（一天一次） */
+  reflectionCooldownMinutes?: number
+  /** 测试用时钟 */
+  clock?: () => Date
   /** 静默时段（本地小时，左闭右开，可跨零点） */
   quietStart?: number
   quietEnd?: number
@@ -185,7 +193,7 @@ class AutonomyRunner extends AutonomyService {
   }
 
   private async tickInner(trigger: 'tick' | 'manual'): Promise<AutonomyTrace> {
-    const now = new Date()
+    const now = this.config.clock ? this.config.clock() : new Date()
     const state = await this.getState()
     const day = dayKey(now)
     if (state.day !== day) {
@@ -254,7 +262,10 @@ class AutonomyRunner extends AutonomyService {
         const ignoredTimes = state.ignoredByRule[chosen.id] ?? 0
         // 忽略得越多，冷却越长；这是 docs/13 §10 的「降频」在 P1 的近似
         const slowFactor = ignoredTimes >= this.config.ignoreBeforeSlowdown ? 2 : 1
-        state.cooldowns[chosen.id] = now.getTime() + this.config.cooldownMinutes * slowFactor * 60_000
+        const cooldownMinutes = chosen.id === 'reflection.thought'
+          ? (this.config.reflectionCooldownMinutes ?? 1200)
+          : this.config.cooldownMinutes
+        state.cooldowns[chosen.id] = now.getTime() + cooldownMinutes * slowFactor * 60_000
         reason = chosen.reason
       }
     }
@@ -364,6 +375,26 @@ class AutonomyRunner extends AutonomyService {
         : { status: 'failed', action: 'notify.self', detail: `发送失败：${sent.error ?? '未知原因'}`, at }
     }
 
+    if (chosen.action === 'task.create') {
+      const prompt = String(chosen.payload?.prompt ?? '').trim()
+      const title = String(chosen.payload?.title ?? chosen.title).trim()
+      if (!prompt || !title) {
+        return { status: 'skipped', action: 'task.create', detail: '缺少 prompt/title', at }
+      }
+      const dayStart = new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime()
+      const existing = (await this.task.list(30)).filter(
+        (run) => run.title === title && run.createdAt.getTime() >= dayStart,
+      )
+      if (existing.length > 0) {
+        return { status: 'skipped', action: 'task.create', detail: `「${title}」今天已经建过`, at }
+      }
+      try {
+        const run = await this.task.create({ prompt, title, priority: 5 })
+        return { status: 'executed', action: 'task.create', detail: `已创建任务 ${run.id}`, runId: run.id, at }
+      } catch (error) {
+        return { status: 'failed', action: 'task.create', detail: `创建失败：${messageOf(error)}`, at }
+      }
+    }
     if (chosen.action === 'task.retry') {
       const runId = typeof chosen.payload?.runId === 'string' ? chosen.payload.runId : ''
       const original = runId ? await this.task.get(runId) : null
@@ -547,6 +578,58 @@ class AutonomyRunner extends AutonomyService {
         risk: 'medium',
         payload: { runId: latest.id },
       })
+    }
+
+    if (this.config.reflection === true && now.getHours() >= (this.config.reflectionHour ?? 9)) {
+      const runs = await this.task.list(30)
+      const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+      const failedToday = runs.filter((run) => run.status === 'failed' && (run.finishedAt?.getTime() ?? 0) >= dayStart)
+      const doneWeek = runs.filter(
+        (run) => run.status === 'done' && (run.finishedAt?.getTime() ?? 0) >= now.getTime() - 7 * 86_400_000,
+      )
+      const lastActive = runs.reduce((latest, run) => Math.max(latest, run.finishedAt?.getTime() ?? 0), 0)
+      if (failedToday.length > 0) {
+        const target = failedToday[0]!
+        list.push({
+          id: 'reflection.thought',
+          action: 'task.create',
+          title: `给「${target.title}」一次补救`,
+          reason: `今天它失败了：${(target.error ?? '未知原因').slice(0, 60)}。重试时先定位原因，再决定怎么做`,
+          value: 72,
+          risk: 'medium',
+          payload: {
+            title: `补救：${target.title}`,
+            prompt: `${target.prompt}\n\n上次失败原因：${target.error ?? '未知'}\n先说明原因与改法，再决定是否执行。`,
+          },
+        })
+      } else if (snapshot.upcomingSchedules > 0) {
+        list.push({
+          id: 'reflection.thought',
+          action: 'notify.self',
+          title: '今天的安排要不要提前过一遍',
+          reason: `接下来 ${this.config.upcomingWindowMinutes} 分钟内有日程，提前准备一下更稳`,
+          value: 60,
+          risk: 'low',
+        })
+      } else if (doneWeek.length >= 3) {
+        list.push({
+          id: 'reflection.thought',
+          action: 'notify.self',
+          title: '最近完成的事可以沉淀成技能',
+          reason: `7 天内完成了 ${doneWeek.length} 个任务，可以把做法整理成技能，下次少走弯路`,
+          value: 60,
+          risk: 'low',
+        })
+      } else if (lastActive > 0 && now.getTime() - lastActive > 3 * 86_400_000) {
+        list.push({
+          id: 'reflection.thought',
+          action: 'notify.self',
+          title: '有几天没一起做事了',
+          reason: '最近三天没有任务收尾，可以聊聊接下来做什么',
+          value: 58,
+          risk: 'low',
+        })
+      }
     }
 
     return list
@@ -995,6 +1078,12 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
+
+
+
 
 
 

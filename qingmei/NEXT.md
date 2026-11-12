@@ -1,3 +1,13 @@
+### 意图与成本 C：自省、task.create、余额、watchdog（2026-11-12）
+
+| 项 | 实现 | 证据 |
+| --- | --- | --- |
+| 每日自省 | `qm-autonomy` 在 9 点后生成一条「想法」候选：今天失败的任务 → 补救建议（`task.create`，value 72）、临近日程、可沉淀技能、久未使用；`reflection` 可关，冷却 20 小时 | 3 条单测（A1 只发建议 / A2 建任务 / 静默不打扰）；生产 tick 真的选出 reflection 并发给主人 |
+| A2 `task.create` | 动作白名单新增，A2 才执行；A1 降级为建议；同一天同名任务不重复建 | 单测断言 `补救：…` 任务被创建且带失败原因 |
+| 成本观测 | 新插件 `qm-cost`：`POST /api/v1/cost/refresh` / `GET /api/v1/cost`，每日余额快照 + 与昨日差额 | 生产 refresh 返回 `total=78.63 CNY`，GET 正常；单测覆盖快照与无 key 503 |
+| 看门狗 | `scripts/watchdog.mjs --restart`：5 分钟检查 healthz，失败记录 + 重启 + 可选 webhook | 坏 URL 用例：`ok:false`、退出 1；正常：`ok:true`、退出 0；cron 已装 |
+| 备份异地 | `backup.mjs --remote`：rsync 同步，失败明确报错；未配置打印警告 | 本地跑 `--out tmp-bk` 验证快照与警告文案 |
+
 ### 记忆质量 A：真实评估 + bigram + 可选向量（2026-11-12）
 
 - 新评估集 `memory-real-eval.json`：20 条生产事实原句、10 条换词重述、10 条零字面重叠；

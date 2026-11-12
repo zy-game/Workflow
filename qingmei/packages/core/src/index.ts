@@ -238,6 +238,13 @@ export const AUTONOMY_ACTIONS: Record<string, AutonomyActionSpec> = {
     minLevel: 'A1',
     description: '给主人发一条消息（建议、提醒）',
   },
+  'task.create': {
+    action: 'task.create',
+    risk: 'medium',
+    reversible: true,
+    minLevel: 'A2',
+    description: '按自省/建议创建一个新任务',
+  },
   'task.retry': {
     action: 'task.retry',
     risk: 'medium',
@@ -1460,6 +1467,7 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 
 
 

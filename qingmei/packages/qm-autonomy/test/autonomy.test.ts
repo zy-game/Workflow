@@ -290,6 +290,7 @@ test('tick：同一规则在冷却期内不再重复建议', async () => {
     const first = await h.autonomy.tick('tick')
     assert.equal(first.chosen?.id, 'approval.pending')
 
+    const stateRows = await h.ctx.reflect.get('store', false).collection('qm_autonomy_state').find({})
     const second = await h.autonomy.tick('tick')
     assert.equal(second.chosen, null)
     assert.equal(second.budget.used, 1, '冷却中的候选不消耗预算')
@@ -308,6 +309,7 @@ test('tick：预算用完就不再建议，并说明原因', async () => {
     assert.equal(first.chosen?.id, 'schedule.upcoming')
     assert.equal(first.budget.used, 1)
 
+    const stateRows = await h.ctx.reflect.get('store', false).collection('qm_autonomy_state').find({})
     const second = await h.autonomy.tick('tick')
     assert.equal(second.chosen, null)
     assert.equal(second.budget.used, 1)
@@ -936,6 +938,66 @@ test('A5 回滚：没有可回滚动作时返回错误，不改级别', async ()
     await h.dispose()
   }
 })
+
+
+
+
+
+test('自省：A1 只发建议，不真的建任务', async () => {
+  const clock = () => new Date('2026-11-12T10:00:00')
+  const h = await setup({ reflection: true, clock, cooldownMinutes: 0 })
+  try {
+    h.task.runs = [
+      taskRun({ id: 'run_fail_today', title: '对齐需求', status: 'failed', error: '模型超时', finishedAt: new Date('2026-11-12T09:30:00') }),
+    ]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.chosen?.id, 'reflection.thought')
+    assert.equal(trace.chosen?.action, 'task.create')
+    assert.equal(trace.execution?.status, 'suggested')
+    assert.equal(h.task.runs.length, 1, 'A1 不应创建新任务')
+    assert.ok(h.channel.sent.some((item) => JSON.stringify(item).includes('补救')), '应发出建议')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('自省：A2 建补救任务，并发一次后进入冷却', async () => {
+  const clock = () => new Date('2026-11-12T10:00:00')
+  const h = await setup({ reflection: true, clock, mode: 'A2', cooldownMinutes: 0 })
+  try {
+    h.task.runs = [
+      taskRun({ id: 'run_fail_today', title: '对齐需求', status: 'failed', error: '模型超时', finishedAt: new Date('2026-11-12T09:30:00') }),
+    ]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.execution?.status, 'executed')
+    assert.equal(trace.execution?.action, 'task.create')
+    const created = h.task.runs.find((run) => run.title === '补救：对齐需求')
+    assert.ok(created, '应创建补救任务')
+    assert.match(created!.prompt, /上次失败原因/)
+
+    const second = await h.autonomy.tick('tick')
+    assert.notEqual(second.chosen?.id, 'reflection.thought', '自省一天一次，第二次应被冷却挡掉')
+    assert.ok(second.suppressed.some((item) => item.id === 'reflection.thought' && /冷却/.test(item.reason)))
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('自省：静默时段不打扰', async () => {
+  const clock = () => new Date('2026-11-12T23:30:00')
+  const h = await setup({ reflection: true, clock, cooldownMinutes: 0, quietStart: 23, quietEnd: 8 })
+  try {
+    h.task.runs = [
+      taskRun({ id: 'run_fail_today', title: '对齐需求', status: 'failed', error: '模型超时', finishedAt: new Date('2026-11-12T22:00:00') }),
+    ]
+    const trace = await h.autonomy.tick('tick')
+    assert.equal(trace.chosen, null)
+    assert.ok(trace.suppressed.some((item) => /静默/.test(item.reason)))
+  } finally {
+    await h.dispose()
+  }
+})
+
 
 
 

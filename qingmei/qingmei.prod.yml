@@ -69,11 +69,17 @@
     quietEnd: 8
     # 装上主动模块：开场、督促、休息、故障提案、群策略
     modules: true
+    # 每日一次自省：失败任务 → 补救建议；A2 才会真的建任务
+    reflection: true
+    reflectionHour: 9
 
 # 自我进化：成功任务 → 技能草稿，人审后 install（技能自带版本备份与回滚）
 - name: '@qingmei/qm-evolve'
   config:
     maxDrafts: 20
+# 成本观测：读 DeepSeek 余额（只读），记录每日快照；没有 key 时静默
+- name: '@qingmei/qm-cost'
+  config: {}
 # 任务账本与调度：同一时间最多 2 个 harness run，其余排队；重启后恢复
 - name: '@qingmei/qm-task'
   config:
@@ -129,6 +135,8 @@
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
+
+
 
 
 

@@ -47,6 +47,7 @@ const owners = {
   qm_incident: 'qm-autonomy',
   qm_memory_candidate: 'qm-distill',
   qm_skill_draft: 'qm-evolve',
+  qm_cost_snapshot: 'qm-cost',
   qm_distill_quota: 'qm-distill',
   qm_session_digest: 'qm-device',
   qm_commitment: 'qm-autonomy',
@@ -89,5 +90,6 @@ if (strict && (violations.length > 0 || crossCollections.length > 0)) {
   console.error('\n严格模式：存在绕过 inject 的服务访问或跨插件 collection 访问')
   process.exit(1)
 }
+
 
 
