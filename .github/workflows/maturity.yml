@@ -22,6 +22,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: qingmei/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm gate
+      - run: pnpm gate --with-smoke
         env:
           NODE_OPTIONS: ''

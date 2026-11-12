@@ -257,6 +257,18 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ctx.inject(['task'], (sub) => { taskService = sub.task })
   ctx.inject(['schedule'], (sub) => { scheduleService = sub.schedule })
   ctx.inject(['cost'], (sub) => { costService = (sub as unknown as { cost: { summary: () => Promise<{ text: string }> } }).cost })
+  let storeService:
+    | {
+        collection: (name: string) => {
+          get: (id: string) => Promise<unknown>
+          insert: (value: unknown) => Promise<unknown>
+          delete: (id: string) => Promise<boolean>
+        }
+      }
+    | undefined
+  ctx.inject(['store'], (sub) => {
+    storeService = (sub as unknown as { store: NonNullable<typeof storeService> }).store
+  })
   let deviceService: {
     list: () => Promise<Array<{ id: string; name: string; workspaces?: Array<{ id: string; title: string; path: string }> }>>
   } | undefined
@@ -273,17 +285,28 @@ export function apply(ctx: Context, config: AgentConfig): void {
   const pendingResults = new Map<string, { channel: ChannelId; conversationId: string; title: string }>()
 
   ctx.events.on(EVENTS.taskFinished, (run: TaskRun) => {
-    const pending = pendingResults.get(run.id)
-    if (!pending) return
-    pendingResults.delete(run.id)
-    const conclusion = String(run.result ?? '').trim()
-    const text =
-      run.status === 'done'
-        ? `「${pending.title}」检查完成：\n${conclusion.slice(0, 800) || '（没有返回结论）'}`
-        : `「${pending.title}」检查失败：${run.error ?? '未知原因'}`
-    void channel
-      .send({ channel: pending.channel, conversationId: pending.conversationId, blocks: [{ type: 'text', text }] })
-      .catch(() => undefined)
+    void (async () => {
+      const stored = storeService
+        ? await storeService.collection('qm_pending_result').get(run.id).catch(() => null)
+        : null
+      const pending = pendingResults.get(run.id)
+      if (!pending && !stored) return
+      const target = pending ?? {
+        channel: String((stored as { channel: string }).channel) as ChannelId,
+        conversationId: String((stored as { conversation_id: string }).conversation_id),
+        title: String((stored as { title: string }).title),
+      }
+      pendingResults.delete(run.id)
+      if (storeService) void storeService.collection('qm_pending_result').delete(run.id).catch(() => undefined)
+      const conclusion = String(run.result ?? '').trim()
+      const text =
+        run.status === 'done'
+          ? `「${target.title}」检查完成：\n${conclusion.slice(0, 800) || '（没有返回结论）'}`
+          : `「${target.title}」检查失败：${run.error ?? '未知原因'}`
+      await channel
+        .send({ channel: target.channel, conversationId: target.conversationId, blocks: [{ type: 'text', text }] })
+        .catch(() => undefined)
+    })()
   })
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
@@ -767,6 +790,16 @@ export function apply(ctx: Context, config: AgentConfig): void {
           })
           pendingDispatch.delete(sessionId)
           pendingResults.set(run.id, { channel: message.channel, conversationId: message.conversation.id, title: pending.title })
+          void storeService
+            ?.collection('qm_pending_result')
+            .insert({
+              id: run.id,
+              channel: message.channel,
+              conversation_id: message.conversation.id,
+              title: pending.title,
+              at: Date.now(),
+            })
+            .catch(() => undefined)
           return `已派「${pending.taskTitle}」到 ${pending.path}，完成后我把结论发给你。`
         } catch (error) {
           pendingDispatch.delete(sessionId)
@@ -841,6 +874,8 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
 
 
 

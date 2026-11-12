@@ -1,0 +1,1111 @@
+{
+  "generatedAt": "2026-11-12T13:05:53.231Z",
+  "source": "/opt/qingmei/data/qm.db",
+  "questions": [
+    {
+      "question": "用两句话说明你能帮我做什么，不要客套。",
+      "expected": []
+    },
+    {
+      "question": "用一句话介绍你自己，并说明你现在有哪些工具可用",
+      "expected": []
+    },
+    {
+      "question": "我下周三要干嘛来着？",
+      "expected": [
+        "高新区法院",
+        "仲裁委"
+      ]
+    },
+    {
+      "question": "你有哪些工具？顺便说说我下周三的安排",
+      "expected": [
+        "高新区法院",
+        "仲裁委"
+      ]
+    },
+    {
+      "question": "你有哪些能力？能读写文件或执行命令吗？",
+      "expected": []
+    },
+    {
+      "question": "我养什么？只回答一个词。",
+      "expected": [
+        "不养狗"
+      ]
+    },
+    {
+      "question": "青梅项目现在什么情况？只根据任务账本回答，列出最近任务 id 和状态，不要编造。",
+      "expected": [
+        "pnpm monorepo"
+      ]
+    },
+    {
+      "question": "青梅项目现在什么情况？只根据任务账本，只列青梅项目里的任务。",
+      "expected": [
+        "pnpm monorepo"
+      ]
+    },
+    {
+      "question": "命令执行验证项目现在什么情况？如果账本数据旧了，就派人盘点并把结论告诉我。",
+      "expected": [
+        "工作目录为空",
+        "工作目录状态",
+        "派人盘点"
+      ]
+    },
+    {
+      "question": "现在有那些工作区被上报了？设备有那些",
+      "expected": []
+    },
+    {
+      "question": "怎么感觉青梅傻傻的，自进化没有运行么？",
+      "expected": []
+    },
+    {
+      "question": "你还记得我最近在忙什么吗",
+      "expected": [
+        "高新区法院",
+        "仲裁委",
+        "青梅"
+      ]
+    },
+    {
+      "question": "杭州和咖啡你记得哪个",
+      "expected": [
+        "咖啡",
+        "杭州"
+      ]
+    },
+    {
+      "question": "杭州的天气怎么样",
+      "expected": []
+    },
+    {
+      "question": "三国项目进度怎么样，有 bug 吗",
+      "expected": []
+    }
+  ],
+  "facts": [
+    {
+      "subject": "主人",
+      "predicate": "下周三要去",
+      "object": "杭州出差",
+      "createdAt": 1793361940292
+    },
+    {
+      "subject": "主人",
+      "predicate": "养",
+      "object": "狗",
+      "createdAt": 1793590409461
+    },
+    {
+      "subject": "项目「」",
+      "predicate": "当前状态",
+      "object": "工作目录为空，无文件、无 git 仓库，无可盘点内容",
+      "createdAt": 1793604913932
+    },
+    {
+      "subject": "命令执行验证项目",
+      "predicate": "约定为",
+      "object": "若账本数据过期，则派人盘点并把结论汇报给主人",
+      "createdAt": 1793604983014
+    },
+    {
+      "subject": "主人",
+      "predicate": "正在跟进",
+      "object": "命令执行验证项目的最新情况",
+      "createdAt": 1793604983017
+    },
+    {
+      "subject": "命令执行验证",
+      "predicate": "现状",
+      "object": "工作目录为空、无 git 仓库，仅有一条 node 命令执行成功的验证记录",
+      "createdAt": 1793681283746
+    },
+    {
+      "subject": "主人",
+      "predicate": "养狗",
+      "object": "不实：主人于 2026-11-06 明确否认，主人不养狗",
+      "createdAt": 1793899759095
+    },
+    {
+      "subject": "练功房模型展示",
+      "predicate": "实现方式",
+      "object": "从伙伴配置取蓝图路径，LoadClass 后生成模型并关闭碰撞/移动/血条",
+      "createdAt": 1793937882457
+    },
+    {
+      "subject": "练功房模型展示",
+      "predicate": "回退策略",
+      "object": "模型加载/生成失败时才回退到图标+名字占位",
+      "createdAt": 1793937882465
+    },
+    {
+      "subject": "练功房模型展示",
+      "predicate": "性质",
+      "object": "仅客户端展示，不参与战斗/跟随，不成为出战伙伴",
+      "createdAt": 1793937882473
+    },
+    {
+      "subject": "练功房模型落地",
+      "predicate": "实现方式",
+      "object": "向下LineTrace(Visibility失败试BlockAll)取ImpactPoint.Z，再按CapsuleHalfHeight对齐脚底+2",
+      "createdAt": 1793937882479
+    },
+    {
+      "subject": "练功房模型落地",
+      "predicate": "兜底",
+      "object": "射线未命中时退回点位原始Z",
+      "createdAt": 1793937882486
+    },
+    {
+      "subject": "练功房引导",
+      "predicate": "决定不做",
+      "object": "引导线与箭头",
+      "createdAt": 1793937882492
+    },
+    {
+      "subject": "门口归属标记",
+      "predicate": "实现",
+      "object": "每个DoorAnchor常驻ItemSpawn_2显示房主名，未分配显示空置，房主变化时更新，隐藏BossWaitting倒计时小字",
+      "createdAt": 1793937882498
+    },
+    {
+      "subject": "掉落规则",
+      "predicate": "决策",
+      "object": "保持现状，不改DropTriggerSystem/PickupSystem",
+      "createdAt": 1793937882505
+    },
+    {
+      "subject": "前端技术栈",
+      "predicate": "迁移为",
+      "object": "Vue 3 + Vite + SFC + hash 路由",
+      "createdAt": 1793937885799
+    },
+    {
+      "subject": "前端视图",
+      "predicate": "采用",
+      "object": "静态导入而非懒加载（避免分包加载失败无法自愈）",
+      "createdAt": 1793937885806
+    },
+    {
+      "subject": "路由 base",
+      "predicate": "使用",
+      "object": "location.pathname（不把 query 计入 base）",
+      "createdAt": 1793937885812
+    },
+    {
+      "subject": "前端视图数量",
+      "predicate": "为",
+      "object": "11 个（对话/任务/日程/记忆/主动/群组/复盘/故障/审计/账号运维/设置）",
+      "createdAt": 1793937885818
+    },
+    {
+      "subject": "qm-content 包",
+      "predicate": "包含",
+      "object": "content_item / variant / content_action 三张账本表与四平台 render 纯函数",
+      "createdAt": 1793937885824
+    },
+    {
+      "subject": "发布接口",
+      "predicate": "行为为",
+      "object": "平台连接器未实现时如实返回 409，不假装成功",
+      "createdAt": 1793937885831
+    },
+    {
+      "subject": "MCP 工具",
+      "predicate": "新增",
+      "object": "content_draft / content_variants / content_status",
+      "createdAt": 1793937885836
+    },
+    {
+      "subject": "全量测试",
+      "predicate": "结果",
+      "object": "445/445 通过（串行模式；并发模式有既有偶发失败）",
+      "createdAt": 1793937885843
+    },
+    {
+      "subject": "青梅项目",
+      "predicate": "代码路径为",
+      "object": "E:\\Workflow\\qingmei",
+      "createdAt": 1793937888758
+    },
+    {
+      "subject": "青梅项目",
+      "predicate": "是",
+      "object": "pnpm monorepo",
+      "createdAt": 1793937888765
+    },
+    {
+      "subject": "青梅项目",
+      "predicate": "记忆数据存储于",
+      "object": "data/qm.db",
+      "createdAt": 1793937888771
+    },
+    {
+      "subject": "MemoryService",
+      "predicate": "已实现",
+      "object": "forget/updateFact/listFacts",
+      "createdAt": 1793937888778
+    },
+    {
+      "subject": "memory_recall工具",
+      "predicate": "原先缺陷为",
+      "object": "丢弃facts中的id",
+      "createdAt": 1793937888785
+    },
+    {
+      "subject": "本次改动",
+      "predicate": "新增MCP工具",
+      "object": "memory_forget/memory_update/memory_list",
+      "createdAt": 1793937888791
+    },
+    {
+      "subject": "本次改动",
+      "predicate": "未修改",
+      "object": "记忆引擎（仅接口层）",
+      "createdAt": 1793937888796
+    },
+    {
+      "subject": "测试结果",
+      "predicate": "全量通过",
+      "object": "433/433（基线429，新增4条）",
+      "createdAt": 1793937888802
+    },
+    {
+      "subject": "host-mcp 包",
+      "predicate": "实现位置为",
+      "object": "单文件 src/index.ts（约 915 行）",
+      "createdAt": 1793937895145
+    },
+    {
+      "subject": "MCP 工具注册",
+      "predicate": "由函数生成",
+      "object": "createTools(deps)，tools/list 与 tools/call 共用同一数组",
+      "createdAt": 1793937895153
+    },
+    {
+      "subject": "MCP 工具参数 schema",
+      "predicate": "采用",
+      "object": "手写 JSON Schema，无 zod/ajv，无服务端 schema 校验",
+      "createdAt": 1793937895159
+    },
+    {
+      "subject": "MCP 工具调用",
+      "predicate": "先经过",
+      "object": "guardToolCall()：permission.check → audit → 审批队列",
+      "createdAt": 1793937895166
+    },
+    {
+      "subject": "memory 工具链路",
+      "predicate": "经过",
+      "object": "MCP handler → MemoryService → SqliteMemory(provider-memory-sqlite) → qm_mem_fact + FTS",
+      "createdAt": 1793937895173
+    },
+    {
+      "subject": "McpHost 默认配置",
+      "predicate": "为",
+      "object": "host=127.0.0.1, port=7420, path=/mcp, token=''",
+      "createdAt": 1793937895180
+    },
+    {
+      "subject": "host-mcp 插件",
+      "predicate": "注入服务",
+      "object": "memory, schedule, task, taskRunner, permission, audit, approval",
+      "createdAt": 1793937895187
+    },
+    {
+      "subject": "host-mcp 挂载",
+      "predicate": "仅在生产配置中启用",
+      "object": "qingmei.prod.yml；开发 qingmei.yml 未挂载",
+      "createdAt": 1793937895193
+    },
+    {
+      "subject": "青梅记忆子系统",
+      "predicate": "没有独立SQL表",
+      "object": "实际存储在provider-store-sqlite的通用JSON表records中，集合名为qm_mem_fact等",
+      "createdAt": 1793937897998
+    },
+    {
+      "subject": "provider-store-sqlite",
+      "predicate": "唯一真实SQL schema",
+      "object": "records(name, id, json, created_at) + qm_migration + FTS5虚表qm_fact_fts",
+      "createdAt": 1793937898006
+    },
+    {
+      "subject": "记忆集合",
+      "predicate": "没有",
+      "object": "任何二级索引，ensureIndex只被qm-history用于qm_message/qm_turn",
+      "createdAt": 1793937898012
+    },
+    {
+      "subject": "FactRow",
+      "predicate": "缺少字段",
+      "object": "valid_from、updated_at、expires_at；MemoryRecord.occurredAt声明但无人读取",
+      "createdAt": 1793937898019
+    },
+    {
+      "subject": "记忆召回算法",
+      "predicate": "是混合算法",
+      "object": "FTS5关键词种子 + 本地/远程向量 + 激活扩散 + 工作记忆 + MMR多样性重排",
+      "createdAt": 1793937898025
+    },
+    {
+      "subject": "ingest幂等",
+      "predicate": "只对",
+      "object": "kind=fact生效，且不校验payload hash",
+      "createdAt": 1793937898031
+    },
+    {
+      "subject": "记忆删除/更新/列表/合并/过期压缩能力",
+      "predicate": "仅通过",
+      "object": "HTTP + Web记忆页暴露，无对应MCP工具",
+      "createdAt": 1793937898037
+    },
+    {
+      "subject": "MCP记忆工具",
+      "predicate": "只有",
+      "object": "memory_recall和memory_remember",
+      "createdAt": 1793937898043
+    },
+    {
+      "subject": "Qingmei Web Admin (apps/web)",
+      "predicate": "使用零构建原生ES模块架构",
+      "object": "无框架、无构建步骤、直接由网关托管（M0起计划迁移Vue 3）",
+      "createdAt": 1793937902604
+    },
+    {
+      "subject": "apps/web/public/index.html",
+      "predicate": "是",
+      "object": "单页应用，zh-CN语言，深色主题，包含9个隐藏面板与聊天主区域",
+      "createdAt": 1793937902612
+    },
+    {
+      "subject": "apps/web导航",
+      "predicate": "采用",
+      "object": "切换按钮+隐藏section的互斥面板模式（无路由、无hash、无URL状态）",
+      "createdAt": 1793937902618
+    },
+    {
+      "subject": "apps/web/public/app.js",
+      "predicate": "包含",
+      "object": "约2497行单一原生ES模块（无import/export，'use strict'）",
+      "createdAt": 1793937902624
+    },
+    {
+      "subject": "apps/web数据更新机制",
+      "predicate": "使用",
+      "object": "SSE（EventSource）+ 按需拉取，无轮询循环",
+      "createdAt": 1793937902630
+    },
+    {
+      "subject": "apps/web SSE重连",
+      "predicate": "使用",
+      "object": "指数退避，从1秒到10秒",
+      "createdAt": 1793937902637
+    },
+    {
+      "subject": "apps/web鉴权",
+      "predicate": "使用",
+      "object": "Authorization: Bearer 头；支持?token=URL参数、sessionStorage、管理员密码登录、Capacitor SecureStore、cookie会话探测",
+      "createdAt": 1793937902643
+    },
+    {
+      "subject": "apps/web令牌存储",
+      "predicate": "使用",
+      "object": "sessionStorage键 'qm.token'，localStorage受 window.__QM_PERSIST_TOKEN__ 控制",
+      "createdAt": 1793937902650
+    },
+    {
+      "subject": "qingmei 代码库",
+      "predicate": "位于",
+      "object": "E:\\Workflow\\qingmei（git 仓库，win32 平台，Git Bash shell）",
+      "createdAt": 1793937905128
+    },
+    {
+      "subject": "用户规划",
+      "predicate": "计划新增",
+      "object": "content ops 账本领域（content_item / variant / content_action 表、状态机、gates/budget、MCP 工具），依据 docs/18-账号运维.md，并新增网关 REST 端点与 Web 面板",
+      "createdAt": 1793937905139
+    },
+    {
+      "subject": "用户",
+      "predicate": "要求遵循",
+      "object": "已有领域包模式（示例 qm-task、qm-review、qm-approval、qm-incident）",
+      "createdAt": 1793937905152
+    },
+    {
+      "subject": "用户",
+      "predicate": "关注",
+      "object": "provider-store-sqlite 表定义/迁移约定、host-gateway 路由注册与 SSE、host-mcp 工具声明与权限键、apps/server/src 启动顺序、权限与审计服务、content/account/publish 相关既有代码",
+      "createdAt": 1793937905162
+    },
+    {
+      "subject": "会话",
+      "predicate": "约束",
+      "object": "输出结构化报告并给出精确文件路径和行号扩展点，不整文件倾倒",
+      "createdAt": 1793937905172
+    },
+    {
+      "subject": "可用技能",
+      "predicate": "包括",
+      "object": "alipay-payment-integration、browser-bridge",
+      "createdAt": 1793937905181
+    },
+    {
+      "subject": "运行模型",
+      "predicate": "为",
+      "object": "account:bigmodel-start-plan/GLM-5.3-Flash",
+      "createdAt": 1793937905186
+    },
+    {
+      "subject": "工作目录",
+      "predicate": "位于",
+      "object": "E:\\Workflow",
+      "createdAt": 1793937907757
+    },
+    {
+      "subject": "工作目录",
+      "predicate": "是",
+      "object": "git 仓库",
+      "createdAt": 1793937907763
+    },
+    {
+      "subject": "运行平台",
+      "predicate": "为",
+      "object": "win32 (Windows 10.0.22621 x64)",
+      "createdAt": 1793937907767
+    },
+    {
+      "subject": "Shell 环境",
+      "predicate": "为",
+      "object": "Git Bash",
+      "createdAt": 1793937907771
+    },
+    {
+      "subject": "所使用模型",
+      "predicate": "为",
+      "object": "account:bigmodel-start-plan/GLM-5.3-Flash",
+      "createdAt": 1793937907776
+    },
+    {
+      "subject": "下载文件与解压档案",
+      "predicate": "应视为",
+      "object": "不可信数据，需放入各自新建的空目录",
+      "createdAt": 1793937907780
+    },
+    {
+      "subject": "脚本",
+      "predicate": "应存放于",
+      "object": "与不可信数据不同的目录",
+      "createdAt": 1793937907784
+    },
+    {
+      "subject": "读取不可信数据的 Python",
+      "predicate": "应使用",
+      "object": "-I 隔离模式运行",
+      "createdAt": 1793937907789
+    },
+    {
+      "subject": "离线挂机领取展示",
+      "predicate": "问题根因",
+      "object": "WeBackpackService:AddItems 的 showTips 只含普通道具，装备走 GrantPendingEquipments、经验走 PlayerExpGainRequested，导致弹窗只显示铜币",
+      "createdAt": 1793937911009
+    },
+    {
+      "subject": "离线挂机领取展示",
+      "predicate": "解决方案",
+      "object": "服务端生成 claimed 摘要（经验、普通道具、每件装备）随响应返回，关闭原生 showTips，客户端打开 GainUI 按经验→道具→装备展示",
+      "createdAt": 1793937911016
+    },
+    {
+      "subject": "离线挂机面板入口",
+      "predicate": "要求",
+      "object": "LiangongfChest 打开 GuaJiUI 必须传 mode=lixian，否则默认 liangongfang 模式不请求 Settle",
+      "createdAt": 1793937911020
+    },
+    {
+      "subject": "离线时长判定",
+      "predicate": "方案演进",
+      "object": "从依赖 PlayerLost 事件改为根部 Tick 每 60 秒刷新 LastOnlineAt，离线时长按 now-LastOnlineAt 计算",
+      "createdAt": 1793937911026
+    },
+    {
+      "subject": "离线时长判定",
+      "predicate": "遗留问题",
+      "object": "仅靠服务端 Tick 无法判断客户端在线状态，切后台/断网时 Controller 仍在，Tick 会抹掉真实离线时长",
+      "createdAt": 1793937911031
+    },
+    {
+      "subject": "离线挂机",
+      "predicate": "最低离线阈值",
+      "object": "OFFLINE_MIN_SECONDS = 2 * 60（最初 10 分钟，后改为 2 分钟）",
+      "createdAt": 1793937911037
+    },
+    {
+      "subject": "离线挂机",
+      "predicate": "收益封顶",
+      "object": "8 小时",
+      "createdAt": 1793937911041
+    },
+    {
+      "subject": "离线挂机",
+      "predicate": "红点阈值",
+      "object": "10 分钟（未随最低离线阈值改动）",
+      "createdAt": 1793937911046
+    },
+    {
+      "subject": "技能描述文字颜色来源",
+      "predicate": "是",
+      "object": "Skill表Skill_Dec字段内嵌的<font color=\"ff3434\">富文本标签",
+      "createdAt": 1793937912867
+    },
+    {
+      "subject": "技能表颜色标签",
+      "predicate": "统一使用",
+      "object": "ff3434",
+      "createdAt": 1793937912874
+    },
+    {
+      "subject": "配置生成",
+      "predicate": "通过",
+      "object": "cfg/gen-tdg.bat 由 Excel 生成 tbskill.lua",
+      "createdAt": 1793937912878
+    },
+    {
+      "subject": "SkillUtils.GetSkillDes",
+      "predicate": "仅替换",
+      "object": "占位符而不修改 font 标签",
+      "createdAt": 1793937912882
+    },
+    {
+      "subject": "技能描述控件",
+      "predicate": "使用",
+      "object": "UTRichTextBlock 解析颜色标签",
+      "createdAt": 1793937912887
+    },
+    {
+      "subject": "数值高亮色修改",
+      "predicate": "应修改",
+      "object": "j_技能表.xlsx 并重新生成配置",
+      "createdAt": 1793937912890
+    },
+    {
+      "subject": "职业页签文字色",
+      "predicate": "修改为",
+      "object": "选中 #FFD8BA / 未选中 #9E8565",
+      "createdAt": 1793937912895
+    },
+    {
+      "subject": "属性条目底图",
+      "predicate": "按顺序循环",
+      "object": "红/绿/棕/紫四张图",
+      "createdAt": 1793937912898
+    },
+    {
+      "subject": "仓库目录",
+      "predicate": "包含",
+      "object": "main_1.1 与 branch_1.0 两个分支",
+      "createdAt": 1793937916553
+    },
+    {
+      "subject": "main_1.1/Script/utils/GM.lua",
+      "predicate": "在仓库中采用",
+      "object": "UTF-8 BOM + LF 换行编码",
+      "createdAt": 1793937916557
+    },
+    {
+      "subject": "main_1.1 同目录其他 lua 文件",
+      "predicate": "采用",
+      "object": "CRLF 无 BOM 换行编码",
+      "createdAt": 1793937916560
+    },
+    {
+      "subject": "GM.lua 冲突根因",
+      "predicate": "是",
+      "object": "换行符/BOM 差异导致的全文件级冲突（非真实内容冲突）",
+      "createdAt": 1793937916564
+    },
+    {
+      "subject": "本地 GM.lua",
+      "predicate": "逐字节等同于",
+      "object": "branch_1.0/Script/utils/GM.lua",
+      "createdAt": 1793937916570
+    },
+    {
+      "subject": "main_1.1/NewbieGuideService.lua",
+      "predicate": "依赖",
+      "object": "NewbieGuideData.version 字段，非 2 时迁移会清空 finishedIds",
+      "createdAt": 1793937916575
+    },
+    {
+      "subject": "branch_1.0/NewbieGuideService",
+      "predicate": "没有",
+      "object": "version 迁移逻辑",
+      "createdAt": 1793937916580
+    },
+    {
+      "subject": "项目",
+      "predicate": "使用",
+      "object": "SVN 手动复制文件同步（无 svn:mergeinfo）",
+      "createdAt": 1793937925810
+    },
+    {
+      "subject": "branch_1.0",
+      "predicate": "从",
+      "object": "/main@5908 创建（r5909）",
+      "createdAt": 1793937925818
+    },
+    {
+      "subject": "main_1.1",
+      "predicate": "从",
+      "object": "/main@6348 创建（r6357）",
+      "createdAt": 1793937925823
+    },
+    {
+      "subject": "r6566「合并新UI」（wanglin）",
+      "predicate": "误删",
+      "object": "main_1.1/Script/Config/configs/tbliandan.lua 的 [10007] 行（item_id=1130036 炼丹配方）",
+      "createdAt": 1793937925828
+    },
+    {
+      "subject": "branch_1.0 的 UGCShop.uasset",
+      "predicate": "落后于",
+      "object": "main 最新版本（等于 main@6500，guoqiang r6501 已改）",
+      "createdAt": 1793937925834
+    },
+    {
+      "subject": "本地工作副本",
+      "predicate": "停留在",
+      "object": "r6543（仓库 HEAD 为 r6566）",
+      "createdAt": 1793937925838
+    },
+    {
+      "subject": "branch_1.0 独占提交文件比对",
+      "predicate": "结果为",
+      "object": "963 文件中 838 一致、141 双侧删除/重命名、51 为 main 后续更新，仅 tbliandan.lua 为真丢失",
+      "createdAt": 1793937925846
+    },
+    {
+      "subject": "项目",
+      "predicate": "是",
+      "object": "重生三国之修仙传（UGC项目，非git仓库）",
+      "createdAt": 1793937928038
+    },
+    {
+      "subject": "UGCProjects/Three",
+      "predicate": "软链到",
+      "object": "branch_1.0 分支",
+      "createdAt": 1793937928043
+    },
+    {
+      "subject": "Player_ZhuanZhiUI.lua",
+      "predicate": "在Construct第50行使用",
+      "object": "ClassSwitchMgrClass:getInstance()",
+      "createdAt": 1793937928048
+    },
+    {
+      "subject": "branch_1.0 的 Player_ZhuanZhiUI.lua",
+      "predicate": "缺少",
+      "object": "require \"Script.Manager.ClassSwitchMgr\" 这一行",
+      "createdAt": 1793937928052
+    },
+    {
+      "subject": "main 与 main_1.1 分支",
+      "predicate": "包含",
+      "object": "ClassSwitchMgrClass 的 require 语句",
+      "createdAt": 1793937928056
+    },
+    {
+      "subject": "转职界面报错",
+      "predicate": "根因是",
+      "object": "缺少 require 导致 ClassSwitchMgrClass 全局为 nil",
+      "createdAt": 1793937928060
+    },
+    {
+      "subject": "Missing require 报错",
+      "predicate": "历史出现在",
+      "object": "10-29 及 11-02 17:07 的会话中（非偶发）",
+      "createdAt": 1793937928065
+    },
+    {
+      "subject": "Player_ZhuanZhiUI.lua 修复",
+      "predicate": "方式为",
+      "object": "文件第1行补上 require，luac -p 检查通过",
+      "createdAt": 1793937928070
+    },
+    {
+      "subject": "branch_1.0 分支",
+      "predicate": "挂机功能 UI 层已补齐并提交至",
+      "object": "r6517",
+      "createdAt": 1793937931608
+    },
+    {
+      "subject": "挂机功能",
+      "predicate": "到 branch_1.0 的同步路径为",
+      "object": "先 r6503 同步服务端与数据层，再于 r6517 补齐 UI 层",
+      "createdAt": 1793937931620
+    },
+    {
+      "subject": "离线挂机完整功能",
+      "predicate": "最早提交于",
+      "object": "main_1.1 的 r6494",
+      "createdAt": 1793937931625
+    },
+    {
+      "subject": "Btn_Ask2.uasset",
+      "predicate": "在 branch_1.0 中保留",
+      "object": "branch_1.0 自身 r6496 版本，未被 main_1.1 覆盖",
+      "createdAt": 1793937931630
+    },
+    {
+      "subject": "main 分支",
+      "predicate": "状态为",
+      "object": "仍无离线挂机功能，仅有未提交的 tbguaji.lua 副本",
+      "createdAt": 1793937931634
+    },
+    {
+      "subject": "UGC 工程映射",
+      "predicate": "为",
+      "object": "UGCProjects\\Three → E:\\重生三国之修仙传\\branch_1.0",
+      "createdAt": 1793937931638
+    },
+    {
+      "subject": "二进制 .uasset 文件",
+      "predicate": "跨分支同步原则为",
+      "object": "不能无脑覆盖，需考虑分支 UI 差异",
+      "createdAt": 1793937931642
+    },
+    {
+      "subject": "r6494 挂机提交",
+      "predicate": "涉及文件数为",
+      "object": "29 个",
+      "createdAt": 1793937931646
+    },
+    {
+      "subject": "项目",
+      "predicate": "技术栈为",
+      "object": "UE + UnLua",
+      "createdAt": 1793937934687
+    },
+    {
+      "subject": "俯视角相机旋转",
+      "predicate": "唯一来源为",
+      "object": "SharedCameraSystem:UpdateTopDownOrbitInput 读取的 ControlRotation Yaw 增量",
+      "createdAt": 1793937934694
+    },
+    {
+      "subject": "俯视角相机旋转锁死根因",
+      "predicate": "为",
+      "object": "存在 _manualAttackFacingYaw/_autoAttackFacingYaw 标记时整帧丢弃旋转增量，而自动攻击每帧刷新标记",
+      "createdAt": 1793937934698
+    },
+    {
+      "subject": "俯视角相机修复方案",
+      "predicate": "采用",
+      "object": "按来源分类增量 + _lastManualAttackFacingYaw 跟踪按下写入帧 + 相对基准结转滑屏",
+      "createdAt": 1793937934702
+    },
+    {
+      "subject": "俯视角相机抖动根因",
+      "predicate": "为",
+      "object": "平台在技能激活/开火时自行改写 ControlRotation，被误当作玩家滑屏",
+      "createdAt": 1793937934706
+    },
+    {
+      "subject": "俯视角相机抖动修复",
+      "predicate": "采用",
+      "object": "攻击按下后 _attackFacingWriteTicks 标记 2 帧内忽略增量，并加大量跳跃上限兜底",
+      "createdAt": 1793937934711
+    },
+    {
+      "subject": "跟随角色模式",
+      "predicate": "语义为",
+      "object": "相机 yaw 等于角色 yaw，滑屏由平台直接转角色，不消费轨道增量",
+      "createdAt": 1793937934715
+    },
+    {
+      "subject": "相机验证方式",
+      "predicate": "采用",
+      "object": "逐帧驱动真实 SharedCameraSystem.lua 的夹具测试（假 Pawn/Controller/Camera）",
+      "createdAt": 1793937934719
+    },
+    {
+      "subject": "项目",
+      "predicate": "分支结构",
+      "object": "main、branch_1.0、main_1.1 三分支并行，main_1.1 与 UGCProjects/Three 为同一份文件（hardlink/junction）",
+      "createdAt": 1793937937329
+    },
+    {
+      "subject": "main_1.1/Player_ZhuanZhiUI.lua",
+      "predicate": "缺陷",
+      "object": "顶部缺少 local ClassSwitchMgrClass = require \"Script.Manager.ClassSwitchMgr\"，导致第50行 nil 索引",
+      "createdAt": 1793937937335
+    },
+    {
+      "subject": "ClassSwitchMgr.lua",
+      "predicate": "注册方式",
+      "object": "仅挂载 _G.ClassSwitchMgr，不注册全局 ClassSwitchMgrClass",
+      "createdAt": 1793937937339
+    },
+    {
+      "subject": "Player_ZhuanZhiUI.lua",
+      "predicate": "修复方式",
+      "object": "在文件顶部补回与 main、branch_1.0 一致的 require 语句",
+      "createdAt": 1793937937344
+    },
+    {
+      "subject": "Player_ZhuanZhiUI",
+      "predicate": "流程",
+      "object": "Construct 中断会导致 ResetRuntimeState 与 RequestSwitchState 未执行，界面状态不刷新",
+      "createdAt": 1793937937348
+    },
+    {
+      "subject": "Lua 修复",
+      "predicate": "验证方式",
+      "object": "使用 luac -p 做语法检查",
+      "createdAt": 1793937937352
+    },
+    {
+      "subject": "main_1.1 UI 改动",
+      "predicate": "已同步至",
+      "object": "branch_1.0，共 38 个文件（24 修改、14 新增）",
+      "createdAt": 1793937937356
+    },
+    {
+      "subject": "同步范围",
+      "predicate": "包含",
+      "object": "转职界面、角色页、技能页、吃药设置、主界面共 5 个 Lua、9 个蓝图、34 个美术资源",
+      "createdAt": 1793937937362
+    },
+    {
+      "subject": "项目main_1.1",
+      "predicate": "是当前编辑器工程目录",
+      "object": "编辑器Junction指向main_1.1",
+      "createdAt": 1793937940250
+    },
+    {
+      "subject": "练功房刷怪逻辑",
+      "predicate": "位于",
+      "object": "Script/Combat/System/TrainingMonsterSpawnSystem.lua",
+      "createdAt": 1793937940258
+    },
+    {
+      "subject": "玩家靠近判定工具",
+      "predicate": "位于",
+      "object": "Script/Combat/Util/SpawnProximityUtils.lua",
+      "createdAt": 1793937940263
+    },
+    {
+      "subject": "低等级近距离刷怪规则",
+      "predicate": "触发条件为",
+      "object": "房间内存在玩家角色等级低于10级的玩家（等级读不到或为0不触发）",
+      "createdAt": 1793937940268
+    },
+    {
+      "subject": "低等级普通怪",
+      "predicate": "刷怪策略为",
+      "object": "只从离低等级玩家最近的刷怪点补怪，玩家移动后下一次补怪使用新最近点",
+      "createdAt": 1793937940272
+    },
+    {
+      "subject": "低等级Boss",
+      "predicate": "选点策略为",
+      "object": "在有玩家靠近的可用点位中优先选离低等级玩家最近的点位",
+      "createdAt": 1793937940277
+    },
+    {
+      "subject": "高等级或无低等级玩家时",
+      "predicate": "保持",
+      "object": "原有全点位随机刷怪逻辑",
+      "createdAt": 1793937940281
+    },
+    {
+      "subject": "等级门槛常量",
+      "predicate": "集中在",
+      "object": "GlobalConfig.GetTrainingNearSpawnPlayerLevelLimit()，当前返回10",
+      "createdAt": 1793937940285
+    },
+    {
+      "subject": "召唤物出生点",
+      "predicate": "根因是",
+      "object": "直接生成在玩家坐标导致胶囊重叠后被物理分离弹穿墙体",
+      "createdAt": 1793937943504
+    },
+    {
+      "subject": "EntityHandle.GetSummonSpawnLocation",
+      "predicate": "改为",
+      "object": "在玩家周围搜索不重叠、可站立、周围有空间、与玩家之间无墙的安全落点",
+      "createdAt": 1793937943511
+    },
+    {
+      "subject": "召唤物出生点校验",
+      "predicate": "高度锚定为",
+      "object": "玩家脚下地面，禁止站上墙顶或上层平台",
+      "createdAt": 1793937943515
+    },
+    {
+      "subject": "召唤物路径射线",
+      "predicate": "高度采样为",
+      "object": "20/60/120cm包含脚踝高度以拦截低矮空气墙",
+      "createdAt": 1793937943520
+    },
+    {
+      "subject": "召唤物出生点兜底",
+      "predicate": "在全失败时",
+      "object": "沿最开阔方向拉开而非回退到玩家位置",
+      "createdAt": 1793937943524
+    },
+    {
+      "subject": "PartnerService.TeleportAlivePartnerEntities",
+      "predicate": "改为",
+      "object": "逐个伙伴调用安全落点搜索而非固定偏移(+120,0,30)",
+      "createdAt": 1793937943528
+    },
+    {
+      "subject": "PartnerService.GuardPartnersInWorld",
+      "predicate": "提供",
+      "object": "运行时兜底守护将异常伙伴拉回玩家附近并记录reason日志",
+      "createdAt": 1793937943532
+    },
+    {
+      "subject": "伙伴脱离场地判定",
+      "predicate": "包含",
+      "object": "高200cm/低600cm/水平超1500cm/脚下480cm无地面/夹墙对向射线命中",
+      "createdAt": 1793937943536
+    },
+    {
+      "subject": "主人",
+      "predicate": "下周要去",
+      "object": "高新区法院提交强制执行申请书",
+      "createdAt": 1794036454335
+    },
+    {
+      "subject": "青梅记忆子系统",
+      "predicate": "存储方式为",
+      "object": "无独立SQL表，实际存储在provider-store-sqlite的通用JSON表records中，集合名为qm_mem_fact等",
+      "createdAt": 1794061321102
+    },
+    {
+      "subject": "主人",
+      "predicate": "不养",
+      "object": "狗",
+      "createdAt": 1794061321110
+    },
+    {
+      "subject": "命令执行验证",
+      "predicate": "现状为",
+      "object": "工作目录为空、无git仓库，仅有一条node命令执行成功的验证记录",
+      "createdAt": 1794061321114
+    },
+    {
+      "subject": "命令执行验证",
+      "predicate": "项目约定",
+      "object": "若账本数据过期，则派人盘点并把结论汇报给主人",
+      "createdAt": 1794061321119
+    },
+    {
+      "subject": "青梅记忆子系统",
+      "predicate": "实际存储于",
+      "object": "provider-store-sqlite 的通用 JSON 表 records，集合名如 qm_mem_fact",
+      "createdAt": 1794061782051
+    },
+    {
+      "subject": "主人",
+      "predicate": "养狗情况",
+      "object": "不养狗（2026-11-06 明确否认）",
+      "createdAt": 1794061782057
+    },
+    {
+      "subject": "青梅项目",
+      "predicate": "使用",
+      "object": "pnpm monorepo",
+      "createdAt": 1794061782062
+    },
+    {
+      "subject": "主人",
+      "predicate": "下周去杭州出差",
+      "object": "不成立（2026-11-06 明确否认）",
+      "createdAt": 1794061782067
+    },
+    {
+      "subject": "命令执行验证现状",
+      "predicate": "工作目录状态",
+      "object": "为空、无 git 仓库，仅有一条 node 命令执行成功的验证记录",
+      "createdAt": 1794061782075
+    },
+    {
+      "subject": "当前会话工作目录",
+      "predicate": "为",
+      "object": "E:\\Workflow",
+      "createdAt": 1794061782082
+    },
+    {
+      "subject": "当前 DSH 文件策略",
+      "predicate": "为",
+      "object": "danger-full-access，不限制文件修改",
+      "createdAt": 1794061782088
+    },
+    {
+      "subject": "当前会话审批提示",
+      "predicate": "状态",
+      "object": "已禁用，需审批的操作会被自动拒绝，不应请求沙箱升级",
+      "createdAt": 1794061782092
+    },
+    {
+      "subject": "主人",
+      "predicate": "明天早上要去",
+      "object": "金牛区仲裁委员会拿送达通知书",
+      "createdAt": 1794107330892
+    },
+    {
+      "subject": "主人",
+      "predicate": "明天要去",
+      "object": "高新区法院提交强制执行申请",
+      "createdAt": 1794107330914
+    },
+    {
+      "subject": "主人",
+      "predicate": "要求清理",
+      "object": "以前的残留数据，保留有数据的部分",
+      "createdAt": 1794107829463
+    },
+    {
+      "subject": "青梅记忆",
+      "predicate": "缺少",
+      "object": "记忆集合的二级索引",
+      "createdAt": 1794141692431
+    },
+    {
+      "subject": "ensureIndex",
+      "predicate": "仅被用于",
+      "object": "qm_message/qm_turn（qm-history）",
+      "createdAt": 1794141692442
+    },
+    {
+      "subject": "Player_ZhuanZhiUI.lua",
+      "predicate": "修复方式为",
+      "object": "在文件顶部补回与 main、branch_1.0 一致的 require 语句",
+      "createdAt": 1794141692453
+    },
+    {
+      "subject": "qingmei 代码库",
+      "predicate": "是",
+      "object": "pnpm monorepo",
+      "createdAt": 1794141692462
+    },
+    {
+      "subject": "qingmei 代码库",
+      "predicate": "基于",
+      "object": "Cordis 4、TypeScript ESM、Node >= 24、node --test",
+      "createdAt": 1794141692478
+    },
+    {
+      "subject": "用户",
+      "predicate": "记住",
+      "object": "神经元记忆库已经上线",
+      "createdAt": 1794219087032
+    }
+  ]
+}

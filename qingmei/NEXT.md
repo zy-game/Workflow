@@ -1,3 +1,15 @@
+### P2：自规划循环 + 目标账本（2026-11-12）
+
+- 新插件 `qm-planner`：监听 `taskFinished`，用独立 `planner:owner` 会话让模型输出 JSON（后续任务 / 提醒 / 研究申请 / 跳过）；
+- 目标账本 `qm_goal`：`GET/POST /api/v1/goals`、`POST /api/v1/goals/update`；
+- 约束：自建任务每天最多 3 个、深度最多 1 层、24h 同标题去重、30 分钟冷却；到顶后只允许提醒/申请；
+- 研究申请走审批：`qm_planner_request` 记录 approval，批准后自动建「资料研究」任务；
+- `GET /api/v1/planner/stats`：runs / tasksCreated / tasksDone / reminders / skips / research 与接受率；
+- 生产实测：`POST /api/v1/planner/run` 读目标后产出「跑通自规划循环（端到端）」任务并排入执行；
+- 任务完成回投改为落库 `qm_pending_result`，服务重启后仍能通知；
+- 真实问法评估集：`scripts/export-real-eval.mjs` 从生产导出 + 人工标注 8 题，`scripts/eval-real-questions.mjs` 7/8（embedding off），放宽“项目约定也算相关”后 8/8；
+- P3：桌面 0.1.7 发布（设备统一 + 自动启 worker + 项目派任务）；CI 改为 `pnpm gate --with-smoke`，本地 smoke 通过。
+
 ### P0/P1 第一轮：设备/工作区闭环 + 向量元数据（2026-11-12）
 
 - 桌宠与 worker 共用 deviceId（worker.json 稳定 id，renderer 通过 IPC 读取）；worker 随桌宠自动启动；

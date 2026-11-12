@@ -77,8 +77,8 @@
 # 可选语义向量：智谱 embedding-3（OpenAI 兼容）；没配 QM_EMBEDDING_URL 时自动不注册
 - name: '@qingmei/provider-embedding-http'
   config:
-    url: { $env: QM_EMBEDDING_URL }
-    apiKey: { $env: QM_EMBEDDING_KEY }
+    url: '${QM_EMBEDDING_URL}'
+    apiKey: '${QM_EMBEDDING_KEY}'
     model: embedding-3
 # 成本观测：读 DeepSeek 余额（只读），记录每日快照；没有 key 时静默
 - name: '@qingmei/qm-cost'
@@ -119,6 +119,14 @@
 
 # QQ 机器人渠道：配置 appId/clientSecret（或 QM_QQ_APP_ID / QM_QQ_CLIENT_SECRET）才启用
 - name: '@qingmei/channel-qq'
+
+# 自规划循环：默认关，避免本地开发时反复调模型
+- name: '@qingmei/qm-planner'
+  config:
+    enabled: false
+    maxSelfTasksPerDay: 3
+    maxDepth: 1
+    cooldownMinutes: 30
 
 - name: '@qingmei/host-gateway'
   config:

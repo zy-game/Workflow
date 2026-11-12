@@ -840,3 +840,22 @@ test('项目问题：唯一工作区先问确认，确认后派任务到设备�
 })
 
 
+
+test('任务完成回投：映射落库，重启后也能通知', async () => {
+  const h = await boot()
+  const store = h.ctx.reflect.get('store', false) as {
+    collection(name: string): { insert(value: unknown): Promise<unknown> }
+  }
+  await store.collection('qm_pending_result').insert({
+    id: 'run_persist',
+    channel: 'web',
+    conversation_id: 'conv-1',
+    title: '三国检查',
+    at: Date.now(),
+  })
+  h.ctx.events.emit(EVENTS.taskFinished, { id: 'run_persist', status: 'done', result: '发现两个 bug' } as never)
+  await waitFor(() => h.state.sent.length === 1, '回投消息')
+  const text = (h.state.sent[0].blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
+  assert.match(text, /三国检查/)
+  assert.match(text, /发现两个 bug/)
+})

@@ -105,6 +105,17 @@
 # 审批队列的 HTTP 面与渠道推送（飞书卡片 / QQ 键盘）
 - name: '@qingmei/qm-approval'
 
+# 自规划循环：任务结束后读目标账本+最近任务，让模型决定下一步（建任务/提醒/申请研究/跳过）
+# 默认只允许一层自建任务、每天最多 3 个；研究申请走审批
+- name: '@qingmei/qm-planner'
+  config:
+    enabled: true
+    maxSelfTasksPerDay: 3
+    maxDepth: 1
+    cooldownMinutes: 30
+    notifyChannel: web
+    notifyConversation: owner
+
 # 审计只读查询面：GET /api/v1/audit
 - name: '@qingmei/qm-audit'
 
