@@ -1,3 +1,12 @@
+### 记忆 P1：分层退化 + 时间评估（2026-11-12）
+
+| 项 | 实现 | 证据 |
+| --- | --- | --- |
+| 分层退化 | `memory.consolidateEpisodes()`：7 天→日摘要、28 天→周摘要、90 天→月摘要；`salience ≥ 0.8` 或含决定/承诺/教训的原文不压 | `neuron.test.ts`：三类摘要各生成、决定类原文 `valid_to` 仍为 null、重复跑不重复建 |
+| 软删与追溯 | 原文只置 `valid_to`；摘要 `origin_kind=summary`、`provenance` 存原始 id（≤20） | 同上断言 `provenance` 非空 |
+| 每日任务 | 服务器 `/etc/cron.d/qingmei-memory`，04:00 跑 `scripts/memory-decay.mjs`，日志 `/var/log/qingmei/memory.log` | 手工跑过：`scanned 5 / groups 0 / merged 0`（当前没有 7 天前的 episode，符合预期） |
+| 时间评估 | `scripts/eval-memory-time.mjs` + 30 条时间锚定问题，进 gate | recall@5 100%（问题保留对象关键词，只验证时间窗） |
+
 ### 记忆 P0 + 自动化开启（2026-11-12）
 
 | 项 | 改动 | 证据 |

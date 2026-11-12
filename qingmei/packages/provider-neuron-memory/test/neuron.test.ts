@@ -263,3 +263,55 @@ test('recall：时间窗过滤只返回窗口内的记忆', async () => {
   }
 })
 
+
+test('consolidateEpisodes：按天/周/月压缩，保护高 salience 与决定类原文', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    const now = new Date('2026-11-12T04:00:00Z')
+    const ingest = (text: string, daysAgo: number, salience = 0.4) =>
+      ctx.memory.ingest([
+        {
+          kind: 'episode',
+          subject: 'session:s1',
+          predicate: '对话',
+          object: text,
+          confidence: 0.8,
+          salience,
+          sensitivity: 'private',
+          audience: 'owner',
+          origin: { kind: 'channel', id: 's1' },
+          occurredAt: new Date(now.getTime() - daysAgo * 86_400_000),
+        },
+      ])
+    await ingest('讨论记忆分层', 8)
+    await ingest('讨论了时间窗', 8)
+    await ingest('三周前的对话', 30)
+    await ingest('三个月前的对话', 100)
+    await ingest('决定用 SQLite', 8)
+    await ingest('最近的事', 1)
+
+    const report = await ctx.memory.consolidateEpisodes({ now })
+    assert.ok(report.groups >= 3, `至少生成日/周/月三种摘要，实际 ${report.groups}`)
+    assert.ok(report.merged >= 4)
+
+    const store = ctx.reflect.get('store', false) as {
+      collection(name: string): { find(): Promise<Record<string, unknown>[]> }
+    }
+    const rows = await store.collection('qm_episode').find()
+    const summaries = rows.filter((row) => row.origin_kind === 'summary')
+    assert.ok(summaries.length >= 3)
+    assert.ok(summaries.every((row) => String(row.provenance ?? '').length > 0), '摘要要带来源')
+    const protectedRow = rows.find((row) => row.text === '决定用 SQLite')
+    assert.equal(protectedRow?.valid_to ?? null, null, '决定类原文不能被压缩')
+    const recent = rows.find((row) => row.text === '最近的事')
+    assert.equal(recent?.valid_to ?? null, null)
+
+    const again = await ctx.memory.consolidateEpisodes({ now })
+    assert.equal(again.groups, 0, '重复跑不产生重复摘要')
+
+    const recalled = await ctx.memory.recall({ text: '记忆分层' })
+    assert.ok(recalled.text.includes('日摘要'), '压缩后的摘要仍可召回')
+  } finally {
+    await dispose()
+  }
+})

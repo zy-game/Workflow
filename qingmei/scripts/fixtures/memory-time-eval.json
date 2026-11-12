@@ -1,0 +1,245 @@
+{
+  "note": "时间锚定的记忆评估集：每条事实有发生时间，问题带时间窗，期望能召回事实。用于验证「最近清楚、久远有摘要」是否真的可检索。",
+  "cases": [
+    {
+      "id": "t01",
+      "question": "我最近喝的咖啡是什么",
+      "sinceDaysAgo": 7,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 2,
+      "expected": "手冲咖啡"
+    },
+    {
+      "id": "t02",
+      "question": "昨天的番茄牛腩",
+      "sinceDaysAgo": 2,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 1,
+      "expected": "番茄牛腩"
+    },
+    {
+      "id": "t03",
+      "question": "最近在做的记忆重构项目",
+      "sinceDaysAgo": 7,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 3,
+      "expected": "青梅记忆重构"
+    },
+    {
+      "id": "t04",
+      "question": "新买的机械键盘",
+      "sinceDaysAgo": 14,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 5,
+      "expected": "机械键盘"
+    },
+    {
+      "id": "t05",
+      "question": "上个月去杭州出差",
+      "sinceDaysAgo": 60,
+      "untilDaysAgo": 30,
+      "factDaysAgo": 40,
+      "expected": "杭州出差"
+    },
+    {
+      "id": "t06",
+      "question": "上个月读的设计数据密集型应用",
+      "sinceDaysAgo": 60,
+      "untilDaysAgo": 30,
+      "factDaysAgo": 35,
+      "expected": "设计数据密集型应用"
+    },
+    {
+      "id": "t07",
+      "question": "三个月前提的事件溯源架构",
+      "sinceDaysAgo": 120,
+      "untilDaysAgo": 80,
+      "factDaysAgo": 100,
+      "expected": "事件溯源架构"
+    },
+    {
+      "id": "t08",
+      "question": "去年选的 SQLite 单文件方案",
+      "sinceDaysAgo": 400,
+      "untilDaysAgo": 300,
+      "factDaysAgo": 350,
+      "expected": "SQLite 单文件"
+    },
+    {
+      "id": "t09",
+      "question": "最近的每周三次力量训练",
+      "sinceDaysAgo": 7,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 4,
+      "expected": "每周三次力量训练"
+    },
+    {
+      "id": "t10",
+      "question": "最近喝的龙井茶",
+      "sinceDaysAgo": 30,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 20,
+      "expected": "龙井茶"
+    },
+    {
+      "id": "t11",
+      "question": "上个月孩子上小学的事",
+      "sinceDaysAgo": 60,
+      "untilDaysAgo": 30,
+      "factDaysAgo": 45,
+      "expected": "孩子上小学"
+    },
+    {
+      "id": "t12",
+      "question": "最近在改的记忆召回打分",
+      "sinceDaysAgo": 7,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 1,
+      "expected": "记忆召回打分"
+    },
+    {
+      "id": "t13",
+      "question": "上周的满盘导致 SQLite 报错",
+      "sinceDaysAgo": 14,
+      "untilDaysAgo": 7,
+      "factDaysAgo": 9,
+      "expected": "满盘导致 SQLite 报错"
+    },
+    {
+      "id": "t14",
+      "question": "我提过的花生过敏",
+      "sinceDaysAgo": 365,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 120,
+      "expected": "花生过敏"
+    },
+    {
+      "id": "t15",
+      "question": "最近体检的血脂偏高",
+      "sinceDaysAgo": 90,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 60,
+      "expected": "血脂偏高"
+    },
+    {
+      "id": "t16",
+      "question": "最近在追的漫长的季节",
+      "sinceDaysAgo": 14,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 6,
+      "expected": "漫长的季节"
+    },
+    {
+      "id": "t17",
+      "question": "两个月前换的 Neovim",
+      "sinceDaysAgo": 90,
+      "untilDaysAgo": 45,
+      "factDaysAgo": 70,
+      "expected": "Neovim"
+    },
+    {
+      "id": "t18",
+      "question": "最近在学的 Rust",
+      "sinceDaysAgo": 30,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 15,
+      "expected": "Rust"
+    },
+    {
+      "id": "t19",
+      "question": "上季度定的每月三千元服务器预算",
+      "sinceDaysAgo": 150,
+      "untilDaysAgo": 90,
+      "factDaysAgo": 120,
+      "expected": "每月三千元服务器预算"
+    },
+    {
+      "id": "t20",
+      "question": "最近用的 SQLite 数据库",
+      "sinceDaysAgo": 7,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 2,
+      "expected": "SQLite"
+    },
+    {
+      "id": "t21",
+      "question": "半年内提的去日本看樱花",
+      "sinceDaysAgo": 200,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 150,
+      "expected": "去日本看樱花"
+    },
+    {
+      "id": "t22",
+      "question": "最近喝的精酿啤酒",
+      "sinceDaysAgo": 30,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 10,
+      "expected": "精酿啤酒"
+    },
+    {
+      "id": "t23",
+      "question": "上周周报里的任务调度性能",
+      "sinceDaysAgo": 14,
+      "untilDaysAgo": 7,
+      "factDaysAgo": 8,
+      "expected": "任务调度性能"
+    },
+    {
+      "id": "t24",
+      "question": "三个月前讨论的分层退化",
+      "sinceDaysAgo": 120,
+      "untilDaysAgo": 60,
+      "factDaysAgo": 90,
+      "expected": "分层退化"
+    },
+    {
+      "id": "t25",
+      "question": "最近用的 Pixel 手机",
+      "sinceDaysAgo": 30,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 25,
+      "expected": "Pixel"
+    },
+    {
+      "id": "t26",
+      "question": "去年做的胃镜",
+      "sinceDaysAgo": 500,
+      "untilDaysAgo": 300,
+      "factDaysAgo": 400,
+      "expected": "胃镜"
+    },
+    {
+      "id": "t27",
+      "question": "上个月修的厨房水管",
+      "sinceDaysAgo": 60,
+      "untilDaysAgo": 30,
+      "factDaysAgo": 50,
+      "expected": "厨房水管"
+    },
+    {
+      "id": "t28",
+      "question": "最近听的硬地骇客播客",
+      "sinceDaysAgo": 7,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 3,
+      "expected": "硬地骇客"
+    },
+    {
+      "id": "t29",
+      "question": "两年前搬到的成都",
+      "sinceDaysAgo": 800,
+      "untilDaysAgo": 600,
+      "factDaysAgo": 700,
+      "expected": "成都"
+    },
+    {
+      "id": "t30",
+      "question": "最近的十二点睡觉",
+      "sinceDaysAgo": 30,
+      "untilDaysAgo": 0,
+      "factDaysAgo": 12,
+      "expected": "十二点睡觉"
+    }
+  ]
+}

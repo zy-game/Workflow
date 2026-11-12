@@ -29,6 +29,7 @@ import {
   type ConceptProposal,
   type ConceptEvaluation,
   type ConceptChangeSummary,
+  type EpisodeConsolidationReport,
 } from '@qingmei/core'
 
 export interface NeuronMemoryConfig {
@@ -100,6 +101,8 @@ interface EpisodeRow extends Row {
   origin_id: string
   created_at: number
   valid_to: number | null
+  /** 摘要来源的原始 episode id（逗号分隔，最多 20 个） */
+  provenance?: string
 }
 
 interface BindingRow extends Row {
@@ -655,6 +658,76 @@ export class NeuronMemory extends MemoryService {
     return parts.join('；').slice(0, 300)
   }
 
+  /**
+   * 分层退化：近的保留原文，远的压成摘要。
+   *
+   * - 超过 dailyAfterDays：按天聚合成「日摘要」；
+   * - 超过 weeklyAfterDays：按周聚合成「周摘要」；
+   * - 超过 monthlyAfterDays：按月聚合成「月摘要」；
+   * - salience 高、或含决定/承诺/教训的原文不压；
+   * - 原文只置 valid_to（软删），摘要带 provenance（原始 id 列表）可回溯。
+   */
+  async consolidateEpisodes(
+    options: {
+      now?: Date
+      dailyAfterDays?: number
+      weeklyAfterDays?: number
+      monthlyAfterDays?: number
+      protectSalience?: number
+    } = {},
+  ): Promise<EpisodeConsolidationReport> {
+    await this.ready
+    const now = options.now ?? new Date()
+    const dailyAfter = Math.max(1, options.dailyAfterDays ?? 7)
+    const weeklyAfter = Math.max(dailyAfter, options.weeklyAfterDays ?? 28)
+    const monthlyAfter = Math.max(weeklyAfter, options.monthlyAfterDays ?? 90)
+    const protectSalience = options.protectSalience ?? 0.8
+    const rows = (await this.episodes.find({})).filter((row) => !row.valid_to)
+
+    const groups = new Map<string, { tier: 'day' | 'week' | 'month'; key: string; rows: EpisodeRow[] }>()
+    for (const row of rows) {
+      const ageDays = (now.getTime() - row.created_at) / 86_400_000
+      if (ageDays < dailyAfter) continue
+      if (row.salience >= protectSalience) continue
+      if (PROTECT_PATTERN.test(row.text)) continue
+      const tier = ageDays >= monthlyAfter ? 'month' : ageDays >= weeklyAfter ? 'week' : 'day'
+      const key = tier === 'month' ? monthKey(row.created_at) : tier === 'week' ? weekKey(row.created_at) : dayKey(row.created_at)
+      const groupKey = `${tier}:${key}`
+      const group = groups.get(groupKey) ?? { tier, key, rows: [] }
+      group.rows.push(row)
+      groups.set(groupKey, group)
+    }
+
+    let created = 0
+    let merged = 0
+    for (const group of groups.values()) {
+      const originId = `summary:${group.tier}:${group.key}`
+      const existing = await this.episodes.find({ where: { origin_kind: 'summary', origin_id: originId } })
+      if (existing.length > 0) continue
+      const texts = group.rows.map((row) => row.text).sort()
+      const row = await this.episodes.insert({
+        text: buildEpisodeSummary(group.tier, group.key, texts),
+        session_id: group.rows[0]!.session_id,
+        audience: group.rows[0]!.audience,
+        sensitivity: group.rows[0]!.sensitivity,
+        salience: Math.max(0.6, ...group.rows.map((item) => item.salience)),
+        confidence: 0.6,
+        origin_kind: 'summary',
+        origin_id: originId,
+        created_at: Math.max(...group.rows.map((item) => item.created_at)),
+        valid_to: null,
+        provenance: group.rows.map((item) => item.id).slice(0, 20).join(','),
+      })
+      await this.bind(row.id, 'episode', row.text)
+      for (const original of group.rows) {
+        await this.episodes.update(original.id, { valid_to: now.getTime() })
+        merged += 1
+      }
+      created += 1
+    }
+    return { at: now, scanned: rows.length, groups: created, merged }
+  }
+
   async consolidate() {
     await this.ready
     const beforeConsolidate = await this.snapshotGraph()
@@ -1134,3 +1207,39 @@ export const defaultExport = { name, inject, apply }
 
 
 
+
+
+// ────────────────────────────────────────────── 分层退化辅助
+
+/** 决定/承诺/教训类原文不压缩：压掉这些比不压更糟 */
+const PROTECT_PATTERN = /(决定|承诺|答应|教训|以后不|务必)/
+
+const DAY_MS = 86_400_000
+
+export function dayKey(ts: number): string {
+  const date = new Date(ts)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+export function weekKey(ts: number): string {
+  const date = new Date(ts)
+  const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate() - ((date.getDay() + 6) % 7))
+  const janFirst = new Date(monday.getFullYear(), 0, 1)
+  const week = Math.ceil(((monday.getTime() - janFirst.getTime()) / DAY_MS + janFirst.getDay() + 1) / 7)
+  return `${monday.getFullYear()}-W${String(week).padStart(2, '0')}`
+}
+
+export function monthKey(ts: number): string {
+  const date = new Date(ts)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** 摘要保留每段前 90 字，最多 6 段：细节丢一些，主题和结论保留 */
+export function buildEpisodeSummary(tier: 'day' | 'week' | 'month', key: string, texts: string[]): string {
+  const label = tier === 'day' ? `${key} 日摘要` : tier === 'week' ? `${key} 周摘要` : `${key} 月摘要`
+  const excerpts = texts
+    .map((text) => text.replace(/\s+/g, ' ').trim().slice(0, 90))
+    .filter(Boolean)
+    .slice(0, 6)
+  return `【${label}】${texts.length} 段对话：${excerpts.join(' / ')}`.slice(0, 800)
+}

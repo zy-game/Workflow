@@ -29,6 +29,7 @@ const steps = [
   { name: 'typecheck:host', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/host-gateway/tsconfig.json'] },
   { name: 'memory:eval', args: ['scripts/eval-memory.mjs'] },
   { name: 'group-tags', args: ['scripts/eval-group-tags.mjs'] },
+  { name: 'memory:time', args: ['scripts/eval-memory-time.mjs'] },
   { name: 'tests', args: ['--test', '--test-concurrency=1'] },
 ]
 if (withSmoke) steps.push({ name: 'smoke', args: ['scripts/smoke.mjs'] })
@@ -47,5 +48,6 @@ for (const step of steps) {
 
 if (!withSmoke) process.stdout.write('\n[gate] smoke skipped (use --with-smoke)\n')
 process.exit(failed ? 1 : 0)
+
 
 
