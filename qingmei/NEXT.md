@@ -1,3 +1,20 @@
+### P0-③ 首次启动向导：测试连接现在会验令牌（2026-11-12）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `apps/desktop/electron/probe.cjs`（新） | `probeServer()`：`/healthz` 证明服务活着 + `/api/v1/session` 带 Bearer 证明令牌有效；`describeProbe()` 翻成人话（「令牌不对」「没有任何渠道在线」） |
+| `apps/desktop/electron/main.cjs` / `preload.cjs` | 新增 `settings:probe` IPC 与 `probeServer` 桥接，在主进程里发请求（不受渲染进程 CORS 限制） |
+| `apps/desktop/renderer/index.html` + `app.mjs` + `style.css` | 首启卡片从「一段说明 + 跳设置」改成真的向导：地址、令牌、「测试连接」、「开始连接」。测试只探测不保存；开始连接成功后才保存 → 建 SSE → 拉历史回填 |
+| 设置页「测试连接」 | 同样走新探测：服务在线但令牌错会明确提示，不再只测 `/healthz` 就报「连接正常」 |
+| `apps/desktop/test/probe.test.mjs`（新） | 5 条：健康+令牌有效、令牌错、连不上、地址非法、无渠道在线 |
+
+版本 0.1.5（含向导）。验证：desktop 测试 31 条全绿；安装器静默安装/覆盖安装均通过。
+
+> 修安装器时踩到一个坑并写进 `qingmei.iss` 注释：安装器里**不要做「扫描注册表找旧版并静默卸载」**。
+> 那段 [Code] 会让 Setup 在静默模式下直接退出（exit 0、无日志、什么都没装），
+> 0.1.4 之前能装纯属当时注册表里没有匹配项。现在只保留「安装前 taskkill 旧进程」；
+> 旧 NSIS 版本请在「应用和功能」里手动卸载一次。
+
 ### P0-④ 恢复演练：备份能恢复，行数逐表对过（2026-11-12）
 
 | 文件 | 改了什么 |

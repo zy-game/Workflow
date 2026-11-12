@@ -63,6 +63,11 @@ test('界面元素齐全', () => {
     'settings-hide-fullscreen',
     'settings-character',
     'onboarding',
+    'onboarding-form',
+    'onboarding-server',
+    'onboarding-token',
+    'onboarding-test',
+    'onboarding-status',
     'onboarding-start',
     'pet-orb',
     'settings-save',
@@ -94,6 +99,10 @@ test('交互：点击/右键/拖动/设置', () => {
   assert.match(app, /sendImage/);
   assert.match(app, /api\/v1\/uploads/);
   assert.match(app, /onboardingStart/);
+  assert.match(app, /submitOnboarding/);
+  assert.match(app, /onboardingTest/);
+  assert.match(preload, /probeServer/);
+  assert.match(main, /settings:probe/);
   assert.match(main, /喂饭/);
   assert.match(main, /逗一下/);
   assert.match(app, /onPetAction/);

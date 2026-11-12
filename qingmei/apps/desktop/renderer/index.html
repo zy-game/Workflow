@@ -52,20 +52,25 @@
     </div>
 
     <div id="onboarding" class="onboarding" hidden>
-      <div class="onboarding-card">
+      <form id="onboarding-form" class="onboarding-card">
         <div class="onboarding-pet">🐟</div>
         <h1>青梅住到你桌面上</h1>
-        <p>我会在右下角待着：服务器消息变成头顶气泡，点我摸摸，双击喂饭，右键聊天和设置。</p>
-        <ul class="onboarding-list">
-          <li>先填服务器地址和 QM_TOKEN</li>
-          <li>透明区域点击穿透，不挡你做事</li>
-          <li>设置里能调大小、音效和开机自启</li>
-        </ul>
+        <p>填一次服务器和令牌，之后我都记得。点「测试连接」会顺便验证令牌。</p>
+        <label>
+          服务器地址
+          <input id="onboarding-server" type="url" placeholder="https://139.155.78.241:8710" autocomplete="off" required />
+        </label>
+        <label>
+          访问令牌
+          <input id="onboarding-token" type="password" placeholder="QM_TOKEN" autocomplete="off" required />
+        </label>
+        <p id="onboarding-status" class="onboarding-status" hidden></p>
         <div class="onboarding-actions">
           <button id="onboarding-skip" type="button" class="ghost">稍后设置</button>
-          <button id="onboarding-start" type="button" class="primary">开始连接</button>
+          <button id="onboarding-test" type="button" class="ghost">测试连接</button>
+          <button id="onboarding-start" type="submit" class="primary">开始连接</button>
         </div>
-      </div>
+      </form>
     </div>
 
     <div id="settings-modal" class="settings-modal" hidden>

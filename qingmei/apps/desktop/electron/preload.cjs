@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('qmDesktop', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  probeServer: (input) => ipcRenderer.invoke('settings:probe', input),
   writeWorkerConfig: () => ipcRenderer.invoke('agent:worker-config'),
   startWorker: () => ipcRenderer.invoke('agent:worker-start'),
   popupMenu: () => ipcRenderer.invoke('menu:popup'),

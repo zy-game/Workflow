@@ -78,45 +78,9 @@ Type: filesandordirs; Name: "{app}\resources\app.asar.unpacked"
 Type: dirifempty; Name: "{app}"
 
 [Code]
-var
-  OldInstallFound: Boolean;
-
-{ 找旧版 NSIS/electron-builder 安装并静默卸载；找不到就跳过。 }
-function FindOldUninstaller(): String;
-var
-  Names: TArrayOfString;
-  I: Integer;
-  Root: Integer;
-  Base: String;
-  DisplayName: String;
-  UninstallString: String;
-begin
-  Result := '';
-  Root := HKCU;
-  Base := 'Software\Microsoft\Windows\CurrentVersion\Uninstall';
-  if RegGetSubkeyNames(Root, Base, Names) then
-  begin
-    for I := 0 to GetArrayLength(Names) - 1 do
-    begin
-      if RegQueryStringValue(Root, Base + '\' + Names[I], 'DisplayName', DisplayName) then
-      begin
-        if (Pos('青梅', DisplayName) > 0) or (Pos('Qingmei', DisplayName) > 0) then
-        begin
-          if RegQueryStringValue(Root, Base + '\' + Names[I], 'UninstallString', UninstallString) then
-          begin
-            { 自己的 AppId 不是这个键名，靠卸载程序路径区分：Inno 的 unins000.exe 会被排除 }
-            if Pos('unins000.exe', Lowercase(UninstallString)) = 0 then
-            begin
-              Result := UninstallString;
-              OldInstallFound := True;
-              Exit;
-            end;
-          end;
-        end;
-      end;
-    end;
-  end;
-end;
+{ 只做一件事：安装前结束正在运行的青梅，避免文件占用。
+  旧 NSIS 版本请手动在「应用和功能」里卸载一次——自动扫描卸载项的写法在
+  静默模式下会让 Setup 直接退出（实测），不值得为一次性迁移冒风险。 }
 
 procedure KillRunningApp();
 var
@@ -126,33 +90,8 @@ begin
   Exec('taskkill.exe', '/IM 青梅.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
-procedure RemoveOldInstall();
-var
-  Uninstaller: String;
-  Command: String;
-  ResultCode: Integer;
-begin
-  Uninstaller := FindOldUninstaller();
-  if Uninstaller = '' then
-    Exit;
-  { UninstallString 可能带引号或参数；NSIS 静默卸载用 /S }
-  Command := Uninstaller;
-  if Pos('/S', Command) = 0 then
-    Command := Command + ' /S';
-  Log('卸载旧版本：' + Command);
-  Exec(ExpandConstant('{cmd}'), '/C ' + Command, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  { NSIS 卸载器会把自己复制到临时目录后立即返回，等它真正删完 }
-  Sleep(2500);
-end;
-
 function InitializeSetup(): Boolean;
 begin
   KillRunningApp();
   Result := True;
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssInstall then
-    RemoveOldInstall();
 end;

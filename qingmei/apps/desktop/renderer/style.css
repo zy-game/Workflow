@@ -862,6 +862,42 @@ video.pet {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.onboarding-card label {
+  display: block;
+  margin: 8px 0;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.onboarding-card label input {
+  width: 100%;
+  height: 32px;
+  margin-top: 4px;
+  padding: 0 9px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: #fff;
+  outline: none;
+  font-size: 12.5px;
+  -webkit-app-region: no-drag;
+}
+
+.onboarding-card label input:focus {
+  border-color: var(--accent);
+}
+
+.onboarding-status {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.onboarding-status[data-ok="false"] {
+  color: var(--danger);
 }
 
 .onboarding-actions button {

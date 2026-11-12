@@ -9,6 +9,7 @@ import {
 const desktop = window.qmDesktop ?? {
   getSettings: async () => ({ serverUrl: 'http://127.0.0.1:7410', token: '' }),
   saveSettings: async () => ({ ok: true }),
+  probeServer: async () => ({ ok: false, error: '仅桌面端支持连接测试' }),
   writeWorkerConfig: async () => ({ ok: false, error: '仅桌面端支持' }),
   startWorker: async () => ({ ok: false, error: '仅桌面端支持' }),
   popupMenu: async () => undefined,
@@ -42,6 +43,11 @@ const el = {
   petStage: document.getElementById('pet-stage'),
   hint: document.getElementById('hint'),
   onboarding: document.getElementById('onboarding'),
+  onboardingForm: document.getElementById('onboarding-form'),
+  onboardingServer: document.getElementById('onboarding-server'),
+  onboardingToken: document.getElementById('onboarding-token'),
+  onboardingTest: document.getElementById('onboarding-test'),
+  onboardingStatus: document.getElementById('onboarding-status'),
   onboardingStart: document.getElementById('onboarding-start'),
   onboardingSkip: document.getElementById('onboarding-skip'),
   settingsModal: document.getElementById('settings-modal'),
@@ -295,6 +301,8 @@ async function init() {
   settings.character = saved.character === 'orb' ? 'orb' : 'qingmei'
   applyCharacter()
   applyFontScale()
+  el.onboardingServer.value = saved.serverUrl || 'http://127.0.0.1:7410'
+  el.onboardingToken.value = saved.token || ''
   if (!settings.token) {
     if (localStorage.getItem('qm.onboarded') === '1') openSettings()
     else el.onboarding.hidden = false
@@ -896,17 +904,79 @@ function closeSettings() {
 
 async function testConnection() {
   const base = normalizeServerUrl(el.settingsServer.value)
+  const token = el.settingsToken.value.trim()
   if (!base) {
     showError('服务器地址不合法')
     return
   }
   showError('正在测试…', true)
   try {
-    const res = await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(5000) })
-    showError(res.ok ? '连接正常' : `服务返回 ${res.status}`, res.ok)
-  } catch {
-    showError('连不上服务器，检查地址与网络')
+    const result = await desktop.probeServer({ serverUrl: base, token })
+    const ok = Boolean(result?.ok && result.tokenValid)
+    showError(result?.summary ?? (ok ? '连接正常' : '连接失败'), ok)
+  } catch (error) {
+    showError(`测试失败：${error instanceof Error ? error.message : String(error)}`)
   }
+}
+
+function setOnboardingStatus(text, ok) {
+  el.onboardingStatus.hidden = false
+  el.onboardingStatus.textContent = text
+  el.onboardingStatus.dataset.ok = ok ? 'true' : 'false'
+}
+
+/** 首次启动向导：填地址+令牌 → 测试（含令牌校验）→ 保存 → 连上并回填历史。 */
+async function submitOnboarding(event, { save = true } = {}) {
+  event?.preventDefault?.()
+  const base = normalizeServerUrl(el.onboardingServer.value)
+  const token = el.onboardingToken.value.trim()
+  if (!base) {
+    setOnboardingStatus('服务器地址必须是 http(s) URL', false)
+    return
+  }
+  if (!token) {
+    setOnboardingStatus('令牌不能为空', false)
+    return
+  }
+  setOnboardingStatus('正在测试连接…', true)
+  let result
+  try {
+    result = await desktop.probeServer({ serverUrl: base, token })
+  } catch (error) {
+    setOnboardingStatus(`测试失败：${error instanceof Error ? error.message : String(error)}`, false)
+    return
+  }
+  if (!result?.ok || !result.tokenValid) {
+    setOnboardingStatus(result?.summary ?? '连接失败', false)
+    return
+  }
+  if (!save) {
+    setOnboardingStatus(result.summary ?? '连接正常', true)
+    return
+  }
+  try {
+    await desktop.saveSettings({
+      serverUrl: base,
+      token,
+      scale: settings.scale,
+      fontScale: settings.fontScale,
+      sound: settings.sound,
+      autoStart: settings.autoStart,
+      notifyHidden: settings.notifyHidden,
+      hideOnFullscreen: settings.hideOnFullscreen,
+      character: settings.character,
+    })
+  } catch (error) {
+    setOnboardingStatus(`保存失败：${error instanceof Error ? error.message : String(error)}`, false)
+    return
+  }
+  settings.serverUrl = base
+  settings.token = token
+  el.onboarding.hidden = true
+  localStorage.setItem('qm.onboarded', '1')
+  connect()
+  void registerDevice()
+  void loadHistory()
 }
 
 async function writeWorkerConfig() {
@@ -1117,11 +1187,8 @@ function bind() {
   el.settingsForm.addEventListener('submit', (event) => void saveSettings(event))
   el.settingsStartWorker?.addEventListener('click', () => void startWorker())
   el.settingsSetupWorker?.addEventListener('click', () => void writeWorkerConfig())
-  el.onboardingStart.addEventListener('click', () => {
-    el.onboarding.hidden = true
-    localStorage.setItem('qm.onboarded', '1')
-    openSettings()
-  })
+  el.onboardingForm.addEventListener('submit', (event) => void submitOnboarding(event))
+  el.onboardingTest.addEventListener('click', () => void submitOnboarding(null, { save: false }))
   el.onboardingSkip.addEventListener('click', () => {
     el.onboarding.hidden = true
     localStorage.setItem('qm.onboarded', '1')

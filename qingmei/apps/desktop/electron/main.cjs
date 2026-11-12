@@ -12,6 +12,7 @@ const { writeWorkerConfig } = require('./agent-config.cjs')
 const { installDshPlugins } = require('./dsh-install.cjs')
 const { execFile, execFileSync, spawn } = require('node:child_process')
 const { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed, loginCommand } = require('./layout.cjs')
+const { probeServer, describeProbe } = require('./probe.cjs')
 
 
 const here = __dirname
@@ -439,6 +440,11 @@ if (!gotLock) {
         hideOnFullscreen: settings.hideOnFullscreen,
         character: settings.character,
       }
+    })
+
+    ipcMain.handle('settings:probe', async (_event, incoming) => {
+      const result = await probeServer({ serverUrl: incoming?.serverUrl, token: incoming?.token })
+      return { ...result, summary: describeProbe(result) }
     })
 
     ipcMain.handle('settings:save', (_event, incoming) => {
