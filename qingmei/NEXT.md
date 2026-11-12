@@ -1,3 +1,30 @@
+### 技术债 7：手动会话也能进记忆了（2026-11-12）
+
+之前 `dsh-hook / worker ingest` 只把摘要写进 `qm_session_digest`，facts 恒空——你在 DSH GUI 里干的活，
+青梅只知道「有过一段会话」。现在补上链路：
+
+```text
+DSH GUI / 手动 ACP 会话收尾
+  → POST /api/v1/devices/ingest
+  → 落 qm_session_digest + emit qm/session/ingested
+  → qm-distill 取 user 轮次（最近 50 条）走规则抽取
+  → 待确认队列（来源 session_id=device id，batch_id=ingest:<device>:<session>）
+```
+
+- 与对话回合共用同一套规则、查重、200 条待确认上限和审核接口；**手动会话默认不调模型**。
+- 生产实测：ingest 后候选落库（`rule=allergy`，`session_id=devit`），验证完已拒绝清理，队列为空。
+- 测试：`qm-distill` 新增 2 条（收尾抽取、重复上报去重），全套 415 条通过。
+
+### 技术债 2/3/6：日程 tick 窗口、会话历史索引、每日备份（2026-11-12）
+
+| 项 | 改动 | 证据 |
+| --- | --- | --- |
+| ② 日程 tick | 改成 `ORDER BY next_at LIMIT 500` + `next_at` 索引；超过 500 条同时到期分多次 tick 并打 warn | bench：2 万行 tick 窗口 0.56 ms（旧全表 12.2 ms / 1 万行） |
+| ③ 会话历史 | `recent()` 改为按 `(session_id, created_at)` 索引各取最近 N 条再合并，不再全表扫 | bench：2 万行取最近 20 条 0.17 ms（旧 29 ms） |
+| ⑥ 备份自动化 | 服务器 `/etc/cron.d/qingmei-backup` 每天 03:00 快照，保留 7 份，日志 `/var/log/qingmei/backup.log`；手动跑过一次 | `qm-20261112-144204.db`（142 MB），`integrity_check = ok` |
+
+`scripts/bench.mjs` 增加了窗口查询两项，数字写进 [docs/32](docs/32-性能基线.md)。
+
 ### 技术债 1：qm-review 服务化 + 一次 17 分钟停机（2026-11-12）
 
 **服务化**：

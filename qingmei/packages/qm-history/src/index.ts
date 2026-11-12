@@ -112,11 +112,23 @@ class HistoryReader extends HistoryService {
 
   async recent(conversationId: string, limit = 50): Promise<HistoryMessage[]> {
     const wanted = conversationSessionId(conversationId)
-    const rows = await this.collection.find({})
-    return rows
-      .filter((row) => row.session_id === conversationId || row.session_id === wanted)
+    const size = Math.max(1, Math.min(200, limit))
+    // 走 (session_id, created_at) 索引，各取最近 size 条再合并；
+    // 之前是全表扫描后过滤，聊天记录一多，每轮对话都要扫全部历史。
+    const sessions = [...new Set([conversationId, wanted])]
+    const parts: StoredMessage[] = []
+    for (const sessionId of sessions) {
+      parts.push(
+        ...(await this.collection.find({
+          where: { session_id: sessionId },
+          order: [{ field: 'created_at', dir: 'desc' }],
+          limit: size,
+        })),
+      )
+    }
+    return parts
       .sort((a, b) => a.created_at - b.created_at)
-      .slice(-Math.max(1, Math.min(200, limit)))
+      .slice(-size)
       .map((row) => ({
         id: row.id,
         sessionId: row.session_id,

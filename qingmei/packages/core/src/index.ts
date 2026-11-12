@@ -118,6 +118,8 @@ export const EVENTS = {
   autonomyTick: 'qm/autonomy/tick',
   /** 渠道上的按钮/卡片点击（如审批的同意/拒绝） */
   action: 'qm/action',
+  /** 设备/手动会话的收尾摘要已入库（DSH GUI / 手动 ACP 会话也走这里） */
+  sessionIngested: 'qm/session/ingested',
 } as const
 
 // ────────────────────────────────────────────── 日程
@@ -1417,5 +1419,6 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 
 

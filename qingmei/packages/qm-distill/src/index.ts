@@ -61,7 +61,7 @@ interface CandidateRow extends Row {
   status: CandidateStatus
   batch_id: string
   session_id: string
-  trace_id: string
+  trace_id: string | null
   fact_id: string | null
   created_at: number
   decided_at: number | null
@@ -105,7 +105,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
         target: entry.row.id,
         decision: entry.decision,
         detail: { subject: entry.row.subject, predicate: entry.row.predicate, object: entry.row.object, rule: entry.row.rule, ...entry.detail },
-        traceId: entry.row.trace_id,
+        traceId: entry.row.trace_id ?? entry.row.id,
       })
       .catch(() => undefined)
   }
@@ -167,16 +167,12 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
     return out
   }
 
-  async function onTurnEnd(end: TurnEnd): Promise<void> {
-    if (!enabled) return
-    if (!end.ok || end.audience !== 'owner') return
-    const text = String(end.userText ?? '').trim()
-    if (!text) return
-
-    const drafts = extractCandidates(text).filter((item) => item.confidence >= minConfidence)
-    if (config.llmExtract === true) drafts.push(...(await llmDrafts(text)))
+  /** 统一的入队逻辑：并发下也是串行调用（见 distillChain），查重和配额都在这里 */
+  async function enqueue(
+    drafts: FactCandidate[],
+    meta: { batchId: string; sessionId: string; traceId: string | null },
+  ): Promise<void> {
     if (drafts.length === 0) return
-
     const pending = await candidates.count({ where: { status: 'pending' } })
     let room = maxPending - pending
     for (const draft of drafts) {
@@ -196,9 +192,9 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
         confidence: draft.confidence,
         rule: draft.rule,
         status: 'pending',
-        batch_id: end.traceId,
-        session_id: end.sessionId,
-        trace_id: end.traceId,
+        batch_id: meta.batchId,
+        session_id: meta.sessionId,
+        trace_id: meta.traceId,
         fact_id: null,
         created_at: Date.now(),
         decided_at: null,
@@ -207,12 +203,67 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
     }
   }
 
+  async function onTurnEnd(end: TurnEnd): Promise<void> {
+    if (!enabled) return
+    if (!end.ok || end.audience !== 'owner') return
+    const text = String(end.userText ?? '').trim()
+    if (!text) return
+
+    const drafts = extractCandidates(text).filter((item) => item.confidence >= minConfidence)
+    if (config.llmExtract === true) drafts.push(...(await llmDrafts(text)))
+    if (drafts.length === 0) return
+    await enqueue(drafts, { batchId: end.traceId, sessionId: end.sessionId, traceId: end.traceId })
+  }
+
+  /** 手动会话（DSH GUI / 手动 ACP）收尾：只走规则，不调模型；来源记成 device:<id> */
+  async function onSessionIngested(input: {
+    deviceId?: string
+    sessionId?: string
+    turns?: { role?: string; text?: string }[]
+  }): Promise<void> {
+    if (!enabled) return
+    const deviceId = String(input.deviceId ?? '').trim()
+    const sessionId = String(input.sessionId ?? '').trim()
+    if (!deviceId || !sessionId) return
+    const texts = (input.turns ?? [])
+      .filter((turn) => turn?.role === 'user' && typeof turn.text === 'string')
+      .map((turn) => String(turn.text).trim())
+      .filter(Boolean)
+      .slice(-50)
+    if (texts.length === 0) return
+
+    const seen = new Set<string>()
+    const drafts: FactCandidate[] = []
+    for (const text of texts) {
+      for (const draft of extractCandidates(text)) {
+        if (draft.confidence < minConfidence) continue
+        const key = `${draft.subject}|${draft.predicate}|${draft.object}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        drafts.push(draft)
+      }
+    }
+    await enqueue(drafts, {
+      batchId: `ingest:${deviceId}:${sessionId}`,
+      sessionId: deviceId,
+      traceId: null,
+    })
+  }
+
   ctx.events.on(EVENTS.turnEnd, (end: TurnEnd) => {
     // 串行化：两条并发回合如果同时查重再插入，会各插一条重复候选
     distillChain = distillChain
       .then(() => onTurnEnd(end))
       .catch((error) => {
         ctx.logger?.warn?.(`[qm-distill] 凝练失败：${error instanceof Error ? error.message : String(error)}`)
+      })
+  })
+
+  ctx.events.on(EVENTS.sessionIngested, (input: { deviceId?: string; sessionId?: string; turns?: { role?: string; text?: string }[] }) => {
+    distillChain = distillChain
+      .then(() => onSessionIngested(input))
+      .catch((error) => {
+        ctx.logger?.warn?.(`[qm-distill] 会话凝练失败：${error instanceof Error ? error.message : String(error)}`)
       })
   })
 
@@ -346,4 +397,6 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
 export const defaultExport = { name, inject, apply }
 export type { FactCandidate }
 export { extractCandidates }
+
+
 

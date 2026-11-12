@@ -6,6 +6,7 @@
  */
 import type { Context } from 'cordis'
 import {
+  EVENTS,
   uid,
   type GatewayRequest,
   type GatewayResponse,
@@ -395,6 +396,14 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
         }
         if (existing) await digests.update(id, row)
         else await digests.insert(row)
+        // 会话收尾后广播：qm-distill 用它把手动会话（DSH GUI / ACP）里的陈述抽成记忆候选
+        ctx.events.emit(EVENTS.sessionIngested, {
+          deviceId,
+          sessionId,
+          summary: row.summary,
+          turns: JSON.parse(row.turns_json) as { role?: string; text?: string }[],
+          at: row.at,
+        })
         res.status(200).send({ ok: true, id })
       },
     }),
@@ -486,3 +495,5 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+

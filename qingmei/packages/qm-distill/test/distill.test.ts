@@ -100,12 +100,16 @@ async function boot(options: { config?: distill.DistillConfig; llmReply?: string
       ...extra,
     } as TurnEnd)
   }
+  const ingest = (turns: { role?: string; text?: string }[], deviceId = 'dev_test', sessionId = 'sess_1') => {
+    ctx.events.emit(EVENTS.sessionIngested, { deviceId, sessionId, turns, at: Date.now() })
+  }
   return {
     ctx,
     memory,
     llm,
     call,
     turn,
+    ingest,
     async dispose() {
       await distillFiber.dispose()
       await storeFiber.dispose()
@@ -257,6 +261,43 @@ test('打开 LLM 抽取才调用，且有每日配额', async () => {
     h.turn('我最近在学手冲')
     await new Promise((resolve) => setTimeout(resolve, 80))
     assert.equal(h.llm?.calls, 1, '超过每日配额不应再调模型')
+  } finally {
+    await h.dispose()
+  }
+})
+
+
+test('手动会话收尾：user 轮次里的陈述进入候选，来源标记为设备会话', async () => {
+  const h = await boot()
+  try {
+    h.ingest([
+      { role: 'user', text: '我对花生过敏' },
+      { role: 'assistant', text: '记住了' },
+      { role: 'user', text: '我住在杭州' },
+    ])
+    const items = await waitFor(async () => {
+      const { body } = await h.call('GET', '/api/v1/memory/candidates')
+      return body.items?.length >= 2 ? body.items : null
+    }, '两条候选')
+    const predicates = items.map((item: { predicate: string }) => item.predicate).sort()
+    assert.deepEqual(predicates, ['住在', '过敏'])
+    assert.ok(items.every((item: { session_id: string }) => item.session_id === 'dev_test'))
+    assert.ok(items.every((item: { batch_id: string }) => item.batch_id === 'ingest:dev_test:sess_1'))
+    assert.equal(h.memory.ingested.length, 0)
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('同一会话重复上报不会产生重复候选', async () => {
+  const h = await boot()
+  try {
+    h.ingest([{ role: 'user', text: '我对花生过敏' }])
+    await waitFor(async () => (await h.call('GET', '/api/v1/memory/candidates')).body.items?.length === 1, '第一条')
+    h.ingest([{ role: 'user', text: '我对花生过敏' }])
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    const { body } = await h.call('GET', '/api/v1/memory/candidates')
+    assert.equal(body.items.length, 1)
   } finally {
     await h.dispose()
   }

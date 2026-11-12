@@ -32,6 +32,8 @@ export interface ScheduleConfig {
 }
 
 const COLLECTION = 'qm_schedule'
+/** 单次 tick 最多处理多少条到期记录 */
+const TICK_BATCH = 500
 const DEFAULT_EVERY_MS = 60_000
 
 interface ScheduleRow extends Row {
@@ -63,6 +65,14 @@ export class SqliteSchedule extends ScheduleService {
     const store = ctx.store
     if (!store) throw new Error('[provider-schedule-sqlite] 缺少 store 服务')
     this.collection = store.collection<ScheduleRow>(COLLECTION)
+    // 按 next_at 建索引：tick 不再全表扫，20 万条也只读「最早的一批」
+    void (async () => {
+      try {
+        await store.ensureIndex(COLLECTION, ['next_at'])
+      } catch {
+        // 老库/只读场景下建不了索引也不影响功能，只是慢
+      }
+    })()
     this.tickMs = config.tickMs ?? 1000
     this.defaultTimezone = config.defaultTimezone?.trim() || systemTimeZone()
     this.timer = setInterval(() => void this.tick(), this.tickMs)
@@ -213,14 +223,20 @@ export class SqliteSchedule extends ScheduleService {
     this.ticking = true
     try {
       const now = Date.now()
-      const rows = await this.collection.find()
+      // 只取最早的一批：按 next_at 升序 + limit，超出的留给下一个 tick（1 秒后）。
+      // 之前是全表 find()，日程越多越慢，且与「到点提醒」这个场景完全不成比例。
+      const rows = await this.collection.find({ order: [{ field: 'next_at', dir: 'asc' }], limit: TICK_BATCH })
       for (const row of rows) {
+        if (row.next_at > now) break
         try {
           await this.advance(row, now)
         } catch (error) {
           // 单条坏记录不能拖住其它提醒
           this.ctx.logger.warn(`[provider-schedule-sqlite] 记录 ${row.id} 推进失败：${messageOf(error)}`)
         }
+      }
+      if (rows.length === TICK_BATCH && rows[rows.length - 1]!.next_at <= now) {
+        this.ctx.logger.warn(`[provider-schedule-sqlite] 单次到期超过 ${TICK_BATCH} 条，剩余留到下一次 tick`)
       }
     } finally {
       this.ticking = false
@@ -334,3 +350,4 @@ export function apply(ctx: Context, config: ScheduleConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+

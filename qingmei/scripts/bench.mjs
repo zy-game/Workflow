@@ -56,6 +56,14 @@ const orderLimit = await time(() => rows.find({ order: [{ field: 'created_at', d
 const fullScan = await time(() => rows.find({}))
 const countWhere = await time(() => rows.count({ where: { status: 'queued' } }))
 
+// 3 万条消息里取某会话最近 20 条：走 (session_id, created_at) 索引
+await ctx.store.ensureIndex('qm_bench_row', ['session_id', 'created_at'])
+await ctx.store.ensureIndex('qm_bench_row', ['next_at'])
+const recentWindow = await time(() =>
+  rows.find({ where: { session_id: 'session_7' }, order: [{ field: 'created_at', dir: 'desc' }], limit: 20 }),
+)
+const tickWindow = await time(() => rows.find({ order: [{ field: 'next_at', dir: 'asc' }], limit: 500 }))
+
 // 2) 日程 tick 的扫描成本：tick 里就是一次 collection.find()
 const schedules = ctx.store.collection('qm_schedule')
 for (let index = 0; index < Math.min(ROWS, 10_000); index += 1) {
@@ -108,6 +116,8 @@ const report = {
     orderLimitMs: Number(orderLimit.ms.toFixed(2)),
     fullScanMs: Number(fullScan.ms.toFixed(2)),
     countWhereMs: Number(countWhere.ms.toFixed(2)),
+    recentWindowMs: Number(recentWindow.ms.toFixed(2)),
+    tickWindowMs: Number(tickWindow.ms.toFixed(2)),
   },
   schedule: { rows: Math.min(ROWS, 10_000), tickScanMs: Number(tickScan.ms.toFixed(2)) },
   memory: { facts: FACTS, avgRecallMs: Number(recallMs.toFixed(2)) },
@@ -119,3 +129,4 @@ await historyFiber.dispose()
 await memoryStore.dispose()
 await storeFiber.dispose()
 rmSync(dir, { recursive: true, force: true })
+
