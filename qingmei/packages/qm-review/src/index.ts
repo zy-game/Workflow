@@ -26,6 +26,8 @@ export interface ReviewConfig {
   hour?: number
   /** 低于这个分数提醒改进 */
   minScore?: number
+  /** 测试用时钟；缺省用系统时间 */
+  clock?: () => Date
 }
 
 export const name = 'qm-review'
@@ -42,11 +44,17 @@ interface ProposalRow extends Row {
   base_hash?: string
   status: string
   created_at: number
+  applied_at?: number | null
+  persona_history_id?: string | null
+  effect_json?: string | null
+  rolled_back_at?: number | null
 }
 
 interface PersonaLike {
   current(): { prompt: string; hash: string }
   apply(input: { prompt: string; note?: string }): Promise<unknown>
+  history?(): { id: string; kind: string; createdAt: string }[]
+  rollback?(id: string): Promise<unknown>
 }
 
 interface CardRow extends Row {
@@ -196,8 +204,36 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
     return lines.join('\n')
   }
 
+  function failureRate(metrics: ReviewMetrics): number | null {
+    const total = Number(metrics.turns.total ?? 0)
+    return total > 0 ? Number((Number(metrics.turns.failed) / total).toFixed(3)) : null
+  }
+
+  /** 应用过的提案，在下一期复盘时对比失败率：变好/持平/变差，都要留痕 */
+  async function computeEffects(month: string, reviewId: string): Promise<void> {
+    const applied = (await proposals.find({})).filter(
+      (row) => row.status === 'applied' && !row.effect_json && row.month < month,
+    )
+    if (applied.length === 0) return
+    const currentRow = await reviews.get(reviewId)
+    if (!currentRow) return
+    const currentRate = failureRate(JSON.parse(currentRow.metrics_json) as ReviewMetrics)
+    for (const row of applied) {
+      const baseRow = await reviews.get(row.review_id)
+      const baseRate = baseRow ? failureRate(JSON.parse(baseRow.metrics_json) as ReviewMetrics) : null
+      let verdict: 'improved' | 'worse' | 'flat' | 'unknown' = 'unknown'
+      let delta: number | null = null
+      if (currentRate !== null && baseRate !== null) {
+        delta = Number((currentRate - baseRate).toFixed(3))
+        verdict = delta <= -0.05 ? 'improved' : delta >= 0.05 ? 'worse' : 'flat'
+      }
+      await proposals.update(row.id, {
+        effect_json: JSON.stringify({ month, failureRate: { current: currentRate, baseline: baseRate, delta }, verdict, at: Date.now() }),
+      })
+    }
+  }
   async function generate(force = false): Promise<ReviewRow> {
-    const now = new Date()
+    const now = config.clock ? config.clock() : new Date()
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
     const existing = (await reviews.find({})).find((row) => row.month === month)
     if (existing && !force) return existing
@@ -215,6 +251,7 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
     }
     if (existing) await reviews.update(existing.id, row)
     else await reviews.insert(row)
+    await computeEffects(month, row.id)
 
     const seeded = (await cards.find({})).filter((card) => card.review_id === row.id)
     if (seeded.length === 0) {
@@ -521,8 +558,14 @@ const MAX_TIMEOUT = 2_147_000_000
           res.status(400).send({ ok: false, error: '这条提案没有可应用的提示词' })
           return
         }
+        const before = persona.current()
         const applied = await persona.apply({ prompt: row.prompt, note: `复盘应用 ${row.month}` })
-        await proposals.update(id, { status: 'applied' })
+        const historyId = persona.history?.().find((entry) => entry.kind === 'apply')?.id ?? null
+        await proposals.update(id, {
+          status: 'applied',
+          applied_at: Date.now(),
+          persona_history_id: historyId,
+        })
         await channel
           .send({
             channel: 'web',
@@ -531,6 +574,41 @@ const MAX_TIMEOUT = 2_147_000_000
           })
           .catch(() => undefined)
         res.status(200).send({ ok: true, persona: applied })
+      },
+    }),
+  )
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/review/proposals/rollback',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const row = await proposals.get(id)
+        if (!row) {
+          res.status(404).send({ ok: false, error: '没有这条提案' })
+          return
+        }
+        if (row.status !== 'applied') {
+          res.status(409).send({ ok: false, error: `提案当前是 ${row.status}` })
+          return
+        }
+        const persona = personaService
+        if (!persona?.rollback) {
+          res.status(409).send({ ok: false, error: '人格服务不支持回滚' })
+          return
+        }
+        if (!row.persona_history_id) {
+          res.status(409).send({ ok: false, error: '没有记录可回滚的人格版本' })
+          return
+        }
+        await persona.rollback(row.persona_history_id)
+        await proposals.update(id, { status: 'rolled_back', rolled_back_at: Date.now() })
+        res.status(200).send({ ok: true, item: await proposals.get(id) })
       },
     }),
   )
@@ -548,4 +626,10 @@ const MAX_TIMEOUT = 2_147_000_000
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
+
+
+
 

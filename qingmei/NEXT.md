@@ -1,3 +1,12 @@
+### 自我进化收尾：复盘提案效果跟踪 + 回滚 + 重复率基线（2026-11-12）
+
+| 项 | 实现 | 证据 |
+| --- | --- | --- |
+| 应用留痕 | apply 记录 `applied_at`、`persona_history_id` | `review.test.ts`：应用后字段存在 |
+| 效果跟踪 | 下期复盘生成时对比失败率，写 `effect_json`（improved/flat/worse/unknown） | 单测：11 月失败率 0.5 → 12 月 0 → `improved` |
+| 回滚 | `POST /review/proposals/rollback` → `persona.rollback(history_id)` | 单测：回滚后人格 hash 恢复；生产路由 200/400 正常 |
+| 验收基线 | `scripts/error-recurrence.mjs`：按 error_code 统计 7 天内重复率 | 生产跑过：`failedTurns=0`，基线为空（诚实记录） |
+
 ### 自我进化 P4：教训/决策 + 技能草稿（2026-11-12）
 
 | 项 | 实现 | 证据 |

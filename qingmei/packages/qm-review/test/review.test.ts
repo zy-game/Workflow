@@ -7,7 +7,7 @@ import { Context, Service } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as reviewPlugin from '../src/index.ts'
-import { HistoryService, TaskService } from '@qingmei/core'
+import { HistoryService, PersonaService, TaskService } from '@qingmei/core'
 import {
   ChannelService,
   type GatewayRequest,
@@ -142,14 +142,42 @@ class FakeIncidentStats extends Service {
     }
   }
 }
-async function setup() {
+class FakePersona extends PersonaService {
+  prompt = '你叫青梅'
+  hash = 'h1'
+  entries: { id: string; kind: string; createdAt: string }[] = []
+
+  current() {
+    return { prompt: this.prompt, hash: this.hash }
+  }
+  async reload() {
+    return this.current()
+  }
+  async apply(input: { prompt: string }) {
+    this.prompt = input.prompt
+    this.hash = `h${this.entries.length + 2}`
+    this.entries.unshift({ id: `ph_${this.entries.length + 1}`, kind: 'apply', createdAt: new Date().toISOString() })
+    return this.current()
+  }
+  history() {
+    return this.entries
+  }
+  async rollback(id: string) {
+    this.prompt = '你叫青梅'
+    this.hash = 'h1'
+    this.entries.unshift({ id: `ph_rb_${id}`, kind: 'rollback', createdAt: new Date().toISOString() })
+    return this.current()
+  }
+}
+async function setup(options: { clock?: () => Date; persona?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-review-'))
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'review.db') })
   await storeFiber
   await ctx.plugin(gatewayPlugin)
   const channel = new FakeChannel(ctx)
-  const reviewFiber = ctx.plugin(reviewPlugin, { minScore: 6 })
+  const persona = options.persona ? new FakePersona(ctx) : undefined
+  const reviewFiber = ctx.plugin(reviewPlugin, { minScore: 6, ...(options.clock ? { clock: options.clock } : {}) })
   await reviewFiber
   const store = ctx.reflect.get('store', false) as StoreService
   new FakeHistory(ctx, store)
@@ -160,6 +188,7 @@ async function setup() {
     ctx,
     channel,
     store,
+    persona,
     async call(req: GatewayRequest) {
       const response = fakeResponse()
       const handled = await ctx.gateway.dispatch(req, response.res)
@@ -316,5 +345,74 @@ test('复盘提醒可暂停，手动评分不受影响', async () => {
     await h.dispose()
   }
 })
+
+
+
+
+test('应用复盘提案记录人格版本，可一键回滚', async () => {
+  const h = await setup({ persona: true })
+  try {
+    const run = await h.call({ method: 'POST', path: '/api/v1/review/run', query: {}, headers: {} })
+    const reviewId = (run.body as { review: { id: string } }).review.id
+    await h.call({ method: 'POST', path: '/api/v1/review/score', query: {}, headers: {}, body: { id: reviewId, score: 4 } })
+
+    const proposals = (await h.call({ method: 'GET', path: '/api/v1/review/proposals', query: {}, headers: {} })).body.items as { id: string; kind: string }[]
+    const promptProposal = proposals.find((item) => item.kind === 'prompt')!
+    const applied = await h.call({ method: 'POST', path: '/api/v1/review/proposals/apply', query: {}, headers: {}, body: { id: promptProposal.id } })
+    assert.equal(applied.status, 200)
+
+    const proposalRows = (await h.store.collection('qm_review_proposal').find({})) as unknown as {
+      id: string
+      status: string
+      applied_at: number
+      persona_history_id: string
+    }[]
+    const afterApply = proposalRows.find((item) => item.id === promptProposal.id)!
+    assert.equal(afterApply.status, 'applied')
+    assert.ok(afterApply.applied_at > 0)
+    assert.ok(afterApply.persona_history_id)
+
+    const rolled = await h.call({ method: 'POST', path: '/api/v1/review/proposals/rollback', query: {}, headers: {}, body: { id: promptProposal.id } })
+    assert.equal(rolled.status, 200)
+    assert.equal(h.persona.hash, 'h1', '回滚后人格应恢复原版本')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('下期复盘对比失败率：应用提案后变好/变差都有留痕', async () => {
+  let now = new Date('2026-11-15T12:00:00')
+  const h = await setup({ clock: () => now, persona: true })
+  try {
+    const turns = h.store.collection('qm_turn')
+    await turns.insert({ id: 'nov_ok', status: 'ok', latency_ms: 100, created_at: new Date('2026-11-10T10:00:00').getTime() })
+    await turns.insert({ id: 'nov_fail', status: 'failed', latency_ms: 200, error_code: '模型超时', created_at: new Date('2026-11-11T10:00:00').getTime() })
+
+    const nov = await h.call({ method: 'POST', path: '/api/v1/review/run', query: {}, headers: {} })
+    const novId = (nov.body as { review: { id: string } }).review.id
+    await h.call({ method: 'POST', path: '/api/v1/review/score', query: {}, headers: {}, body: { id: novId, score: 4 } })
+    const proposal = (await h.call({ method: 'GET', path: '/api/v1/review/proposals', query: {}, headers: {} })).body.items.find(
+      (item: { kind: string }) => item.kind === 'prompt',
+    ) as { id: string }
+    await h.call({ method: 'POST', path: '/api/v1/review/proposals/apply', query: {}, headers: {}, body: { id: proposal.id } })
+
+    await turns.insert({ id: 'dec_ok1', status: 'ok', latency_ms: 90, created_at: new Date('2026-12-02T10:00:00').getTime() })
+    await turns.insert({ id: 'dec_ok2', status: 'ok', latency_ms: 80, created_at: new Date('2026-12-03T10:00:00').getTime() })
+    now = new Date('2026-12-15T12:00:00')
+    const dec = await h.call({ method: 'POST', path: '/api/v1/review/run', query: {}, headers: {} })
+    assert.equal(dec.status, 200)
+
+    const updated = (await h.store.collection('qm_review_proposal').find({})).find(
+      (row) => row.id === proposal.id,
+    ) as unknown as { effect_json: string }
+    const effect = JSON.parse(updated.effect_json) as { verdict: string; failureRate: { current: number; baseline: number } }
+    assert.equal(effect.verdict, 'improved')
+    assert.equal(effect.failureRate.baseline, 0.5)
+    assert.equal(effect.failureRate.current, 0)
+  } finally {
+    await h.dispose()
+  }
+})
+
 
 
