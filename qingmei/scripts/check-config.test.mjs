@@ -35,7 +35,7 @@ test('workspacePackages：只认有 package.json 的目录', () => {
 test('仓库自带的 qingmei.yml 全部可解析', () => {
   const result = checkFile(path.join(REPO_ROOT, 'qingmei.yml'))
   assert.deepEqual(result.errors, [])
-  assert.equal(result.count, 20)
+  assert.equal(result.count, 21)
 })
 
 test('仓库自带的 qingmei.prod.yml 全部可解析', () => {
@@ -50,3 +50,4 @@ test('envRefs：嵌套收集 { $env } 引用', () => {
   ])
   assert.deepEqual(refs, ['QM_LLM_KEY', 'QM_TOKEN'])
 })
+

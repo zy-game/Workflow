@@ -6,6 +6,8 @@ import { apiJson, apiSend } from '../lib/api.js'
 const facts = ref([])
 const proposals = ref([])
 const changes = ref([])
+const candidates = ref([])
+const accepted = ref([])
 const stats = ref(null)
 const evaluations = ref({})
 const lastChangeId = ref('')
@@ -15,26 +17,56 @@ const loading = ref(false)
 const busy = ref('')
 
 const conceptCount = computed(() => Number(stats.value?.concepts ?? 0))
+const candidateCount = computed(() => candidates.value.length)
 const appliedChanges = computed(() => changes.value.filter((item) => item.status === 'applied'))
 
 async function load() {
   loading.value = true
   try {
-    const [factBody, statBody, proposalBody, changeBody] = await Promise.all([
+    const [factBody, statBody, proposalBody, changeBody, candidateBody, acceptedBody] = await Promise.all([
       apiJson(ENDPOINTS.memoryFacts),
       apiJson(ENDPOINTS.memoryStats).catch(() => ({ stats: null })),
       apiJson(ENDPOINTS.conceptProposals).catch(() => ({ proposals: [] })),
       apiJson(ENDPOINTS.conceptChanges).catch(() => ({ changes: [] })),
+      apiJson(ENDPOINTS.memoryCandidates).catch(() => ({ items: [] })),
+      apiJson(`${ENDPOINTS.memoryCandidates}?status=accepted&limit=10`).catch(() => ({ items: [] })),
     ])
     facts.value = Array.isArray(factBody?.facts) ? factBody.facts : []
     stats.value = statBody?.stats ?? null
     proposals.value = Array.isArray(proposalBody?.proposals) ? proposalBody.proposals : []
     changes.value = Array.isArray(changeBody?.changes) ? changeBody.changes : []
+    candidates.value = Array.isArray(candidateBody?.items) ? candidateBody.items : []
+    accepted.value = Array.isArray(acceptedBody?.items) ? acceptedBody.items : []
     error.value = ''
   } catch (err) {
     error.value = err instanceof TypeError ? '无法连接服务' : err.message || '读取记忆失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function decideCandidate(candidate, allow) {
+  busy.value = candidate.id
+  try {
+    await apiSend(ENDPOINTS.memoryCandidateDecide, { body: { id: candidate.id, allow } })
+    await load()
+  } catch (err) {
+    error.value = err.message || '候选处理失败'
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function rollbackBatch(candidate) {
+  if (!window.confirm(`撤回这一批采纳的事实？`)) return
+  busy.value = candidate.batch_id
+  try {
+    await apiSend(ENDPOINTS.memoryCandidateRollback, { body: { batchId: candidate.batch_id } })
+    await load()
+  } catch (err) {
+    error.value = err.message || '撤回失败'
+  } finally {
+    busy.value = ''
   }
 }
 
@@ -179,6 +211,9 @@ onMounted(load)
       <button class="btn small" :class="{ ghost: tab !== 'concepts' }" type="button" @click="tab = 'concepts'">
         概念提案 <span v-if="proposals.length">({{ proposals.length }})</span>
       </button>
+      <button class="btn small" :class="{ ghost: tab !== 'candidates' }" type="button" @click="tab = 'candidates'">
+        待确认 <span v-if="candidateCount">({{ candidateCount }})</span>
+      </button>
     </div>
 
     <template v-if="tab === 'facts'">
@@ -197,7 +232,7 @@ onMounted(load)
       </ul>
     </template>
 
-    <template v-else>
+    <template v-else-if="tab === 'concepts'">
       <p v-if="!loading && proposals.length === 0" class="empty">暂时没有概念变更提案。</p>
       <p v-if="lastChangeId" class="item-meta">
         已应用变更 {{ lastChangeId }}
@@ -261,6 +296,50 @@ onMounted(load)
                 @click="rollbackChange(change)"
               >
                 回滚
+              </button>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </template>
+
+    <template v-else>
+      <p v-if="!loading && candidates.length === 0" class="empty">
+        没有待确认的记忆。聊到「我住在…」「我对…过敏」这类陈述时，候选会出现在这里，点「采纳」才写入记忆。
+      </p>
+      <ul class="list">
+        <li v-for="candidate in candidates" :key="candidate.id" class="item">
+          <div class="item-main">
+            <p class="item-title">{{ candidate.subject }} {{ candidate.predicate }} {{ candidate.object }}</p>
+            <p class="item-meta">
+              置信 {{ Math.round(Number(candidate.confidence) * 100) }}% · 规则 {{ candidate.rule }} ·
+              {{ new Date(candidate.created_at).toLocaleString() }}
+            </p>
+          </div>
+          <div class="item-actions">
+            <button class="btn small" type="button" :disabled="busy === candidate.id" @click="decideCandidate(candidate, true)">
+              采纳
+            </button>
+            <button class="btn small ghost" type="button" :disabled="busy === candidate.id" @click="decideCandidate(candidate, false)">
+              忽略
+            </button>
+          </div>
+        </li>
+      </ul>
+
+      <div v-if="accepted.length" class="memory-history">
+        <h3>最近采纳（可整批撤回）</h3>
+        <ul class="list">
+          <li v-for="item in accepted" :key="item.id" class="item">
+            <div class="item-main">
+              <p class="item-title">{{ item.subject }} {{ item.predicate }} {{ item.object }}</p>
+              <p class="item-meta">
+                批次 {{ item.batch_id }} · {{ new Date(item.decided_at || item.created_at).toLocaleString() }}
+              </p>
+            </div>
+            <div class="item-actions">
+              <button class="btn small danger" type="button" :disabled="busy === item.batch_id" @click="rollbackBatch(item)">
+                撤回本批
               </button>
             </div>
           </li>

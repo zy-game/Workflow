@@ -82,6 +82,14 @@
 # 身份绑定：每渠道第一个私聊自动绑 owner，之后陌生账号需显式 bind
 - name: '@qingmei/qm-identity'
 
+# 会话凝练：回合结束后按规则抽「候选事实」，主人在记忆页采纳才写入
+- name: '@qingmei/qm-distill'
+  config:
+    maxPending: 200
+    # 模型补抽默认关闭；打开前先确认 LLM 已配置，并按天限流
+    llmExtract: false
+    llmDailyLimit: 20
+
 - name: '@qingmei/channel-web'
 
 # 飞书渠道：配置 appId/appSecret（或 QM_FEISHU_APP_ID / QM_FEISHU_APP_SECRET）才启用

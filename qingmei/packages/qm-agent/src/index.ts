@@ -480,6 +480,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       ok: problems.length === 0,
       text: reply,
       userText,
+      audience,
       latencyMs: Date.now() - startedAt,
       deviceId: message.deviceId,
       steps,

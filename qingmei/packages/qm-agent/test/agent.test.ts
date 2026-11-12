@@ -424,13 +424,15 @@ function delay(ms: number): Promise<void> {
 }
 
 /** 去掉本回合新加的 traceId/latencyMs，只比较业务字段；同时校验它们确实存在 */
-function endView(end: TurnEnd): Omit<TurnEnd, 'traceId' | 'latencyMs'> {
+function endView(end: TurnEnd): Omit<TurnEnd, 'traceId' | 'latencyMs' | 'audience'> {
   assert.match(end.traceId, /^turn_/)
   assert.equal(typeof end.latencyMs, 'number')
   assert.equal(typeof end.steps, 'number')
   assert.equal(typeof end.tokensIn, 'number')
   assert.equal(typeof end.tokensOut, 'number')
-  const { traceId: _traceId, latencyMs: _latencyMs, steps: _steps, tokensIn: _in, tokensOut: _out, deviceId: _device, ...rest } = end
+  // 可见范围是给下游（会话凝练）用的，不影响回合本身的形状断言
+  assert.ok(end.audience === 'owner' || end.audience === undefined || String(end.audience).startsWith('group:'))
+  const { traceId: _traceId, latencyMs: _latencyMs, steps: _steps, tokensIn: _in, tokensOut: _out, deviceId: _device, audience: _audience, ...rest } = end
   return rest
 }
 async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000): Promise<void> {
@@ -592,6 +594,19 @@ test('DSH 不可用且没配 LLM：明确失败文案，不静默假装成功', 
   const sent = h.state.sent.at(-1)
   const text = (sent?.blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
   assert.match(text, /没有可用的执行器/, '用户要看到明确原因，而不是空白或假成功')
+})
+
+test('turn/end 带 audience：私聊 owner、群聊 group:<渠道>:<id>', async () => {
+  const h = await boot({ chunks: ['好。'] })
+  h.ctx.events.emit(EVENTS.inbound, inbound('在吗'))
+  await waitFor(() => h.ends.length === 1, '私聊 turn/end')
+  assert.equal(h.ends[0]?.audience, 'owner')
+
+  const group = inbound('大家好')
+  group.conversation = { kind: 'group', id: 'g1' }
+  h.ctx.events.emit(EVENTS.inbound, group)
+  await waitFor(() => h.ends.length === 2, '群聊 turn/end')
+  assert.match(String(h.ends[1]?.audience), /^group:/)
 })
 
 test('同一会话的两个回合串行执行，后一回合能看到前一回合的历史', async () => {

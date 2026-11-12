@@ -1,3 +1,20 @@
+### P1-⑤ 会话记忆凝练：规则抽候选，人采纳才进记忆（2026-11-12）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/qm-distill`（新） | `extract.ts` 11 条规则（叫/住/上班/喜欢/不喜欢/过敏/生日/作息/宠物/项目），问句、假设、代词、「记住」一律不抽；`index.ts` 订阅 `qm/turn/end`，只处理 owner 私聊成功回合，候选进 `qm_memory_candidate`（pending），**不直接写记忆** |
+| 审批面 | `GET /api/v1/memory/candidates`、`POST .../decide`（采纳才 `memory.ingest`，origin.kind=distilled）、`POST .../rollback`（按 batch 撤回并 forget）；采纳/拒绝/撤回都写审计 |
+| 并发 | 凝练串行化：两条并发回合同时查重会各插一条，已用 promise 链串起来 |
+| LLM 可选 | `llmExtract` 默认 false；打开后按天限流（`llmDailyLimit`），解析失败静默放弃，候选置信 0.45 |
+| `packages/core` | `TurnEnd.audience`（owner / group:<id>），供凝练过滤群聊；`MemoryRecord.origin.kind` 增加 `distilled` |
+| `packages/qm-agent` | 回合结束时带出 audience |
+| `apps/web` | 记忆页新增「待确认」页签：采纳/忽略 + 最近采纳可整批撤回 |
+| 装配 | `qingmei.yml` / `qingmei.prod.yml` 各加一项（dev 21 项、prod 21 项），生产 `llmExtract: false` |
+
+测试：`packages/qm-distill/test` 18 条（规则 11 + 插件 7：候选落库、群聊不抽、采纳/拒绝、重复去重、回滚、LLM 默认不调、LLM 配额）。
+
+> 未做：候选的「编辑后采纳」、按主题自动归档、模型抽取提示词的评估集。
+
 ### P0-③ 首次启动向导：测试连接现在会验令牌（2026-11-12）
 
 | 文件 | 改了什么 |

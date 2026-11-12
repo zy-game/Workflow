@@ -16,7 +16,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
@@ -71,6 +71,27 @@ export function buildTarball({ outFile }) {
   return outFile
 }
 
+/** 部署是「解包覆盖」而不是「先清空」：仓库里删掉的包会在服务器上留成孤儿，
+ * 下一次 `pnpm install --frozen-lockfile` 就会因为 workspace 里多出这些目录而失败。
+ * 这里按「本地有的才保留」清一次，只删 packages/ 与 experimental/ 下的合法包名。 */
+function pruneStalePackages() {
+  const local = new Set()
+  for (const group of ['packages', 'experimental']) {
+    for (const entry of readdirSync(path.join(REPO_ROOT, group), { withFileTypes: true })) {
+      if (entry.isDirectory()) local.add(`${group}/${entry.name}`)
+    }
+  }
+  const remote = ssh(`cd ${APP_DIR} && ls -d packages/*/ experimental/*/ 2>/dev/null`, { quiet: true })
+  const stale = remote
+    .split(/\s+/)
+    .map((item) => item.replace(/\/+$/, ''))
+    .filter((item) => /^(?:packages|experimental)\/[a-z0-9][a-z0-9-]*$/.test(item))
+    .filter((item) => !local.has(item))
+  if (stale.length === 0) return
+  console.log(`[deploy] 清理服务器上已删除的包：${stale.join(', ')}`)
+  ssh(`sudo -n rm -rf ${stale.map((item) => `${APP_DIR}/${item}`).join(' ')}`)
+}
+
 function buildWeb() {
   // 直接跑 vite：Windows 上 Node 不能 spawn pnpm.cmd（EINVAL），绕开包管理器更稳
   const webDir = path.join(REPO_ROOT, 'apps', 'web')
@@ -101,6 +122,7 @@ async function deployServer({ install = false } = {}) {
   mkdirSync(path.dirname(tarball), { recursive: true })
   console.log('[deploy] 打包…')
   buildTarball({ outFile: tarball })
+  pruneStalePackages()
   const size = Math.round(statSync(tarball).size / 1024 / 1024)
   console.log(`[deploy] 包大小 ${size} MB，上传…`)
 

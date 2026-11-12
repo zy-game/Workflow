@@ -92,6 +92,13 @@
 # 身份绑定：每渠道第一个私聊自动绑 owner
 - name: '@qingmei/qm-identity'
 
+# 会话凝练：回合结束后按规则抽「候选事实」，主人在记忆页采纳才写入
+- name: '@qingmei/qm-distill'
+  config:
+    maxPending: 200
+    # 生产没有 LLM provider，模型补抽只能是关闭状态
+    llmExtract: false
+
 # ── 渠道与宿主
 - name: '@qingmei/channel-web'
 

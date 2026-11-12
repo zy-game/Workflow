@@ -419,6 +419,8 @@ export interface TurnEnd {
   latencyMs?: number
   /** 本回合用户说了什么：记忆抽取要用，避免再查库 */
   userText?: string
+  /** 本回合的可见范围（owner / group:<id>）；对话凝练只处理 owner */
+  audience?: string
   /** 产生本回合的端 id */
   deviceId?: string
   /** 工具循环轮数 */
@@ -612,7 +614,7 @@ export interface MemoryRecord {
   audience?: string
   /** 来源设备域（可选）；召回时同设备加权 */
   device?: string
-  origin: { kind: 'channel' | 'harness' | 'self' | 'doc' | 'manual'; id: string }
+  origin: { kind: 'channel' | 'harness' | 'self' | 'doc' | 'manual' | 'distilled'; id: string }
   /** 同一上报的幂等键；相同键只应用一次（docs/10 §4） */
   idempotencyKey?: string
   occurredAt?: Date

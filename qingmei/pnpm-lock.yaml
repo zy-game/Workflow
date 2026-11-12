@@ -101,6 +101,9 @@ importers:
       '@qingmei/qm-device':
         specifier: workspace:*
         version: link:../../packages/qm-device
+      '@qingmei/qm-distill':
+        specifier: workspace:*
+        version: link:../../packages/qm-distill
       '@qingmei/qm-history':
         specifier: workspace:*
         version: link:../../packages/qm-history
@@ -402,6 +405,22 @@ importers:
       '@qingmei/qm-task':
         specifier: workspace:*
         version: link:../qm-task
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-distill:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway
