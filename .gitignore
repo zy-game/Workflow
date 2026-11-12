@@ -5,3 +5,5 @@ worker-*.json
 *.tgz
 chrome-cdp-profile/
 
+qingmei-desktop-*.zip
+
