@@ -204,3 +204,48 @@ test('记忆页：listFacts / updateFact 支持人工修正', async () => {
     await dispose()
   }
 })
+
+test('召回打分：同簇里命中更多查询词的排在前面', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      fact('主人', '喜欢喝', '手冲咖啡'),
+      fact('主人', '不喜欢喝', '美式咖啡'),
+      fact('主人', '家里有一台', '德龙咖啡机'),
+    ])
+    const hit = await ctx.memory.recall({ text: '手冲咖啡' })
+    assert.equal(hit.facts[0]?.object, '手冲咖啡', '查询词完整出现在 object 里的应该排第一')
+  } finally {
+    await dispose()
+  }
+})
+
+test('召回打分：object 命中优先于 predicate 命中', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      fact('主人', '每月预算', '三千元'),
+      fact('主人', '喜欢', '咖啡'),
+    ])
+    const hit = await ctx.memory.recall({ text: '预算还剩多少' })
+    assert.equal(hit.facts[0]?.object, '三千元')
+  } finally {
+    await dispose()
+  }
+})
+
+test('召回打分：高频词不会把同簇事实拉平', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      fact('主人', '喜欢喝', '手冲咖啡'),
+      fact('主人', '喜欢喝', '拿铁'),
+      fact('主人', '喜欢喝', '龙井茶'),
+      fact('主人', '不喜欢喝', '美式咖啡'),
+    ])
+    const hit = await ctx.memory.recall({ text: '龙井' })
+    assert.equal(hit.facts[0]?.object, '龙井茶')
+  } finally {
+    await dispose()
+  }
+})

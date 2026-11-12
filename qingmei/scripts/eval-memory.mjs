@@ -35,17 +35,17 @@ try {
 
   const results = []
   for (const query of fixture.queries) {
-    const hit = await ctx.memory.recall({ text: query.text, limit: 3 })
+    // limit 8 与生产默认召回条数一致；同时记录前 1/3/8 名
+    const hit = await ctx.memory.recall({ text: query.text, limit: 8 })
     const rank = hit.facts.findIndex((fact) => String(fact.object).includes(query.expect)) + 1
-    results.push({ query: query.text, expect: query.expect, rank, top: hit.facts.map((fact) => fact.object) })
+    results.push({ query: query.text, expect: query.expect, rank, top: hit.facts.slice(0, 3).map((fact) => fact.object) })
   }
 
-  const at1 = results.filter((item) => item.rank === 1).length / results.length
-  const at3 = results.filter((item) => item.rank >= 1 && item.rank <= 3).length / results.length
-  const report = { queries: results.length, recallAt1: at1, recallAt3: at3, results }
+  const at = (k) => results.filter((item) => item.rank >= 1 && item.rank <= k).length / results.length
+  const report = { queries: results.length, recallAt1: at(1), recallAt3: at(3), recallAt8: at(8), results }
   console.log(JSON.stringify(report, null, 2))
-  if (at3 < 0.8) {
-    console.error(`[eval-memory] recall@3 ${(at3 * 100).toFixed(0)}% < 80%`)
+  if (at(3) < 0.85) {
+    console.error(`[eval-memory] recall@3 ${(at(3) * 100).toFixed(0)}% < 85%`)
     process.exitCode = 1
   }
 } finally {

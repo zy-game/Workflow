@@ -165,6 +165,14 @@ export function tokenize(text: string): string[] {
   return [...out]
 }
 
+/** 匹配用的归一化：小写、NFKC、去掉空白与标点。用于子串奖励，不参与神经元编码 */
+export function flattenForMatch(text: string): string {
+  return String(text ?? '')
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[\s\p{P}]+/gu, '')
+}
+
 export class NeuronMemory extends MemoryService {
   private readonly neurons
   private readonly synapses
@@ -416,12 +424,59 @@ export class NeuronMemory extends MemoryService {
     const factRows = new Map(facts.map((row) => [row.id, row]))
     const episodeRows = new Map(episodes.map((row) => [row.id, row]))
     const ranked: { score: number; id: string; kind: 'fact' | 'episode' }[] = []
+    // 文档频率：被越多条事实共享的神经元，区分度越低。没有这一项，
+    // 「咖啡」这种高频词会把同簇里所有事实拉平，谁都排不到第一。
+    const df = new Map<string, number>()
+    for (const [, bindings] of this.byOwner) {
+      for (const binding of bindings) {
+        if ((scores.get(binding.neuron_id) ?? 0) > 0) df.set(binding.neuron_id, (df.get(binding.neuron_id) ?? 0) + 1)
+      }
+    }
+    const ownerCount = Math.max(1, this.byOwner.size)
+    const idf = (neuronId: string): number => Math.log(1 + ownerCount / Math.max(1, df.get(neuronId) ?? 1))
+    const queryText = flattenForMatch(query.text)
+
     for (const [ownerId, bindings] of this.byOwner) {
       const row = factRows.get(ownerId) ?? episodeRows.get(ownerId)
       if (!row) continue
+      const fact = factRows.get(ownerId)
+      const fieldText = fact
+        ? {
+            subject: flattenForMatch(fact.subject),
+            predicate: flattenForMatch(fact.predicate),
+            object: flattenForMatch(fact.object),
+          }
+        : null
       let score = 0
-      for (const binding of bindings) score += (scores.get(binding.neuron_id) ?? 0) * binding.weight
-      if (score > 0) ranked.push({ score, id: ownerId, kind: factRows.has(ownerId) ? 'fact' : 'episode' })
+      const matched = new Set<string>()
+      for (const binding of bindings) {
+        const activation = scores.get(binding.neuron_id) ?? 0
+        if (activation <= 0) continue
+        // 同一个词出现在 object 比出现在 predicate 更能说明「就是这条」
+        let fieldWeight = 1
+        if (fieldText) {
+          const label = flattenForMatch(this.byId.get(binding.neuron_id)?.row.label ?? '')
+          if (label) {
+            if (fieldText.object.includes(label)) fieldWeight = 1.6
+            else if (fieldText.subject.includes(label)) fieldWeight = 1.3
+            else if (fieldText.predicate.includes(label)) fieldWeight = 1.1
+          }
+        }
+        score += activation * binding.weight * idf(binding.neuron_id) * fieldWeight
+        matched.add(binding.neuron_id)
+      }
+      if (score <= 0) continue
+      // 命中词数比单次激活更说明问题：同时覆盖「手冲」「咖啡」的应该压过只覆盖「咖啡」的
+      score += matched.size * 0.8
+      if (fact) {
+        const text = flattenForMatch(`${fact.subject}${fact.predicate}${fact.object}`)
+        if (queryText.length >= 2 && text.includes(queryText)) score += 3
+        const object = flattenForMatch(fact.object)
+        if (object.length >= 2 && queryText.includes(object)) score += 2
+        const subject = flattenForMatch(fact.subject)
+        if (subject.length >= 2 && queryText.includes(subject)) score += 1
+      }
+      ranked.push({ score, id: ownerId, kind: fact ? 'fact' : 'episode' })
     }
     if (ranked.length === 0) return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
 
