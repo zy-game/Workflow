@@ -23,6 +23,8 @@ export const PRESERVE = new Set([
   'qingmei.yml',
   'tmp',
   'dist',
+  // 安装包暂存目录：跟着每次 release 复制会把 800MB 的 exe 复制 20 份
+  'updates',
 ])
 
 function parseArgs(argv) {
@@ -63,6 +65,10 @@ export async function createRelease(appDir, releasesDir, options = {}) {
   if (existsSync(target)) throw new Error(`release 已存在：${id}`)
   await mkdir(target, { recursive: true })
   const files = await copyCode(appDir, target)
+  // 桌面/移动端的构建产物不进 release：体积大、运行时用不到，还会被复制 N 份
+  for (const relative of ['apps/desktop/dist', 'apps/desktop/tmp', 'apps/mobile']) {
+    await rm(path.join(target, relative), { recursive: true, force: true })
+  }
   const manifest = {
     id,
     createdAt: new Date().toISOString(),
@@ -144,3 +150,5 @@ if (invokedDirectly) {
     process.exitCode = 1
   })
 }
+
+

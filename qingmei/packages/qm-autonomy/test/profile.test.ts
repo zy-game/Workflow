@@ -313,3 +313,18 @@ test('群策略：预览不改配置，历史可回滚上一标签', async () =>
     await h.dispose()
   }
 })
+
+test('classifySuggestion：只命中一个关键词时按吹水群处理，不误贴工作标签', () => {
+  const single = profilePlugin.classifySuggestion(['今天加班到十点，项目真难', '咱这行就是命苦', '明天继续搬砖'])
+  assert.equal(single.tag, 'casual')
+  assert.match(single.evidence, /只命中 1 个关键词/)
+})
+
+test('classifySuggestion：两个以上关键词才给非吹水标签', () => {
+  const work = profilePlugin.classifySuggestion(['项目进度落后', '周会改线上', '排期重拉'])
+  assert.equal(work.tag, 'work')
+  const client = profilePlugin.classifySuggestion(['合同发你', '报价改一下'])
+  assert.equal(client.tag, 'client')
+  const family = profilePlugin.classifySuggestion(['孩子明天放假', '家里没人'])
+  assert.equal(family.tag, 'family')
+})

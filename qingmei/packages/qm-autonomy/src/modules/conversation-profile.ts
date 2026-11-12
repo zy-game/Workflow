@@ -619,6 +619,9 @@ const SUGGEST_KEYWORDS: Record<GroupTag, string[]> = {
   temp: [],
 }
 
+/** 至少命中两个不同关键词才给非吹水标签：只出现一次「项目」的玩笑群不该被贴成工作群 */
+const MIN_KEYWORD_HITS = 2
+
 /** 只给建议：按关键词粗分，证据写清楚，最终由 owner 采纳 */
 export function classifySuggestion(texts: string[]): { tag: GroupTag; note: string; evidence: string } {
   let best: GroupTag = 'casual'
@@ -632,6 +635,13 @@ export function classifySuggestion(texts: string[]): { tag: GroupTag; note: stri
   }
   if (bestHits.length === 0) {
     return { tag: 'casual', note: '没有明显的工作/客户/家庭关键词，倾向吹水群', evidence: `${texts.length} 条消息，无匹配关键词` }
+  }
+  if (bestHits.length < MIN_KEYWORD_HITS) {
+    return {
+      tag: 'casual',
+      note: '关键词太少（只命中一个），不足以判断群性质，先按吹水群',
+      evidence: `${bestHits.join('、')}（${texts.length} 条消息只命中 1 个关键词）`,
+    }
   }
   const count = texts.filter((text) => bestHits.some((keyword) => text.includes(keyword))).length
   return {

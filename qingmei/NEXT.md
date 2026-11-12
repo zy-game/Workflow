@@ -1,3 +1,26 @@
+### P1-⑩ 群画像标签准确率 + 一次满盘事故（2026-11-12）
+
+**标签评估**（`scripts/eval-group-tags.mjs` + `scripts/fixtures/group-tags-eval.json`，已进 gate）：
+
+```text
+28 组会话，accuracy 96.4%（27/28）
+client 100/100  work 87.5/100  family 100/100  casual 100/90（precision/recall %）
+```
+
+改了一处：非吹水标签要求**至少命中两个不同关键词**（之前一个「项目」就把玩笑群贴成工作群）。
+唯一漏判是反讽语气的吹水群（「项目又延期了，笑死」），关键词法处理不了——这正是「只建议、不自动打标签」的理由。
+
+**满盘事故（生产 12:31–12:34 不可用）**：
+
+- 根分区 50G 用满，`provider-store-sqlite` 报 `disk I/O error`，服务起不来；supervisor 回滚也失败（同样是满盘）。
+- 根因：`releases/` 每次发布都把 `updates/`（789MB 安装包）复制一份 → 每个 release 1.1G，20 个 release 共 15G；
+  再加 `/tmp` 里每次部署留下的 78MB tar 包。
+- 处置：清 `/tmp`、删旧 release、裁 `updates/`（789M→103M），服务自动恢复；随后重新部署成功。
+- 修复（已提交）：
+  1. `releases.mjs` 不再复制 `updates/`、`apps/mobile/`、`apps/desktop/{dist,tmp}` → release 从 1.1G 降到 303M（下次约 15M）；
+  2. `deploy.mjs` 部署前检查磁盘可用 < 5GB 直接中止；
+  3. 部署成功后只保留最近 5 个 release。
+
 ### P1-⑨ 实验包二选一：复盘提升、内容删除（2026-11-12）
 
 | 决定 | 依据 | 动作 |

@@ -39,6 +39,8 @@ const EXCLUDES = [
   'tmp',
   'chrome-cdp-profile',
   'apps/desktop/dist',
+  'apps/desktop/tmp',
+  'apps/mobile',
   'apps/mobile/www',
   'apps/mobile/android/build',
 ]
@@ -94,6 +96,26 @@ function pruneStalePackages() {
   ssh(`sudo -n rm -rf ${stale.map((item) => `${APP_DIR}/${item}`).join(' ')}`)
 }
 
+/** 磁盘不够就先停：满盘会让 SQLite 报 I/O error、服务起不来（2026-11-12 真踩过） */
+function requireDiskSpace(minGb = 5) {
+  const availKb = Number(ssh(`df --output=avail / | tail -1`, { quiet: true }).trim())
+  const availGb = availKb / 1024 / 1024
+  if (!Number.isFinite(availGb) || availGb < minGb) {
+    throw new Error(`服务器根分区只剩 ${availGb.toFixed(1)} GB（< ${minGb} GB），先清理再部署`)
+  }
+  console.log(`[deploy] 磁盘可用 ${availGb.toFixed(1)} GB`)
+}
+
+/** 只保留最近 keep 个 release；旧版本占的是 1GB 级空间 */
+function pruneReleases(keep = 5) {
+  const script =
+    `cd ${APP_DIR}/releases && ` +
+    `ls -1 | sort | head -n -${keep} | while read -r d; do [ -n "$d" ] && sudo -n rm -rf "$d"; done; ` +
+    `ls -1 | wc -l`
+  const left = ssh(script, { quiet: true })
+  console.log(`[deploy] releases 保留 ${left.trim()} 个`)
+}
+
 function buildWeb() {
   // 直接跑 vite：Windows 上 Node 不能 spawn pnpm.cmd（EINVAL），绕开包管理器更稳
   const webDir = path.join(REPO_ROOT, 'apps', 'web')
@@ -124,6 +146,7 @@ async function deployServer({ install = false } = {}) {
   mkdirSync(path.dirname(tarball), { recursive: true })
   console.log('[deploy] 打包…')
   buildTarball({ outFile: tarball })
+  requireDiskSpace(5)
   pruneStalePackages()
   const size = Math.round(statSync(tarball).size / 1024 / 1024)
   console.log(`[deploy] 包大小 ${size} MB，上传…`)
@@ -148,6 +171,7 @@ async function deployServer({ install = false } = {}) {
     { quiet: true },
   )
   console.log(check)
+  pruneReleases(5)
 
   rmSync(tarball, { force: true })
 }
@@ -224,4 +248,5 @@ if (invokedDirectly) {
     process.exitCode = 1
   })
 }
+
 
