@@ -30,6 +30,7 @@ import {
   type ConceptEvaluation,
   type ConceptChangeSummary,
   type EpisodeConsolidationReport,
+  EmbeddingService,
   type MemoryEntity,
   type MemoryEdge,
   type NeighborQuery,
@@ -162,6 +163,8 @@ interface FactRow extends Row {
   origin_id: string
   created_at: number
   valid_to: number | null
+  /** 可选：语义向量（JSON 数组），只有装了 embedding 才有 */
+  vector_json?: string
 }
 
 interface RuntimeNeuron {
@@ -213,6 +216,7 @@ export class NeuronMemory extends MemoryService {
   private readonly entities
   private readonly edges
   private history: HistoryService | undefined
+  private embedding: EmbeddingService | undefined
   private readonly limit: number
   private readonly minConfidence: number
   private readonly ticks: number
@@ -243,6 +247,7 @@ export class NeuronMemory extends MemoryService {
     this.entities = store.collection<EntityRow>(ENTITY)
     this.edges = store.collection<EdgeRow>(EDGE)
     ctx.inject(['history'], (sub) => { this.history = sub.history })
+    ctx.inject(['embedding'], (sub) => { this.embedding = sub.embedding })
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
     this.ticks = Math.max(1, config.ticks ?? 4)
@@ -414,6 +419,14 @@ export class NeuronMemory extends MemoryService {
         })
         await this.bind(row.id, 'fact', `${row.subject} ${row.predicate} ${row.object}`)
         await this.buildFactRelations(row)
+        if (this.embedding) {
+          try {
+            const [vector] = await this.embedding.embed([`${row.subject} ${row.predicate} ${row.object}`])
+            if (vector && vector.length > 0) await this.facts.update(row.id, { vector_json: JSON.stringify(vector) })
+          } catch {
+            // 向量服务失败不影响入库，召回退回词面匹配
+          }
+        }
         created.push(row.id)
         continue
       }
@@ -447,7 +460,9 @@ export class NeuronMemory extends MemoryService {
       (since === null || at >= since) && (until === null || at <= until)
     const facts = (await this.facts.find({})).filter((row) => visible(row, audience) && inWindow(row.created_at))
     const episodes = (await this.episodes.find({})).filter((row) => visibleEpisode(row, audience) && inWindow(row.created_at))
-    if (facts.length === 0 && episodes.length === 0) return { facts: [], text: '' }
+    if (facts.length === 0 && episodes.length === 0) {
+      return { facts: [], text: '' }
+    }
 
     const rawTokens = tokenize(query.text)
     const semanticTokens = rawTokens.filter((token) => token.length >= 2)
@@ -456,12 +471,22 @@ export class NeuronMemory extends MemoryService {
     const seeds = queryTokens
       .map((token) => this.byLabel.get(token))
       .filter((id): id is string => Boolean(id))
+
+    let queryVector: number[] | null = null
+    if (this.embedding) {
+      try {
+        const [vector] = await this.embedding.embed([query.text])
+        queryVector = vector && vector.length > 0 ? vector : null
+      } catch {
+        queryVector = null
+      }
+    }
     if (seeds.length === 0) {
-      if (query.text.trim()) return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
-      return this.recent(facts, episodes, limit)
+      if (query.text.trim() && !queryVector) return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
+      if (!query.text.trim()) return this.recent(facts, episodes, limit)
     }
 
-    const scores = await this.spread(seeds)
+    const scores = seeds.length > 0 ? await this.spread(seeds) : new Map<string, number>()
     const factRows = new Map(facts.map((row) => [row.id, row]))
     const episodeRows = new Map(episodes.map((row) => [row.id, row]))
     const ranked: { score: number; id: string; kind: 'fact' | 'episode' }[] = []
@@ -506,9 +531,21 @@ export class NeuronMemory extends MemoryService {
         score += activation * binding.weight * idf(binding.neuron_id) * fieldWeight
         matched.add(binding.neuron_id)
       }
-      if (score <= 0) continue
+      // 语义向量：词面完全没命中时，靠余弦把「同义但不同词」的事实捞回来
+      let vectorScore = 0
+      if (queryVector && fact?.vector_json) {
+        try {
+          const similarity = cosineSimilarity(queryVector, JSON.parse(fact.vector_json) as number[])
+          if (similarity > 0.5) vectorScore = similarity * 6
+        } catch {
+          vectorScore = 0
+        }
+      }
+      if (score <= 0 && vectorScore === 0) continue
+      score += vectorScore
       // 命中词数比单次激活更说明问题：同时覆盖「手冲」「咖啡」的应该压过只覆盖「咖啡」的
       score += matched.size * 0.8
+      score += bigramOverlap(queryText, fact ? `${fact.subject}${fact.predicate}${fact.object}` : (row as EpisodeRow).text) * 0.2
       if (fact) {
         const text = flattenForMatch(`${fact.subject}${fact.predicate}${fact.object}`)
         if (queryText.length >= 2 && text.includes(queryText)) score += 3
@@ -522,7 +559,9 @@ export class NeuronMemory extends MemoryService {
       const recency = 1 + 0.25 * Math.exp(-ageDays / 30)
       ranked.push({ score: score * recency, id: ownerId, kind: fact ? 'fact' : 'episode' })
     }
-    if (ranked.length === 0) return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
+    if (ranked.length === 0) {
+      return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
+    }
 
     ranked.sort((a, b) => b.score - a.score)
     const recalled: RecalledFact[] = []
@@ -1497,4 +1536,47 @@ export function cleanEntityName(raw: string): string | null {
   if (/(情况|的事|问题|内容|的时候)$/.test(value)) return null
   return value
 }
+
+
+/** 中文二元组：只保留字母/数字/汉字，用来做词面之外的模糊匹配 */
+export function chineseBigrams(text: string): string[] {
+  const value = flattenForMatch(text).replace(/[^\p{L}\p{N}]/gu, '')
+  const out: string[] = []
+  for (let i = 0; i < value.length - 1; i += 1) out.push(value.slice(i, i + 2))
+  return out
+}
+
+/** 两段文本的字符 bigram 交集数量（中文模糊匹配用） */
+export function bigramOverlap(left: string, right: string): number {
+  const a = new Set(chineseBigrams(left))
+  if (a.size === 0) return 0
+  let hits = 0
+  const seen = new Set<string>()
+  for (const bigram of chineseBigrams(right)) {
+    if (!a.has(bigram) || seen.has(bigram)) continue
+    seen.add(bigram)
+    hits += 1
+  }
+  return hits
+}
+
+
+
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const length = Math.min(a.length, b.length)
+  if (length === 0) return 0
+  let dot = 0
+  let normA = 0
+  let normB = 0
+  for (let i = 0; i < length; i += 1) {
+    dot += a[i]! * b[i]!
+    normA += a[i]! * a[i]!
+    normB += b[i]! * b[i]!
+  }
+  if (normA === 0 || normB === 0) return 0
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
+}
+
+
 

@@ -1,3 +1,12 @@
+### 记忆质量 A：真实评估 + bigram + 可选向量（2026-11-12）
+
+- 新评估集 `memory-real-eval.json`：20 条生产事实原句、10 条换词重述、10 条零字面重叠；
+  脚本 `eval-memory-real.mjs` 已进 gate。
+- 基线：overlap 95%、near 80%、zero 20%。
+- 改进：召回打分加中文 bigram（near 80%→90%）；新增可选 `provider-embedding-http`，
+  装了才存向量、算余弦（单测用假向量验证零重叠链路），默认不装。
+- 结论：zero 组仍是 20%，没有真实向量服务就解决不了；缺口已量化。
+
 ### 自动化：去掉每日预算（2026-11-12）
 
 按主人要求取消「每天最多 N 条」：`dailyBudget: 0` 表示不限量（`qm-autonomy` 里 `dailyBudget > 0` 才做预算拦截）。

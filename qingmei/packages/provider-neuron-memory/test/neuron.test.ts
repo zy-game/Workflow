@@ -7,17 +7,30 @@ import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as historyPlugin from '@qingmei/qm-history'
 import * as memoryPlugin from '../src/index.ts'
+import { EmbeddingService } from '@qingmei/core'
 import { cleanEntityName, tokenize } from '../src/index.ts'
 
 const ORIGIN = { kind: 'channel' as const, id: 's_neuron' }
 
-async function setup(config: Record<string, unknown> = {}) {
+class FakeEmbedding extends EmbeddingService {
+  async embed(texts: string[]): Promise<number[][]> {
+    return texts.map((text) => {
+      if (/咖啡|饮料|苦/.test(text)) return [1, 0, 0]
+      if (/茶|叶子|泡的水/.test(text)) return [0, 1, 0]
+      if (/花生|坚果/.test(text)) return [0, 0, 1]
+      return [0.2, 0.2, 0.2]
+    })
+  }
+}
+
+async function setup(config: Record<string, unknown> = {}, embedding = false) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-neuron-'))
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'memory.db') })
   await storeFiber
   const historyFiber = ctx.plugin(historyPlugin)
   await historyFiber
+  if (embedding) new FakeEmbedding(ctx)
   const memoryFiber = ctx.plugin(memoryPlugin, { limit: 5, ticks: 4, ...config })
   await memoryFiber
   return {
@@ -351,3 +364,33 @@ test('cleanEntityName：长句、带标点、否定条目都不算实体', () =>
   assert.equal(cleanEntityName('否认养狗'), null)
   assert.equal(cleanEntityName('   '), null)
 })
+
+test('embedding：零字面重叠也能召回同义事实', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qm-neuron-emb-'))
+  const ctx = new Context()
+  const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'memory.db') })
+  await storeFiber
+  const historyFiber = ctx.plugin(historyPlugin)
+  await historyFiber
+  new FakeEmbedding(ctx)
+  const memoryFiber = ctx.plugin(memoryPlugin, { limit: 5, ticks: 4 })
+  await memoryFiber
+  try {
+    await ctx.memory.ingest([
+      { kind: 'fact', subject: '主人', predicate: '喜欢', object: '手冲咖啡', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+      { kind: 'fact', subject: '主人', predicate: '爱喝', object: '龙井茶', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+    ])
+    const dbgStore = ctx.reflect.get('store', false)
+    const dbgRows = await dbgStore.collection('qm_mem_fact').find({})
+    const recalled = await ctx.memory.recall({ text: '早上喝的那种黑色苦饮料', limit: 5 })
+    assert.ok(recalled.text.includes('手冲咖啡'), recalled.text)
+  } finally {
+    await memoryFiber.dispose()
+    await historyFiber.dispose()
+    await storeFiber.dispose()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+
+

@@ -30,6 +30,7 @@ const steps = [
   { name: 'memory:eval', args: ['scripts/eval-memory.mjs'] },
   { name: 'group-tags', args: ['scripts/eval-group-tags.mjs'] },
   { name: 'memory:time', args: ['scripts/eval-memory-time.mjs'] },
+  { name: 'memory:real', args: ['scripts/eval-memory-real.mjs'] },
   { name: 'tests', args: ['--test', '--test-concurrency=1'] },
 ]
 if (withSmoke) steps.push({ name: 'smoke', args: ['scripts/smoke.mjs'] })
@@ -48,6 +49,7 @@ for (const step of steps) {
 
 if (!withSmoke) process.stdout.write('\n[gate] smoke skipped (use --with-smoke)\n')
 process.exit(failed ? 1 : 0)
+
 
 
 

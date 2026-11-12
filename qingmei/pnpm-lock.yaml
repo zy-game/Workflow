@@ -231,6 +231,15 @@ importers:
         specifier: 4.0.0-rc.12
         version: 4.0.0-rc.12
 
+  packages/provider-embedding-http:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+
   packages/provider-llm-echo:
     dependencies:
       '@qingmei/core':
