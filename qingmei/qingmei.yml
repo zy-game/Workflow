@@ -62,7 +62,7 @@
 - name: '@qingmei/qm-autonomy'
   config:
     tickMs: 300000
-    dailyBudget: 3
+    dailyBudget: 0
     quietStart: 23
     quietEnd: 8
     # 主动模块：开场、督促、休息、故障提案、群策略（测试环境可全开）
@@ -115,6 +115,7 @@
     port: 7410
     token: 'dev-token'
     webRoot: './apps/web/dist'
+
 
 
 

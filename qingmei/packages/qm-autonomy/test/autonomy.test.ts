@@ -318,6 +318,19 @@ test('tick：预算用完就不再建议，并说明原因', async () => {
   }
 })
 
+test('tick：dailyBudget=0 表示不限量，同一天可以继续发建议', async () => {
+  const h = await setup({ dailyBudget: 0, cooldownMinutes: 0 })
+  try {
+    h.schedule.schedules = [scheduled()]
+    const first = await h.autonomy.tick('tick')
+    assert.equal(first.chosen?.id, 'schedule.upcoming')
+    const second = await h.autonomy.tick('tick')
+    assert.equal(second.chosen?.id, 'schedule.upcoming', '不限量时第二次仍可发')
+    assert.equal(second.budget.limit, 0)
+  } finally {
+    await h.dispose()
+  }
+})
 test('tick：静默时段只记录，不消耗预算', async () => {
   const h = await setup({ quietStart: 0, quietEnd: 24 })
   try {
@@ -923,6 +936,7 @@ test('A5 回滚：没有可回滚动作时返回错误，不改级别', async ()
     await h.dispose()
   }
 })
+
 
 
 

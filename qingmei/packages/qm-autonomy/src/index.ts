@@ -44,7 +44,7 @@ export interface AutonomyConfig {
   /** 是否装配同包自治子模块 */
   modules?: boolean
   mode?: AutonomyLevel
-  /** 每日主动建议上限 */
+  /** 每日主动建议上限；0 = 不限量（只受静默时段与单规则冷却约束） */
   dailyBudget?: number
   /** 静默时段（本地小时，左闭右开，可跨零点） */
   quietStart?: number
@@ -228,7 +228,7 @@ class AutonomyRunner extends AutonomyService {
     } else if (state.mode === 'A0') {
       for (const candidate of immediate) suppressed.push({ id: candidate.id, reason: 'A0 观察模式' })
       reason = 'A0 观察模式：只记录，不动作'
-    } else if (state.used >= this.config.dailyBudget) {
+    } else if (this.config.dailyBudget > 0 && state.used >= this.config.dailyBudget) {
       for (const candidate of immediate) suppressed.push({ id: candidate.id, reason: '今日预算用完' })
       reason = `今日建议已用 ${state.used}/${this.config.dailyBudget}，不再打扰`
     } else {
@@ -995,4 +995,6 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
 
