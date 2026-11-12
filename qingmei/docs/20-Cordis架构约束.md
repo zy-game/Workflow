@@ -38,11 +38,12 @@ export function apply(ctx: Context, config: XxxConfig): void {
 每条 collection 只能有一个 owner 插件：
 
 ```text
-qm_message       qm-history
-qm_session_*     qm-device / qm-thread
-qm_task_run      provider-task-sqlite
-qm_approval      provider-approval-sqlite
+qm_message       qm-history（含 thread）
+qm_task_run      qm-task（账本已并入）
+qm_approval      qm-approval
 qm_channel_target qm-approval
+qm_memory_candidate qm-distill
+qm_session_digest  qm-device
 ```
 
 其他插件不得直接 `store.collection()` 读写别人的表；需要数据就调用 owner 的服务方法。
@@ -177,11 +178,12 @@ POST /api/v1/tasks
 
 ```text
 core
-service-store / service-memory / service-llm
 service-channel / service-gateway
-service-schedule / service-approval
-service-conversation / service-task
-service-device / service-harness
+service-persona
+provider-store-sqlite / provider-neuron-memory
+provider-schedule-sqlite / provider-dsh-acp
+qm-task / qm-device / qm-approval / qm-audit / qm-identity
+qm-skill / qm-distill / qm-history
 
 provider-store-sqlite / provider-memory-sqlite
 provider-task-sqlite / provider-approval-sqlite
@@ -207,3 +209,5 @@ node scripts/check-architecture.mjs
 ```
 
 默认输出基线；`--strict` 在出现新增违规时返回非零。
+
+

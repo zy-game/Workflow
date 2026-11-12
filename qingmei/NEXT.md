@@ -1,3 +1,15 @@
+### P2 收尾：依赖、文档、性能基线、升级清单、仓库清理（2026-11-12）
+
+| 项 | 动作 | 证据 |
+| --- | --- | --- |
+| ⑪ 删 electron-updater | 从 `apps/desktop/package.json` 移除，只有 `updater.cjs` 注释还提到它作为背景 | `pnpm install` 通过；desktop 依赖变空 |
+| ⑫ 修文档漂移 | `docs/20` 的数据所有权与目标插件图改成现状；`docs/24`、`docs/27` 顶部加归档说明（FTS/向量路线未采用） | 文档里不再出现 `service-store`/`provider-approval-sqlite` 这类已删包 |
+| ⑬ 性能基线 | 新增 `scripts/bench.mjs`（`pnpm bench`）+ `docs/32` | 2 万行：下推查询 7.5 ms、全表 30 ms；日程 tick 1 万行 13 ms；2000 条事实召回 25 ms |
+| ⑭ 上游升级清单 | 新增 `docs/33`：Cordis/DSH 升级步骤、必须回归的协议面、回滚路径、禁止事项 | 含 `tokenBudget 依赖 usage` 的提醒 |
+| ⑮ 仓库清理 | 删 `apps/desktop/dist`（3.2G）、`tmp`、`updates` 暂存（310M）、根目录 68 个 `.tgz`、旧 APK/安装包、chrome profile | 根目录只剩 `.git/.github/.agents/.zcode/qingmei` + 最新 APK |
+
+> 顺带：`releases/` 不再复制 `apps/mobile`，release 从 1.1G 降到 164M；再排除 desktop 产物后约 15M（下次发布生效）。
+
 ### P1-⑩ 群画像标签准确率 + 一次满盘事故（2026-11-12）
 
 **标签评估**（`scripts/eval-group-tags.mjs` + `scripts/fixtures/group-tags-eval.json`，已进 gate）：

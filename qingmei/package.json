@@ -31,7 +31,8 @@
     "memory:live": "node scripts/eval-memory-live.mjs",
     "memory:browser": "node scripts/browser-test-memories.mjs",
     "desktop:installer": "node scripts/build-desktop-installer.mjs",
-    "deploy": "node scripts/deploy.mjs"
+    "deploy": "node scripts/deploy.mjs",
+    "bench": "node scripts/bench.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
