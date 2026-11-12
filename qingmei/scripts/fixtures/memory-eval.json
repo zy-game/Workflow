@@ -1,18 +1,597 @@
 {
+  "note": "记忆召回回归集：词面相似查询 + 近义干扰项。改记忆代码后跑 `node scripts/eval-memory.mjs`，recall@3 不得低于 80%。只用于回归，不代表真实用户分布。",
   "facts": [
-    { "subject": "主人", "predicate": "喜欢", "object": "手冲咖啡" },
-    { "subject": "主人", "predicate": "下周三要去", "object": "杭州出差" },
-    { "subject": "青梅项目", "predicate": "使用", "object": "pnpm 管理依赖" },
-    { "subject": "主人", "predicate": "养", "object": "一只橘猫" },
-    { "subject": "主人", "predicate": "使用", "object": "DeepSeek Harness 作为执行器" },
-    { "subject": "青梅", "predicate": "运行在", "object": "139.155.78.241" }
+    {
+      "subject": "主人",
+      "predicate": "喜欢喝",
+      "object": "手冲咖啡",
+      "topic": "饮品"
+    },
+    {
+      "subject": "主人",
+      "predicate": "不喜欢喝",
+      "object": "美式咖啡",
+      "topic": "饮品"
+    },
+    {
+      "subject": "主人",
+      "predicate": "家里有一台",
+      "object": "德龙咖啡机",
+      "topic": "饮品"
+    },
+    {
+      "subject": "主人",
+      "predicate": "常买",
+      "object": "埃塞俄比亚咖啡豆",
+      "topic": "饮品"
+    },
+    {
+      "subject": "李四",
+      "predicate": "喜欢喝",
+      "object": "拿铁",
+      "topic": "饮品"
+    },
+    {
+      "subject": "主人",
+      "predicate": "喜欢喝",
+      "object": "龙井茶",
+      "topic": "饮品"
+    },
+    {
+      "subject": "主人",
+      "predicate": "不喝",
+      "object": "奶茶",
+      "topic": "饮品"
+    },
+    {
+      "subject": "主人",
+      "predicate": "下午不喝",
+      "object": "含咖啡因的饮料",
+      "topic": "饮品"
+    },
+    {
+      "subject": "主人",
+      "predicate": "养了",
+      "object": "一只橘猫",
+      "topic": "宠物"
+    },
+    {
+      "subject": "主人",
+      "predicate": "给猫买",
+      "object": "渴望猫粮",
+      "topic": "宠物"
+    },
+    {
+      "subject": "邻居",
+      "predicate": "养了",
+      "object": "一只蓝猫",
+      "topic": "宠物"
+    },
+    {
+      "subject": "橘猫",
+      "predicate": "下次疫苗",
+      "object": "下个月十号",
+      "topic": "宠物"
+    },
+    {
+      "subject": "橘猫",
+      "predicate": "绝育",
+      "object": "去年做的",
+      "topic": "宠物"
+    },
+    {
+      "subject": "青梅",
+      "predicate": "执行器",
+      "object": "DeepSeek Harness",
+      "topic": "项目"
+    },
+    {
+      "subject": "青梅",
+      "predicate": "数据库",
+      "object": "SQLite 单文件",
+      "topic": "项目"
+    },
+    {
+      "subject": "青梅",
+      "predicate": "依赖管理",
+      "object": "pnpm",
+      "topic": "项目"
+    },
+    {
+      "subject": "青梅",
+      "predicate": "发布节奏",
+      "object": "每两周一次",
+      "topic": "项目"
+    },
+    {
+      "subject": "青梅",
+      "predicate": "代码托管",
+      "object": "GitHub 私有仓库",
+      "topic": "项目"
+    },
+    {
+      "subject": "青梅",
+      "predicate": "部署在",
+      "object": "腾讯云",
+      "topic": "项目"
+    },
+    {
+      "subject": "青梅",
+      "predicate": "监听端口",
+      "object": "7410",
+      "topic": "项目"
+    },
+    {
+      "subject": "李四",
+      "predicate": "负责",
+      "object": "后端接口",
+      "topic": "项目"
+    },
+    {
+      "subject": "王五",
+      "predicate": "负责",
+      "object": "前端页面",
+      "topic": "项目"
+    },
+    {
+      "subject": "主人",
+      "predicate": "下周三",
+      "object": "去杭州出差",
+      "topic": "日程"
+    },
+    {
+      "subject": "主人",
+      "predicate": "春节",
+      "object": "去成都旅行",
+      "topic": "日程"
+    },
+    {
+      "subject": "主人",
+      "predicate": "周会",
+      "object": "周一上午十点",
+      "topic": "日程"
+    },
+    {
+      "subject": "主人",
+      "predicate": "深度工作",
+      "object": "上午九点到十一点",
+      "topic": "日程"
+    },
+    {
+      "subject": "主人",
+      "predicate": "作息",
+      "object": "二十三点半睡觉",
+      "topic": "日程"
+    },
+    {
+      "subject": "主人",
+      "predicate": "健身房",
+      "object": "公司楼下",
+      "topic": "日程"
+    },
+    {
+      "subject": "主人",
+      "predicate": "房租缴纳日",
+      "object": "每月十五号",
+      "topic": "财务"
+    },
+    {
+      "subject": "主人",
+      "predicate": "合伙人",
+      "object": "李四",
+      "topic": "人物"
+    },
+    {
+      "subject": "主人",
+      "predicate": "母亲生日",
+      "object": "五月十二",
+      "topic": "人物"
+    },
+    {
+      "subject": "主人",
+      "predicate": "牙医",
+      "object": "王医生",
+      "topic": "人物"
+    },
+    {
+      "subject": "主人",
+      "predicate": "孩子就读",
+      "object": "实验二小",
+      "topic": "人物"
+    },
+    {
+      "subject": "李四",
+      "predicate": "生日",
+      "object": "八月三号",
+      "topic": "人物"
+    },
+    {
+      "subject": "王五",
+      "predicate": "生日",
+      "object": "十一月二十",
+      "topic": "人物"
+    },
+    {
+      "subject": "主人",
+      "predicate": "家乡",
+      "object": "宁波",
+      "topic": "人物"
+    },
+    {
+      "subject": "主人",
+      "predicate": "大学",
+      "object": "浙江大学",
+      "topic": "人物"
+    },
+    {
+      "subject": "主人",
+      "predicate": "第一份工作",
+      "object": "一家游戏公司",
+      "topic": "人物"
+    },
+    {
+      "subject": "主人",
+      "predicate": "过敏",
+      "object": "花生",
+      "topic": "健康"
+    },
+    {
+      "subject": "主人",
+      "predicate": "常备药",
+      "object": "氯雷他定",
+      "topic": "健康"
+    },
+    {
+      "subject": "主人",
+      "predicate": "跑步",
+      "object": "每周三次",
+      "topic": "健康"
+    },
+    {
+      "subject": "主人",
+      "predicate": "体重",
+      "object": "六十八公斤",
+      "topic": "健康"
+    },
+    {
+      "subject": "主人",
+      "predicate": "身高",
+      "object": "一米七八",
+      "topic": "健康"
+    },
+    {
+      "subject": "主人",
+      "predicate": "每月预算",
+      "object": "三千元",
+      "topic": "财务"
+    },
+    {
+      "subject": "主人",
+      "predicate": "订阅",
+      "object": "优酷会员",
+      "topic": "财务"
+    },
+    {
+      "subject": "主人",
+      "predicate": "笔记本",
+      "object": "ThinkPad X1",
+      "topic": "设备"
+    },
+    {
+      "subject": "主人",
+      "predicate": "手机",
+      "object": "iPhone 15",
+      "topic": "设备"
+    },
+    {
+      "subject": "主人",
+      "predicate": "显示器",
+      "object": "戴尔 27 寸",
+      "topic": "设备"
+    },
+    {
+      "subject": "主人",
+      "predicate": "键盘",
+      "object": "静电容键盘",
+      "topic": "设备"
+    },
+    {
+      "subject": "主人",
+      "predicate": "耳机",
+      "object": "Sony 降噪耳机",
+      "topic": "设备"
+    },
+    {
+      "subject": "主人",
+      "predicate": "编辑器",
+      "object": "VS Code",
+      "topic": "设备"
+    },
+    {
+      "subject": "主人",
+      "predicate": "常用语言",
+      "object": "TypeScript",
+      "topic": "设备"
+    },
+    {
+      "subject": "主人",
+      "predicate": "车牌",
+      "object": "浙A",
+      "topic": "生活"
+    },
+    {
+      "subject": "主人",
+      "predicate": "常用快递柜",
+      "object": "丰巢",
+      "topic": "生活"
+    },
+    {
+      "subject": "主人",
+      "predicate": "看电影偏好",
+      "object": "科幻电影",
+      "topic": "生活"
+    },
+    {
+      "subject": "主人",
+      "predicate": "最近在读",
+      "object": "三体",
+      "topic": "生活"
+    },
+    {
+      "subject": "主人",
+      "predicate": "周末",
+      "object": "去爬山",
+      "topic": "生活"
+    },
+    {
+      "subject": "主人",
+      "predicate": "在学",
+      "object": "日语",
+      "topic": "生活"
+    },
+    {
+      "subject": "主人",
+      "predicate": "英语水平",
+      "object": "能读英文文档",
+      "topic": "生活"
+    }
   ],
   "queries": [
-    { "text": "手冲咖啡", "expect": "手冲咖啡" },
-    { "text": "杭州出差", "expect": "杭州出差" },
-    { "text": "pnpm 依赖", "expect": "pnpm" },
-    { "text": "橘猫", "expect": "橘猫" },
-    { "text": "DeepSeek Harness 执行器", "expect": "DeepSeek Harness" },
-    { "text": "139.155.78.241", "expect": "139.155.78.241" }
+    {
+      "text": "我平时喝什么咖啡",
+      "expect": "手冲咖啡"
+    },
+    {
+      "text": "美式咖啡我喝不喝",
+      "expect": "美式咖啡"
+    },
+    {
+      "text": "家里的咖啡机是什么牌子",
+      "expect": "德龙"
+    },
+    {
+      "text": "咖啡豆一般买哪里的",
+      "expect": "埃塞俄比亚"
+    },
+    {
+      "text": "李四喜欢喝什么",
+      "expect": "拿铁"
+    },
+    {
+      "text": "我喜欢喝什么茶",
+      "expect": "龙井"
+    },
+    {
+      "text": "我喝奶茶吗",
+      "expect": "奶茶"
+    },
+    {
+      "text": "下午还能喝咖啡吗",
+      "expect": "含咖啡因"
+    },
+    {
+      "text": "我养了只什么猫",
+      "expect": "橘猫"
+    },
+    {
+      "text": "猫粮买什么牌子",
+      "expect": "渴望"
+    },
+    {
+      "text": "邻居家养的什么猫",
+      "expect": "蓝猫"
+    },
+    {
+      "text": "橘猫下次疫苗什么时候",
+      "expect": "下个月十号"
+    },
+    {
+      "text": "橘猫绝育了吗",
+      "expect": "去年"
+    },
+    {
+      "text": "青梅的执行器是什么",
+      "expect": "DeepSeek Harness"
+    },
+    {
+      "text": "青梅用什么数据库",
+      "expect": "SQLite"
+    },
+    {
+      "text": "依赖用什么管理",
+      "expect": "pnpm"
+    },
+    {
+      "text": "多久发一次版",
+      "expect": "每两周"
+    },
+    {
+      "text": "代码托管在哪里",
+      "expect": "GitHub"
+    },
+    {
+      "text": "青梅部署在哪台云",
+      "expect": "腾讯云"
+    },
+    {
+      "text": "青梅监听哪个端口",
+      "expect": "7410"
+    },
+    {
+      "text": "后端接口谁负责",
+      "expect": "后端接口"
+    },
+    {
+      "text": "前端页面谁负责",
+      "expect": "前端页面"
+    },
+    {
+      "text": "下周三去哪出差",
+      "expect": "杭州"
+    },
+    {
+      "text": "春节去哪里旅行",
+      "expect": "成都"
+    },
+    {
+      "text": "周会安排在什么时候",
+      "expect": "周一上午十点"
+    },
+    {
+      "text": "深度工作安排在几点",
+      "expect": "九点到十一点"
+    },
+    {
+      "text": "我一般几点睡觉",
+      "expect": "二十三点半"
+    },
+    {
+      "text": "常去的健身房在哪",
+      "expect": "公司楼下"
+    },
+    {
+      "text": "房租每月几号交",
+      "expect": "十五号"
+    },
+    {
+      "text": "我的合伙人是谁",
+      "expect": "李四"
+    },
+    {
+      "text": "我妈生日是哪天",
+      "expect": "五月十二"
+    },
+    {
+      "text": "我的牙医是谁",
+      "expect": "王医生"
+    },
+    {
+      "text": "孩子读哪所小学",
+      "expect": "实验二小"
+    },
+    {
+      "text": "李四生日是几号",
+      "expect": "八月三号"
+    },
+    {
+      "text": "王五生日是什么时候",
+      "expect": "十一月二十"
+    },
+    {
+      "text": "我老家是哪里的",
+      "expect": "宁波"
+    },
+    {
+      "text": "我大学读的哪所",
+      "expect": "浙江大学"
+    },
+    {
+      "text": "我第一份工作在哪",
+      "expect": "游戏公司"
+    },
+    {
+      "text": "我对什么东西过敏",
+      "expect": "花生"
+    },
+    {
+      "text": "家里常备什么药",
+      "expect": "氯雷他定"
+    },
+    {
+      "text": "我多久跑一次步",
+      "expect": "每周三次"
+    },
+    {
+      "text": "我现在体重多少",
+      "expect": "六十八"
+    },
+    {
+      "text": "我身高多少",
+      "expect": "一米七八"
+    },
+    {
+      "text": "每月预算多少",
+      "expect": "三千"
+    },
+    {
+      "text": "我订阅了什么会员",
+      "expect": "优酷"
+    },
+    {
+      "text": "我的笔记本是什么型号",
+      "expect": "ThinkPad"
+    },
+    {
+      "text": "我的手机是哪一款",
+      "expect": "iPhone"
+    },
+    {
+      "text": "显示器多大尺寸",
+      "expect": "戴尔"
+    },
+    {
+      "text": "用的什么键盘",
+      "expect": "静电容"
+    },
+    {
+      "text": "耳机是什么牌子",
+      "expect": "Sony"
+    },
+    {
+      "text": "我用什么编辑器写代码",
+      "expect": "VS Code"
+    },
+    {
+      "text": "主要写什么语言",
+      "expect": "TypeScript"
+    },
+    {
+      "text": "车牌号是多少",
+      "expect": "浙A"
+    },
+    {
+      "text": "常用哪个快递柜",
+      "expect": "丰巢"
+    },
+    {
+      "text": "我喜欢看什么电影",
+      "expect": "科幻"
+    },
+    {
+      "text": "最近在读什么书",
+      "expect": "三体"
+    },
+    {
+      "text": "周末一般做什么",
+      "expect": "爬山"
+    },
+    {
+      "text": "我在学什么外语",
+      "expect": "日语"
+    },
+    {
+      "text": "我的英语水平怎么样",
+      "expect": "英文文档"
+    }
   ]
 }
