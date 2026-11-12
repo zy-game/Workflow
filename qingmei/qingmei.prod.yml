@@ -113,6 +113,7 @@
     maxSelfTasksPerDay: 3
     maxDepth: 1
     cooldownMinutes: 30
+    taskCooldownMinutes: 5
     notifyChannel: web
     notifyConversation: owner
 
@@ -152,6 +153,7 @@
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
+
 
 
 

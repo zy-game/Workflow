@@ -29,8 +29,10 @@ export interface PlannerConfig {
   maxSelfTasksPerDay?: number
   /** 自建任务链深度上限（1 = 自建任务完成后只允许提醒/申请） */
   maxDepth?: number
-  /** 两次自动 replan 的最小间隔（分钟） */
+  /** 定时/其他触发的 replan 最小间隔（分钟） */
   cooldownMinutes?: number
+  /** 任务结束触发的 replan 间隔（分钟）：任务刚失败/完成时应该立刻能规划 */
+  taskCooldownMinutes?: number
   /** 注入上下文的最近任务条数 */
   historyLimit?: number
   /** 注入上下文的目标条数 */
@@ -53,6 +55,7 @@ const DEFAULTS = {
   maxSelfTasksPerDay: 3,
   maxDepth: 1,
   cooldownMinutes: 30,
+  taskCooldownMinutes: 5,
   historyLimit: 10,
   goalLimit: 10,
   notifyChannel: 'web' as ChannelId,
@@ -249,7 +252,8 @@ class PlannerService extends Service {
       const last = ((await this.deps.runs.find({})) as PlannerRunRow[])
         .filter((row) => row.trigger !== 'manual')
         .sort((a, b) => b.at - a.at)[0]
-      if (last && now - last.at < this.config.cooldownMinutes * 60_000) return 'cooldown'
+      const cooldown = trigger === 'task-finished' ? this.config.taskCooldownMinutes : this.config.cooldownMinutes
+      if (last && now - last.at < cooldown * 60_000) return 'cooldown'
     }
 
     const today = new Date(now).toDateString()
@@ -620,6 +624,7 @@ export function apply(ctx: Context, config: PlannerConfig = {}): void {
     }),
   )
 }
+
 
 
 

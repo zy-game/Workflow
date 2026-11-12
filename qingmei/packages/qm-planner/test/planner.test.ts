@@ -131,6 +131,7 @@ async function boot(overrides: Record<string, unknown> = {}) {
   const plannerFiber = ctx.plugin(plannerPlugin, {
     enabled: true,
     cooldownMinutes: 0,
+    taskCooldownMinutes: 0,
     maxSelfTasksPerDay: 3,
     maxDepth: 1,
     ...overrides,
@@ -266,6 +267,19 @@ test('研究申请：先走审批，批准后才建任务', async () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.equal(h.task.created.length, 1)
     assert.match(String(h.task.created[0].title), /资料研究/)
+  } finally {
+    await h.dispose()
+  }
+})
+
+
+test('task-finished 用短冷却：定时冷却 60 分钟不挡任务完成触发的规划', async () => {
+  const h = await boot({ cooldownMinutes: 60, taskCooldownMinutes: 0 })
+  try {
+    h.harness.reply = JSON.stringify({ nextTask: null, reminder: null, research: null, skip: '无事' })
+    assert.equal(await h.planner.replan(makeRun('run_a'), { trigger: 'task-finished' }), 'skip')
+    assert.equal(await h.planner.replan(makeRun('run_b'), { trigger: 'task-finished' }), 'skip')
+    assert.ok(h.harness.prompts.length >= 2, '任务完成触发的第二次规划不应被 60 分钟冷却挡住')
   } finally {
     await h.dispose()
   }
