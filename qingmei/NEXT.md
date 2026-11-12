@@ -1,3 +1,13 @@
+### 记忆 P2：关系图（2026-11-12）
+
+| 项 | 实现 | 证据 |
+| --- | --- | --- |
+| 实体/边 | `qm_entity`（人/项目/地点/组织/主题）+ `qm_edge`（predicate、kind、weight、first/last_seen、valid_to） | `neuron.test.ts`：事实落边、两跳可达、时间窗过滤、召回带【相关】 |
+| 增量构建 | 事实入库建 `fact` 边；episode 里已知实体两两建 `cooccur` 边 | 生产 ingest 后自动落图 |
+| 实体过滤 | object >16 字、带标点/括号、否定/「情况/的事」结尾不建实体 | 回填后从 297/170 降到 **164 实体 / 34 边** |
+| 查询 | `GET /api/v1/memory/graph?name=主人&depth=2`，返回 entities/edges/text | 生产 200，返回主人 → 杭州出差/狗等 |
+| 召回注入 | top 3 事实各查 1 跳邻居，追加【相关】块（≤6 行） | 单测断言 recalled.text 含「【相关】」 |
+
 ### 记忆 P1：分层退化 + 时间评估（2026-11-12）
 
 | 项 | 实现 | 证据 |

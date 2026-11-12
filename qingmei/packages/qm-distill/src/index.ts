@@ -288,6 +288,23 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
       })
   })
 
+  // 关系图查询：GET /api/v1/memory/graph?name=主人&depth=2
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/memory/graph',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const name = String(req.query.name ?? '').trim()
+        if (!name) {
+          res.status(400).send({ ok: false, error: 'name 必填' })
+          return
+        }
+        const depth = Math.min(2, Math.max(1, Number(req.query.depth) || 1))
+        const result = await memory.neighbors(name, { depth })
+        res.status(200).send({ ok: true, ...result })
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'GET',
@@ -418,6 +435,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
 export const defaultExport = { name, inject, apply }
 export type { FactCandidate }
 export { extractCandidates }
+
 
 
 

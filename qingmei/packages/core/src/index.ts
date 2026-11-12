@@ -645,6 +645,39 @@ export interface RecallQuery {
   until?: Date
 }
 
+/** 关系图：实体（人/项目/地点/主题） */
+export interface MemoryEntity {
+  /** 规范化名字，同时作为 id */
+  name: string
+  kind: 'person' | 'project' | 'place' | 'topic' | 'org'
+  aliases: string[]
+  createdAt: Date
+}
+
+/** 关系图：一条有向边 */
+export interface MemoryEdge {
+  from: string
+  to: string
+  predicate: string
+  kind: 'fact' | 'cooccur'
+  weight: number
+  firstSeen: Date
+  lastSeen: Date
+}
+
+export interface NeighborQuery {
+  depth?: number
+  since?: Date
+  until?: Date
+  limit?: number
+}
+
+export interface NeighborResult {
+  entity: MemoryEntity | null
+  entities: MemoryEntity[]
+  edges: MemoryEdge[]
+  text: string
+}
 export interface RecallResult {
   facts: RecalledFact[]
   /** 已格式化、可直接拼进 prompt 的文本；无命中时为空串 */
@@ -753,6 +786,11 @@ export abstract class MemoryService extends Service {
     _patch: Partial<Pick<MemoryRecord, 'object' | 'confidence' | 'salience'>>,
   ): Promise<boolean> {
     return false
+  }
+
+  /** 关系图查询：返回实体与 1–2 跳邻居；默认不支持，provider 可覆盖 */
+  async neighbors(_name: string, _query?: NeighborQuery): Promise<NeighborResult> {
+    return { entity: null, entities: [], edges: [], text: '' }
   }
 
   /** 情节巩固：按会话/日聚类并合并摘要；默认不做，provider 可覆盖 */
@@ -1422,6 +1460,7 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 
 
 

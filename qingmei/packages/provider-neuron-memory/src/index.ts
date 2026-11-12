@@ -30,6 +30,10 @@ import {
   type ConceptEvaluation,
   type ConceptChangeSummary,
   type EpisodeConsolidationReport,
+  type MemoryEntity,
+  type MemoryEdge,
+  type NeighborQuery,
+  type NeighborResult,
 } from '@qingmei/core'
 
 export interface NeuronMemoryConfig {
@@ -68,6 +72,8 @@ const EPISODE = 'qm_episode'
 const BINDING = 'qm_neuron_binding'
 const FACT = 'qm_mem_fact'
 const CHANGE = 'qm_neuron_change'
+const ENTITY = 'qm_entity'
+const EDGE = 'qm_edge'
 const DEFAULT_CONSOLIDATE_MS = 6 * 60 * 60_000
 
 interface NeuronRow extends Row {
@@ -105,6 +111,27 @@ interface EpisodeRow extends Row {
   provenance?: string
 }
 
+interface EntityRow extends Row {
+  name: string
+  kind: MemoryEntity['kind']
+  aliases_json: string
+  created_at: number
+  valid_to: number | null
+}
+
+interface EdgeRow extends Row {
+  from_name: string
+  to_name: string
+  predicate: string
+  kind: MemoryEdge['kind']
+  weight: number
+  first_seen: number
+  last_seen: number
+  valid_from: number
+  valid_to: number | null
+  source_kind: string
+  source_id: string
+}
 interface BindingRow extends Row {
   owner_id: string
   owner_kind: 'fact' | 'episode'
@@ -183,6 +210,8 @@ export class NeuronMemory extends MemoryService {
   private readonly bindings
   private readonly facts
   private readonly changes
+  private readonly entities
+  private readonly edges
   private history: HistoryService | undefined
   private readonly limit: number
   private readonly minConfidence: number
@@ -211,6 +240,8 @@ export class NeuronMemory extends MemoryService {
     this.bindings = store.collection<BindingRow>(BINDING)
     this.facts = store.collection<FactRow>(FACT)
     this.changes = store.collection<ChangeRow>(CHANGE)
+    this.entities = store.collection<EntityRow>(ENTITY)
+    this.edges = store.collection<EdgeRow>(EDGE)
     ctx.inject(['history'], (sub) => { this.history = sub.history })
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
@@ -382,6 +413,7 @@ export class NeuronMemory extends MemoryService {
           valid_to: null,
         })
         await this.bind(row.id, 'fact', `${row.subject} ${row.predicate} ${row.object}`)
+        await this.buildFactRelations(row)
         created.push(row.id)
         continue
       }
@@ -399,6 +431,7 @@ export class NeuronMemory extends MemoryService {
         valid_to: null,
       })
       await this.bind(row.id, 'episode', row.text)
+      await this.buildEpisodeRelations(row)
       created.push(row.id)
     }
     return { created, merged }
@@ -498,9 +531,32 @@ export class NeuronMemory extends MemoryService {
       if (!row) continue
       recalled.push(hit.kind === 'fact' ? toFact(row as FactRow) : toEpisode(row as EpisodeRow))
     }
-    return { facts: recalled, text: recalled.map(formatFact).join('\n') }
+    return { facts: recalled, text: await this.relationsText(recalled) }
   }
 
+  /** 召回结果后面补 1 跳关联：让「与我相关」不只靠三元组命中 */
+  private async relationsText(facts: RecalledFact[]): Promise<string> {
+    const base = facts.map(formatFact).join('\n')
+    const names = new Set<string>()
+    for (const fact of facts.slice(0, 3)) {
+      if (fact.subject) names.add(fact.subject)
+      if (fact.object) names.add(fact.object)
+    }
+    const lines: string[] = []
+    for (const name of names) {
+      if (lines.length >= 6) break
+      try {
+        const result = await this.neighbors(name, { depth: 1, limit: 4 })
+        for (const line of result.text.split('\n')) {
+          if (line && lines.length < 6 && !lines.includes(line)) lines.push(line)
+        }
+      } catch {
+        // 关系图是增强项，失败不能影响召回
+      }
+    }
+    if (lines.length === 0) return base
+    return [base, '【相关】', ...lines].filter(Boolean).join('\n')
+  }
   private async spread(seeds: string[]): Promise<Map<string, number>> {
     const activation = new Map<string, number>()
     for (const id of seeds) activation.set(id, 1)
@@ -728,6 +784,158 @@ export class NeuronMemory extends MemoryService {
     return { at: now, scanned: rows.length, groups: created, merged }
   }
 
+  // ────────────────────────────────────────────── 关系图
+
+  /** 实体名规范化：去引号/空白，限制长度；空名返回 null */
+  private cleanName(name: string): string | null {
+    const value = String(name ?? '').trim().replace(/^["'“”]+|["'“”]+$/g, '').slice(0, 60)
+    return value ? value : null
+  }
+
+  private kindOfEntity(name: string, predicate = ''): MemoryEntity['kind'] {
+    if (name === '主人' || name === '我') return 'person'
+    if (/项目|产品/.test(predicate) || /项目$/.test(name)) return 'project'
+    if (/市|省|区|县|杭州|北京|上海|成都|日本|东京/.test(name)) return 'place'
+    if (/公司|团队|部门/.test(name)) return 'org'
+    return 'topic'
+  }
+
+  private async ensureEntity(name: string, kind: MemoryEntity['kind']): Promise<EntityRow | null> {
+    const clean = this.cleanName(name)
+    if (!clean) return null
+    const existing = await this.entities.get(clean)
+    if (existing && !existing.valid_to) return existing
+    if (existing) {
+      await this.entities.update(existing.id, { valid_to: null, kind })
+      return { ...existing, valid_to: null, kind }
+    }
+    return this.entities.insert({ id: clean, name: clean, kind, aliases_json: '[]', created_at: Date.now(), valid_to: null })
+  }
+
+  private async addEdge(
+    from: string,
+    to: string,
+    predicate: string,
+    kind: MemoryEdge['kind'],
+    weight: number,
+    at: number,
+    sourceKind: string,
+    sourceId: string,
+  ): Promise<void> {
+    if (from === to) return
+    const existing = await this.edges.find({ where: { from_name: from, to_name: to, predicate, valid_to: null } })
+    if (existing.length > 0) {
+      const edge = existing[0]!
+      await this.edges.update(edge.id, {
+        weight: Math.max(edge.weight, weight),
+        last_seen: Math.max(edge.last_seen, at),
+      })
+      return
+    }
+    await this.edges.insert({
+      from_name: from,
+      to_name: to,
+      predicate,
+      kind,
+      weight,
+      first_seen: at,
+      last_seen: at,
+      valid_from: at,
+      valid_to: null,
+      source_kind: sourceKind,
+      source_id: sourceId,
+    })
+  }
+
+  /** 事实三元组直接变成一条边：主人 —喜欢→ 手冲咖啡 */
+  private async buildFactRelations(row: FactRow): Promise<void> {
+    const subject = await this.ensureEntity(row.subject, this.kindOfEntity(row.subject, row.predicate))
+    const objectName = cleanEntityName(row.object)
+    if (!subject || !objectName) return
+    const object = await this.ensureEntity(objectName, this.kindOfEntity(objectName, row.predicate))
+    if (!object) return
+    await this.addEdge(subject.name, object.name, row.predicate, 'fact', row.confidence, row.created_at, 'fact', row.id)
+  }
+
+  /** episode 里出现已知实体的，两两连一条共现边（弱权重，只用来扩展关联） */
+  private async buildEpisodeRelations(row: EpisodeRow): Promise<void> {
+    const all = (await this.entities.find({})).filter((entity) => !entity.valid_to)
+    const text = flattenForMatch(row.text)
+    const matched = all
+      .filter((entity) => text.includes(flattenForMatch(entity.name)))
+      .slice(0, 8)
+    for (let i = 0; i < matched.length; i += 1) {
+      for (let j = i + 1; j < matched.length; j += 1) {
+        await this.addEdge(matched[i]!.name, matched[j]!.name, '共现', 'cooccur', 0.2, row.created_at, 'episode', row.id)
+      }
+    }
+  }
+
+  async neighbors(name: string, query: NeighborQuery = {}): Promise<NeighborResult> {
+    await this.ready
+    const clean = this.cleanName(name)
+    const depth = Math.min(2, Math.max(1, query.depth ?? 1))
+    const limit = Math.min(50, Math.max(1, query.limit ?? 20))
+    const since = query.since?.getTime() ?? 0
+    const until = query.until?.getTime() ?? Number.MAX_SAFE_INTEGER
+    if (!clean) return { entity: null, entities: [], edges: [], text: '' }
+    const start = await this.entities.get(clean)
+    if (!start || start.valid_to) return { entity: null, entities: [], edges: [], text: '' }
+
+    const visited = new Set<string>([start.id])
+    const collected: EdgeRow[] = []
+    let frontier: string[] = [start.id]
+    for (let level = 0; level < depth; level += 1) {
+      const next: string[] = []
+      for (const current of frontier) {
+        const outgoing = await this.edges.find({ where: { from_name: current } })
+        const incoming = await this.edges.find({ where: { to_name: current } })
+        for (const edge of [...outgoing, ...incoming]) {
+          if (edge.valid_to) continue
+          if (edge.last_seen < since || edge.last_seen > until) continue
+          collected.push(edge)
+          for (const endpoint of [edge.from_name, edge.to_name]) {
+            if (!visited.has(endpoint)) {
+              visited.add(endpoint)
+              next.push(endpoint)
+            }
+          }
+        }
+      }
+      frontier = next
+      if (collected.length >= limit || frontier.length === 0) break
+    }
+
+    const entityRows: EntityRow[] = []
+    for (const id of visited) {
+      const row = await this.entities.get(id)
+      if (row && !row.valid_to) entityRows.push(row)
+    }
+    const edges = dedupeEdges(collected).slice(0, limit)
+    const lines = edges.map((edge) => `${edge.from_name} —${edge.predicate}→ ${edge.to_name}`)
+    return {
+      entity: toEntity(start),
+      entities: entityRows.map(toEntity),
+      edges: edges.map(toEdge),
+      text: lines.join('\n'),
+    }
+  }
+
+  /** 从现有事实与 episode 重建关系图（迁移/回填用，幂等） */
+  async rebuildGraph(options: { reset?: boolean } = {}): Promise<{ entities: number; edges: number }> {
+    await this.ready
+    if (options.reset) {
+      for (const row of await this.entities.find({})) await this.entities.delete(row.id)
+      for (const row of await this.edges.find({})) await this.edges.delete(row.id)
+    }
+    for (const row of (await this.facts.find({})).filter((item) => !item.valid_to)) {
+      await this.buildFactRelations(row)
+    }
+    for (const row of (await this.episodes.find({})).filter((item) => !item.valid_to)) {
+      await this.buildEpisodeRelations(row)
+    }
+    return { entities: (await this.entities.find({})).length, edges: (await this.edges.find({})).length }
+  }
   async consolidate() {
     await this.ready
     const beforeConsolidate = await this.snapshotGraph()
@@ -1243,3 +1451,50 @@ export function buildEpisodeSummary(tier: 'day' | 'week' | 'month', key: string,
     .slice(0, 6)
   return `【${label}】${texts.length} 段对话：${excerpts.join(' / ')}`.slice(0, 800)
 }
+
+
+
+
+function dedupeEdges(rows: EdgeRow[]): EdgeRow[] {
+  const seen = new Set<string>()
+  const out: EdgeRow[] = []
+  for (const row of rows) {
+    const key = `${row.from_name}|${row.to_name}|${row.predicate}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(row)
+  }
+  return out
+}
+
+function toEntity(row: EntityRow): MemoryEntity {
+  return { name: row.name, kind: row.kind, aliases: [], createdAt: new Date(row.created_at) }
+}
+
+function toEdge(row: EdgeRow): MemoryEdge {
+  return {
+    from: row.from_name,
+    to: row.to_name,
+    predicate: row.predicate,
+    kind: row.kind,
+    weight: row.weight,
+    firstSeen: new Date(row.first_seen),
+    lastSeen: new Date(row.last_seen),
+  }
+}
+
+
+
+
+
+/** 只把「像实体」的 object 落图：长句、带标点、否定/存疑条目都不是实体 */
+export function cleanEntityName(raw: string): string | null {
+  const value = String(raw ?? '').trim().replace(/^["'“”]+|["'“”]+$/g, '')
+  if (!value) return null
+  if (value.length > 16) return null
+  if (/[，。：；！？、（）()【】「」<>\n\r]/.test(value)) return null
+  if (/^(不实|否认|不成立|未确认|不确定)/.test(value)) return null
+  if (/(情况|的事|问题|内容|的时候)$/.test(value)) return null
+  return value
+}
+

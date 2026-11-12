@@ -7,7 +7,7 @@ import { Context } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as historyPlugin from '@qingmei/qm-history'
 import * as memoryPlugin from '../src/index.ts'
-import { tokenize } from '../src/index.ts'
+import { cleanEntityName, tokenize } from '../src/index.ts'
 
 const ORIGIN = { kind: 'channel' as const, id: 's_neuron' }
 
@@ -314,4 +314,40 @@ test('consolidateEpisodes：按天/周/月压缩，保护高 salience 与决定�
   } finally {
     await dispose()
   }
+})
+
+test('关系图：事实落边、两跳邻居、时间窗过滤，召回带「相关」', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    const old = new Date(Date.now() - 90 * 86_400_000)
+    await ctx.memory.ingest([
+      { kind: 'fact', subject: '主人', predicate: '喜欢', object: '手冲咖啡', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+      { kind: 'fact', subject: '手冲咖啡', predicate: '产地', object: '云南', confidence: 0.8, sensitivity: 'public', origin: ORIGIN },
+      { kind: 'fact', subject: '主人', predicate: '住在', object: '杭州', confidence: 0.9, sensitivity: 'private', origin: ORIGIN, occurredAt: old },
+    ])
+
+    const one = await ctx.memory.neighbors('主人', { depth: 1 })
+    assert.ok(one.text.includes('主人 —喜欢→ 手冲咖啡'), one.text)
+    assert.ok(!one.text.includes('云南'), '一跳不该出现两跳的边')
+
+    const two = await ctx.memory.neighbors('主人', { depth: 2, limit: 20 })
+    assert.ok(two.text.includes('云南'), two.text)
+
+    const recent = await ctx.memory.neighbors('主人', { depth: 2, since: new Date(Date.now() - 30 * 86_400_000) })
+    assert.ok(!recent.text.includes('杭州'), '90 天前的边不该出现在最近 30 天')
+
+    const recalled = await ctx.memory.recall({ text: '咖啡' })
+    assert.match(recalled.text, /【相关】/)
+    assert.match(recalled.text, /手冲咖啡/)
+  } finally {
+    await dispose()
+  }
+})
+
+test('cleanEntityName：长句、带标点、否定条目都不算实体', () => {
+  assert.equal(cleanEntityName('手冲咖啡'), '手冲咖啡')
+  assert.equal(cleanEntityName('不实：主人于 2026-11-06 明确否认，主人不养狗'), null)
+  assert.equal(cleanEntityName('一个很长很长而且带标点，完全不像实体的句子'), null)
+  assert.equal(cleanEntityName('否认养狗'), null)
+  assert.equal(cleanEntityName('   '), null)
 })
