@@ -1,3 +1,10 @@
+### 修复：派发任务跑错工作区（2026-11-13）
+
+- `dsh-companion` 之前只读 `task.cwd`（服务端给的是 `task.target.cwd`），找不到时回退到 `workspacePath`（E:\Workflow），导致三国任务在 Workflow 里开会话；
+- 现在优先用 `target.cwd`，其次 `task.cwd`，再按 workspaceId 找；**两者都没有且 workspaceId 找不到时直接失败**，不再在错误目录执行；
+- 新增两条回归测试（cwd 优先、错误配置拒绝执行），gate 461 全绿；
+- 桌面 0.1.8 已构建/发布，并把修好的插件复制进本机 DSH 的 desktop/web profile；重启 DSH 后生效。
+
 ### P2：自规划循环 + 目标账本（2026-11-12）
 
 - 新插件 `qm-planner`：监听 `taskFinished`，用独立 `planner:owner` 会话让模型输出 JSON（后续任务 / 提醒 / 研究申请 / 跳过）；

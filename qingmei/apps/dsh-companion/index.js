@@ -133,11 +133,22 @@ export function apply(ctx, config = {}) {
     let state
     try {
       sessionId = String(task.sessionId || `session-${randomUUID()}`)
+      // 优先用任务显式给的 cwd；旧服务端只给 task.cwd；两者都没有才看 workspaceId。
+      const targetCwd = String(task.target?.cwd ?? task.cwd ?? '').trim()
       const targetWorkspace = task.target?.workspaceId
         ? workspaces().find((item) => item.id === task.target.workspaceId)
         : null
-      if (task.target?.workspaceId && !targetWorkspace) throw new Error('任务指定的工作区不在 DSH 中')
-      const cwd = realpathSync(task.target?.cwd || targetWorkspace?.path || workspacePath)
+      if (!targetCwd && task.target?.workspaceId && !targetWorkspace) {
+        throw new Error('任务指定的工作区不在 DSH 中，且任务没有 cwd，拒绝在错误目录执行')
+      }
+      const cwd = realpathSync(targetCwd || targetWorkspace?.path || workspacePath)
+      if (targetCwd && targetWorkspace) {
+        try {
+          if (realpathSync(targetWorkspace.path) !== realpathSync(targetCwd)) {
+            console.warn(`[qingmei-dsh] 工作区路径与任务 cwd 不一致：${targetWorkspace.path} != ${targetCwd}`)
+          }
+        } catch {}
+      }
       const selection = ctx.agentDefaultModel?.currentSelection?.()
       let agent = null
       if (task.sessionId) {
@@ -238,3 +249,4 @@ export function apply(ctx, config = {}) {
     }
   })
 }
+
