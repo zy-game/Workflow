@@ -1,3 +1,12 @@
+### 用量可视化：余额 / 花费 / embedding（2026-11-12）
+
+- `provider-embedding-http` 每次调用记录 `usage.total_tokens` 到 `qm_embedding_usage`（按天）；
+- `qm-cost` 暴露 `cost` 服务与 `GET /api/v1/cost`：余额、今日花费（余额差）、embedding 今日/本月；
+- 聊天命令「今日用量 / 余额 / 成本 / 花费」直连服务，不调模型；
+- Web 新增「用量」面板（菜单 11 项）；Windows 托盘与桌宠右键加「今日用量」弹窗；
+- 客户端：桌面 0.1.6（Inno）与 Android 0.1.13（versionCode 14，debug 证书与 0.1.12 一致，可直接升级）已发布；
+- 实测：普通消息后 `embedding 8 tokens / 1 次`；命令返回余额 78.63 CNY + 该数字。
+
 ### 语义召回上线：智谱 embedding-3（2026-11-12）
 
 - 装配 `provider-embedding-http` → 智谱 `https://open.bigmodel.cn/api/paas/v4/embeddings`，

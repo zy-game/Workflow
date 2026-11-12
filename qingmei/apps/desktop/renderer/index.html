@@ -73,7 +73,16 @@
       </form>
     </div>
 
-    <div id="settings-modal" class="settings-modal" hidden>
+    <div id="usage-modal" class="settings-modal" hidden>
+    <div class="settings-card">
+      <h1>今日用量</h1>
+      <pre id="usage-text" class="usage-text">加载中…</pre>
+      <div class="settings-actions">
+        <button id="usage-refresh" type="button" class="btn">刷新余额</button>
+        <button id="usage-close" type="button" class="btn primary">关闭</button>
+      </div>
+    </div>
+  </div>  <div id="settings-modal" class="settings-modal" hidden>
       <form id="settings-form" class="settings-card">
         <h1>青梅桌面</h1>
         <p id="settings-welcome" class="settings-welcome">第一次使用：填服务器和令牌，点「测试连接」，再保存。</p>
@@ -129,3 +138,4 @@
     <script type="module" src="./app.mjs"></script>
   </body>
 </html>
+

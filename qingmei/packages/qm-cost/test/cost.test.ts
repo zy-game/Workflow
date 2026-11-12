@@ -85,10 +85,21 @@ test('refresh：写入当日余额快照，GET /cost 返回与昨日差额', asy
     assert.equal(refreshed.status, 200)
     assert.equal(refreshed.body.snapshot.total, 98.5)
 
+    const today = new Date().toISOString().slice(0, 10)
+    const month = today.slice(0, 7)
+    await store.collection('qm_embedding_usage').insert({ id: today, day: today, tokens: 300, calls: 3, at: Date.now() })
+    const earlierDay = today.endsWith('-01') ? `${month}-02` : `${month}-01`
+    await store.collection('qm_embedding_usage').insert({ id: earlierDay, day: earlierDay, tokens: 700, calls: 5, at: Date.now() })
+
     const cost = await h.call('GET', '/api/v1/cost')
     assert.equal(cost.status, 200)
-    assert.equal(cost.body.latest.total, 98.5)
+    assert.equal(cost.body.balance, 98.5)
     assert.equal(cost.body.spentSinceYesterday, 1.5)
+    assert.equal(cost.body.embeddingTodayTokens, 300)
+    assert.equal(cost.body.embeddingTodayCalls, 3)
+    assert.equal(cost.body.embeddingMonthTokens, 1000)
+    assert.match(String(cost.body.text), /今日用量/)
+    assert.equal(cost.body.items[0].total, 98.5)
   } finally {
     await h.dispose()
   }
@@ -110,3 +121,4 @@ test('没有 key：refresh 返回 503 并说明去哪配', async () => {
     await h.dispose()
   }
 })
+

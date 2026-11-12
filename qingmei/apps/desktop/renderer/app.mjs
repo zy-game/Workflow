@@ -17,6 +17,7 @@ const desktop = window.qmDesktop ?? {
   onOpenSettings: () => undefined,
   onReconnect: () => undefined,
   onPetAction: () => undefined,
+  onShowUsage: () => undefined,
   notify: () => undefined,
   setIgnoreMouseEvents: () => undefined,
   moveBy: () => undefined,
@@ -51,6 +52,10 @@ const el = {
   onboardingStart: document.getElementById('onboarding-start'),
   onboardingSkip: document.getElementById('onboarding-skip'),
   settingsModal: document.getElementById('settings-modal'),
+  usageModal: document.getElementById('usage-modal'),
+  usageText: document.getElementById('usage-text'),
+  usageClose: document.getElementById('usage-close'),
+  usageRefresh: document.getElementById('usage-refresh'),
   settingsScale: document.getElementById('settings-scale'),
   settingsFontScale: document.getElementById('settings-font-scale'),
   settingsFontScaleValue: document.getElementById('settings-font-scale-value'),
@@ -902,6 +907,39 @@ function closeSettings() {
   el.settingsModal.hidden = true
 }
 
+async function loadUsage(refresh = false) {
+  const base = normalizeServerUrl(settings.serverUrl)
+  const headers = { Authorization: `Bearer ${settings.token}`, Accept: 'application/json' }
+  if (refresh) {
+    const refreshed = await fetch(`${base}/api/v1/cost/refresh`, { method: 'POST', headers })
+    if (!refreshed.ok) {
+      const body = await refreshed.json().catch(() => ({}))
+      throw new Error(body?.error || `HTTP ${refreshed.status}`)
+    }
+  }
+  const response = await fetch(`${base}/api/v1/cost`, { headers })
+  const body = await response.json()
+  if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
+  const lines = [
+    `余额：${body.balance === null ? '未取到' : `${body.balance} ${body.currency}`}`,
+    `今日花费：${body.spentSinceYesterday === null ? '暂无昨日快照' : `${body.spentSinceYesterday} ${body.currency}`}`,
+    `embedding 今日：${body.embeddingTodayTokens ?? 0} tokens / ${body.embeddingTodayCalls ?? 0} 次`,
+    `embedding 本月：${body.embeddingMonthTokens ?? 0} tokens`,
+  ]
+  el.usageText.textContent = lines.join('\n')
+}
+
+async function openUsage() {
+  el.usageModal.hidden = false
+  el.usageText.textContent = '加载中…'
+  try {
+    await loadUsage()
+  } catch (error) {
+    el.usageText.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
+
 async function testConnection() {
   const base = normalizeServerUrl(el.settingsServer.value)
   const token = el.settingsToken.value.trim()
@@ -1229,9 +1267,19 @@ function bind() {
   }, 5000)
   desktop.onOpenSettings(() => openSettings())
   desktop.onReconnect(() => connect())
+  desktop.onShowUsage(() => void openUsage())
+  el.usageClose?.addEventListener('click', () => { el.usageModal.hidden = true })
+  el.usageRefresh?.addEventListener('click', async () => {
+    try {
+      await loadUsage(true)
+    } catch (error) {
+      el.usageText.textContent = `刷新失败：${error instanceof Error ? error.message : String(error)}`
+    }
+  })
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-      if (!el.settingsModal.hidden) closeSettings()
+      if (!el.usageModal.hidden) el.usageModal.hidden = true
+      else if (!el.settingsModal.hidden) closeSettings()
       else closeChat()
     }
   })
@@ -1239,3 +1287,6 @@ function bind() {
 
 bind()
 void init()
+
+
+

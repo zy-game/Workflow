@@ -217,6 +217,7 @@ export class NeuronMemory extends MemoryService {
   private readonly edges
   private history: HistoryService | undefined
   private embedding: EmbeddingService | undefined
+  private readonly ctxRef: Context
   private readonly limit: number
   private readonly minConfidence: number
   private readonly ticks: number
@@ -248,6 +249,7 @@ export class NeuronMemory extends MemoryService {
     this.edges = store.collection<EdgeRow>(EDGE)
     ctx.inject(['history'], (sub) => { this.history = sub.history })
     ctx.inject(['embedding'], (sub) => { this.embedding = sub.embedding })
+    this.ctxRef = ctx
     this.limit = config.limit ?? 8
     this.minConfidence = config.minConfidence ?? 0.6
     this.ticks = Math.max(1, config.ticks ?? 4)
@@ -419,9 +421,10 @@ export class NeuronMemory extends MemoryService {
         })
         await this.bind(row.id, 'fact', `${row.subject} ${row.predicate} ${row.object}`)
         await this.buildFactRelations(row)
-        if (this.embedding) {
+        if (this.embedder()) {
           try {
-            const [vector] = await this.embedding.embed([`${row.subject} ${row.predicate} ${row.object}`])
+            const embedding = this.embedder()!
+            const [vector] = await embedding.embed([row.object])
             if (vector && vector.length > 0) await this.facts.update(row.id, { vector_json: JSON.stringify(vector) })
           } catch {
             // 向量服务失败不影响入库，召回退回词面匹配
@@ -473,9 +476,9 @@ export class NeuronMemory extends MemoryService {
       .filter((id): id is string => Boolean(id))
 
     let queryVector: number[] | null = null
-    if (this.embedding) {
+    if (this.embedder()) {
       try {
-        const [vector] = await this.embedding.embed([query.text])
+        const [vector] = await this.embedder()!.embed([query.text])
         queryVector = vector && vector.length > 0 ? vector : null
       } catch {
         queryVector = null
@@ -978,7 +981,7 @@ export class NeuronMemory extends MemoryService {
   /** 给已有事实补向量（升级后回填；幂等，有向量的跳过） */
   async rebuildVectors(): Promise<{ embedded: number; skipped: number; failed: number }> {
     await this.ready
-    if (!this.embedding) return { embedded: 0, skipped: 0, failed: 0 }
+    if (!this.embedder()) return { embedded: 0, skipped: 0, failed: 0 }
     let embedded = 0
     let skipped = 0
     let failed = 0
@@ -988,7 +991,7 @@ export class NeuronMemory extends MemoryService {
         continue
       }
       try {
-        const [vector] = await this.embedding.embed([row.object])
+        const [vector] = await this.embedder()!.embed([row.object])
         if (vector && vector.length > 0) {
           await this.facts.update(row.id, { vector_json: JSON.stringify(vector) })
           embedded += 1
@@ -1001,6 +1004,11 @@ export class NeuronMemory extends MemoryService {
     }
     return { embedded, skipped, failed }
   }
+  /** 兼容加载顺序：embedding 可能比本插件晚注册，取不到时再按名字找一次 */
+  private embedder(): EmbeddingService | undefined {
+    return this.embedding ?? (this.ctxRef.get('embedding', false) as unknown as EmbeddingService | undefined)
+  }
+
   async consolidate() {
     await this.ready
     const beforeConsolidate = await this.snapshotGraph()
@@ -1603,6 +1611,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
   if (normA === 0 || normB === 0) return 0
   return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
+
 
 
 

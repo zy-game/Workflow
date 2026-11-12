@@ -21,4 +21,8 @@ contextBridge.exposeInMainWorld('qmDesktop', {
   onPetAction: (callback) => {
     ipcRenderer.on('pet-action', (_event, action) => callback(action))
   },
+  onShowUsage: (callback) => {
+    ipcRenderer.on('show-usage', () => callback())
+  },
 })
+

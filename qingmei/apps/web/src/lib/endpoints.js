@@ -59,6 +59,8 @@ export const ENDPOINTS = {
   reviewProposals: './api/v1/review/proposals',
   reviewProposalApply: './api/v1/review/proposals/apply',
   reviewProposalDismiss: './api/v1/review/proposals/dismiss',
+  cost: './api/v1/cost',
+  costRefresh: './api/v1/cost/refresh',
   // 账号运维 · 内容层（docs/18 §10）
 }
 
@@ -68,5 +70,6 @@ export function resolveEndpoint(path) {
     typeof window !== 'undefined' ? String(window.__QM_SERVER_URL || '').replace(/\/+$/, '') : ''
   return base ? base + path.slice(1) : path
 }
+
 
 

@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { Context } from 'cordis'
+import { Context, Service } from 'cordis'
 import {
   EVENTS,
   GatewayService,
@@ -368,6 +368,15 @@ function createFakes(options: FakeOptions) {
   return { state, adapter, FakeStore, FakeGateway, FakeLlm, FakeMemory, FakeProfile, FakeIdentity }
 }
 
+class FakeCost extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'cost')
+  }
+  async summary() {
+    return { text: '【今日用量】余额 1.00 CNY' }
+  }
+}
+
 // ────────────────────────────────────────────── 测试脚手架
 
 interface Harness {
@@ -388,6 +397,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(fakes.FakeMemory)
   await ctx.plugin(fakes.FakeProfile)
   await ctx.plugin(fakes.FakeIdentity)
+  await ctx.plugin(FakeCost)
   await ctx.plugin(historyPlugin)
   await ctx.plugin(agent, { persona: PERSONA })
   ctx.channel.register(fakes.adapter)
@@ -778,4 +788,15 @@ test('身份闸：陌生账号回「未授权」，不进入模型', async () =>
   assert.equal(h.state.requests.length, 0)
   const sent = h.state.sent.at(-1)!.blocks[0] as { text: string }
   assert.match(sent.text, /未授权/)
+})
+
+test('用量命令：直连 cost 服务，不调用模型', async () => {
+  const h = await boot()
+  h.ctx.events.emit(EVENTS.inbound, inbound('今日用量', 'owner'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  assert.equal(h.state.requests.length, 0, '用量命令不应调用模型')
+  const sent = h.state.sent.at(-1)
+  const text = (sent?.blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
+  assert.match(text, /今日用量/)
+  assert.match(text, /余额/)
 })

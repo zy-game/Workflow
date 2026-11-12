@@ -1033,3 +1033,6 @@ video.pet {
   25% { transform: translateX(-2px) rotate(-0.6deg); }
   75% { transform: translateX(2px) rotate(0.6deg); }
 }
+
+.usage-text { white-space: pre-wrap; font: inherit; line-height: 1.6; margin: 0; }
+

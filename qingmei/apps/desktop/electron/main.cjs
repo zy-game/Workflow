@@ -144,6 +144,7 @@ function createTray() {
         { label: '显示青梅', click: () => { win?.show(); win?.focus() } },
         { label: '隐藏青梅', click: () => win?.hide() },
         { type: 'separator' },
+        { label: '今日用量', click: () => { win?.show(); win?.webContents.send('show-usage') } },
         { label: '设置…', click: () => { win?.show(); win?.webContents.send('open-settings') } },
         { label: '检查更新', click: () => void checkForUpdate(updateFeed(process.env), { silent: false }) },
         { type: 'separator' },
@@ -507,6 +508,7 @@ if (!gotLock) {
     ipcMain.handle('agent:worker-start', () => startWorker())
     ipcMain.handle('menu:popup', () => {
       Menu.buildFromTemplate([
+        { label: '今日用量', click: () => { win?.show(); win?.webContents.send('show-usage') } },
         { label: '摸摸头', click: () => win?.webContents.send('pet-action', 'pet') },
         { label: '喂饭', click: () => win?.webContents.send('pet-action', 'feed') },
         { label: '逗一下', click: () => win?.webContents.send('pet-action', 'play') },
@@ -575,3 +577,4 @@ if (!gotLock) {
 
   app.on('window-all-closed', () => app.quit())
 }
+

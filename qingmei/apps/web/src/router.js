@@ -8,6 +8,7 @@ import ConversationsView from './views/ConversationsView.vue'
 import ReviewView from './views/ReviewView.vue'
 import IncidentsView from './views/IncidentsView.vue'
 import AuditView from './views/AuditView.vue'
+import CostView from './views/CostView.vue'
 import SettingsView from './views/SettingsView.vue'
 
 // 导航即路由表：桌面侧栏与移动端抽屉都从这里渲染，ui-contract 测试也断言这张表。
@@ -21,6 +22,7 @@ export const NAV = [
   { path: '/review', title: '复盘', hint: '月度报告与评分' },
   { path: '/incidents', title: '故障', hint: '失败与自愈' },
   { path: '/audit', title: '审计', hint: '工具调用流水' },
+  { path: '/cost', title: '用量', hint: '余额、今日花费与 embedding 用量' },
   { path: '/settings', title: '设置', hint: '人格与技能版本' },
 ]
 
@@ -38,10 +40,12 @@ const router = createRouter({
     { path: '/review', name: 'review', component: ReviewView, meta: { title: '复盘' } },
     { path: '/incidents', name: 'incidents', component: IncidentsView, meta: { title: '故障' } },
     { path: '/audit', name: 'audit', component: AuditView, meta: { title: '审计' } },
+    { path: '/cost', name: 'cost', component: CostView, meta: { title: '用量' } },
     { path: '/settings', name: 'settings', component: SettingsView, meta: { title: '设置' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 
 export default router
+
 

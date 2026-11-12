@@ -227,6 +227,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
   let skillService: SkillService | undefined
   let auditService: AuditService | undefined
   let taskService: TaskService | undefined
+  let costService: { summary: () => Promise<{ text: string }> } | undefined
   let scheduleService: ScheduleService | undefined
   ctx.inject(['harness'], (sub) => { harness = sub.harness })
   ctx.inject(['history'], (sub) => { historyService = sub.history })
@@ -237,6 +238,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ctx.inject(['audit'], (sub) => { auditService = sub.audit })
   ctx.inject(['task'], (sub) => { taskService = sub.task })
   ctx.inject(['schedule'], (sub) => { scheduleService = sub.schedule })
+  ctx.inject(['cost'], (sub) => { costService = (sub as unknown as { cost: { summary: () => Promise<{ text: string }> } }).cost })
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
@@ -324,12 +326,18 @@ export function apply(ctx: Context, config: AgentConfig): void {
 
     // 显式记忆：不调用 LLM，用户说「记住/忘掉」就直接落库。
     const memoryCommand = await handleMemoryCommand(userText, sessionId)
-    if (memoryCommand !== null) {
+    // 用量命令也直连服务，不经过模型；只对主人开
+    const usageCommand =
+      memoryCommand === null && (message.conversation.id === 'owner' || conversationIdFromSession(sessionId) === 'owner')
+        ? await handleUsageCommand(userText)
+        : null
+    const command = memoryCommand ?? usageCommand
+    if (command !== null) {
       try {
         const result = await channel.send({
           channel: message.channel,
           conversationId: message.conversation.id,
-          blocks: [{ type: 'text', text: memoryCommand }],
+          blocks: [{ type: 'text', text: command }],
           traceId,
         })
         if (!result.ok) problems.push(`渠道发送失败：${result.error ?? '未知原因'}`)
@@ -340,7 +348,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
         sessionId,
         traceId,
         ok: problems.length === 0,
-        text: memoryCommand,
+        text: command,
         userText,
         latencyMs: Date.now() - startedAt,
         deviceId: message.deviceId,
@@ -616,6 +624,17 @@ export function apply(ctx: Context, config: AgentConfig): void {
     return null
   }
 
+  /** 用量命令：只认几个固定说法，直连 cost 服务 */
+  async function handleUsageCommand(text: string): Promise<string | null> {
+    if (!costService) return null
+    if (!/^(今日用量|用量|余额|成本|花费)[?？]?$/.test(text.trim())) return null
+    try {
+      const summary = await costService.summary()
+      return summary.text
+    } catch (error) {
+      return `用量读取失败：${messageOf(error)}`
+    }
+  }
   function enqueue(sessionId: string, task: () => Promise<void>): void {
     const previous = lanes.get(sessionId) ?? Promise.resolve()
     const current = previous.then(task, task).catch((error) => {
@@ -658,6 +677,10 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+
+
 
 
 

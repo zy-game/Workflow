@@ -27,6 +27,8 @@ test('ENDPOINTS 覆盖核心面板', () => {
     review: './api/v1/review',
     audit: './api/v1/audit',
     persona: './api/v1/persona',
+    cost: './api/v1/cost',
+    costRefresh: './api/v1/cost/refresh',
   }
   for (const [key, value] of Object.entries(expected)) {
     assert.equal(ENDPOINTS[key], value, `ENDPOINTS.${key} 应为 ${value}`)
@@ -43,7 +45,7 @@ test('记忆页订阅候选/画像接口：采纳、恢复、撤回、画像', a
   }
 })
 
-test('导航与路由表一致：10 个面板都能落到视图文件', async () => {
+test('导航与路由表一致：11 个面板都能落到视图文件', async () => {
   const router = await readSource('router.js')
   const nav = [
     ['/', 'ChatView.vue'],
@@ -55,6 +57,7 @@ test('导航与路由表一致：10 个面板都能落到视图文件', async ()
     ['/review', 'ReviewView.vue'],
     ['/incidents', 'IncidentsView.vue'],
     ['/audit', 'AuditView.vue'],
+    ['/cost', 'CostView.vue'],
     ['/settings', 'SettingsView.vue'],
   ]
   for (const [route, view] of nav) {
@@ -109,3 +112,13 @@ test('入口契约：Vue 挂载点、config.js 与登录门都在', async () => 
   assert.match(session, /__QM_PERSIST_TOKEN__/, '持久化开关应与旧版一致')
 })
 
+
+test('用量面板订阅成本接口：余额、今日花费与 embedding 用量', async () => {
+  const view = await readSource('views/CostView.vue')
+  for (const key of ['cost', 'costRefresh']) {
+    assert.ok(view.includes(`ENDPOINTS.${key}`), `CostView 应调用 ENDPOINTS.${key}`)
+  }
+  for (const label of ['余额', '今日花费', 'embedding 今日', 'embedding 本月']) {
+    assert.ok(view.includes(label), `用量页应有「${label}」`)
+  }
+})

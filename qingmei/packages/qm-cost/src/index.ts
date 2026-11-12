@@ -1,18 +1,16 @@
 /**
- * @qingmei/qm-cost —— DeepSeek 余额与每日花费快照。
+ * @qingmei/qm-cost —— 成本与用量：DeepSeek 余额快照 + embedding token 记账。
  *
- * 只读官方 `GET /user/balance`，不碰对话、不改额度。DSH 不透出 usage，余额差是当前唯一
- * 可靠的成本信号：每天取一次余额，用前一天的差值近似当日花费。
+ * 余额差近似当日花费（DSH 不透出 usage）；embedding 每次调用的 usage 由 provider 记账。
+ * 对主人暴露一个 cost 服务，聊天命令「今日用量」直接读它，不经过模型。
  *
- * key 来源优先级：config.apiKey → env QM_DEEPSEEK_API_KEY / DEEPSEEK_API_KEY →
- * credentialsPath（默认 ~/.dsh/.credentials.yaml，只读第一处 DEEPSEEK_API_KEY）。
+ * key 来源：config.apiKey → env QM_DEEPSEEK_API_KEY / DEEPSEEK_API_KEY → credentialsPath。
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import type { Context } from 'cordis'
+import { Service, type Context } from 'cordis'
 import {
-  uid,
   type GatewayRequest,
   type GatewayResponse,
   type GatewayService,
@@ -40,6 +38,24 @@ interface SnapshotRow extends Row {
   at: number
 }
 
+interface EmbeddingUsageRow extends Row {
+  day: string
+  tokens: number
+  calls: number
+  at: number
+}
+
+export interface CostSummary {
+  day: string
+  balance: number | null
+  currency: string
+  spentSinceYesterday: number | null
+  embeddingTodayTokens: number
+  embeddingTodayCalls: number
+  embeddingMonthTokens: number
+  text: string
+}
+
 interface BalanceResponse {
   is_available?: boolean
   balance_infos?: { currency?: string; total_balance?: string; granted_balance?: string; topped_up_balance?: string }[]
@@ -60,8 +76,50 @@ export function apply(ctx: Context, config: CostConfig = {}): void {
   const store = ctx.store as StoreService
   const gateway = ctx.gateway as GatewayService
   const snapshots = store.collection<SnapshotRow>('qm_cost_snapshot')
+  const usage = store.collection<EmbeddingUsageRow>('qm_embedding_usage')
   const baseUrl = (config.baseUrl ?? 'https://api.deepseek.com').replace(/\/+$/, '')
   const fetchImpl = config.fetchImpl ?? fetch
+
+  class CostService extends Service {
+    constructor(context: Context) {
+      super(context, 'cost')
+    }
+
+    async summary(now: Date = new Date()): Promise<CostSummary> {
+      const rows = await snapshots.find({ order: [{ field: 'day', dir: 'desc' }], limit: 14 })
+      const latest = rows[0] ?? null
+      const yesterday = rows[1] ?? null
+      const spent = latest && yesterday ? Number((yesterday.total - latest.total).toFixed(4)) : null
+      const day = now.toISOString().slice(0, 10)
+      const month = day.slice(0, 7)
+      const usages = await usage.find({})
+      const todayUsages = usages.filter((row) => row.day === day)
+      const todayTokens = todayUsages.reduce((sum, row) => sum + Number(row.tokens ?? 0), 0)
+      const todayCalls = todayUsages.reduce((sum, row) => sum + Number(row.calls ?? 0), 0)
+      const monthTokens = usages
+        .filter((row) => String(row.day).startsWith(month))
+        .reduce((sum, row) => sum + Number(row.tokens ?? 0), 0)
+      const currency = latest?.currency ?? 'CNY'
+      const lines = [
+        `【今日用量】${day}`,
+        `- 余额：${latest ? `${latest.total} ${currency}` : '未取到（检查 DeepSeek key）'}`,
+        `- 今日花费：${spent === null ? '暂无昨日快照可比' : `${spent} ${currency}`}`,
+        `- embedding：今日 ${todayTokens} tokens / ${todayCalls} 次；本月 ${monthTokens} tokens`,
+      ]
+      return {
+        day,
+        balance: latest ? latest.total : null,
+        currency,
+        spentSinceYesterday: spent,
+        embeddingTodayTokens: todayTokens,
+        embeddingTodayCalls: todayCalls,
+        embeddingMonthTokens: monthTokens,
+        text: lines.join('\n'),
+      }
+    }
+  }
+
+  new CostService(ctx)
 
   async function refresh(): Promise<{ snapshot: SnapshotRow; changed: boolean } | { error: string }> {
     const key = resolveKey(config)
@@ -100,16 +158,14 @@ export function apply(ctx: Context, config: CostConfig = {}): void {
       method: 'GET',
       path: '/api/v1/cost',
       async handler(_req: GatewayRequest, res: GatewayResponse) {
-        const rows = await snapshots.find({ order: [{ field: 'day', dir: 'desc' }], limit: 14 })
-        const today = rows[0] ?? null
-        const yesterday = rows[1] ?? null
-        res.status(200).send({
-          ok: true,
-          latest: today,
-          spentSinceYesterday:
-            today && yesterday ? Number((yesterday.total - today.total).toFixed(4)) : null,
-          items: rows,
-        })
+        const cost = ctx.get('cost', false) as CostService | undefined
+        if (!cost) {
+          res.status(503).send({ ok: false, error: '成本服务未就绪' })
+          return
+        }
+        const summary = await cost.summary()
+        const items = await snapshots.find({ order: [{ field: 'day', dir: 'desc' }], limit: 14 })
+        res.status(200).send({ ok: true, ...summary, items })
       },
     }),
   )
@@ -129,14 +185,11 @@ export function apply(ctx: Context, config: CostConfig = {}): void {
     }),
   )
 
-  // 进程内每天 06:00 自动取一次；没有 key 时静默跳过，不刷错误
   const timer = setInterval(() => {
-    const hour = new Date().getHours()
-    if (hour === 6) void refresh()
+    if (new Date().getHours() === 6) void refresh()
   }, 60 * 60_000)
   timer.unref?.()
   ctx.effect(() => () => clearInterval(timer))
 }
 
 export const defaultExport = { name, inject, apply }
-export { uid }
