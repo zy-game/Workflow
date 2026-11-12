@@ -1,6 +1,5 @@
 packages:
   - 'packages/*'
-  - 'experimental/*'
   - 'apps/server'
   - 'apps/web'
   - 'apps/desktop'

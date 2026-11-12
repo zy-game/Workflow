@@ -246,3 +246,38 @@ test('编辑已发消息（editTarget）更新原行而不是新增', async () =
     await h.dispose()
   }
 })
+
+test('overview：按时间窗统计回合与失败原因，并抽样最近消息', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qm-history-ov-'))
+  const ctx = new Context()
+  const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'history.db') })
+  await storeFiber
+  const historyFiber = ctx.plugin(historyPlugin)
+  await historyFiber
+  const store = ctx.reflect.get('store', false) as StoreService
+  const turns = store.collection<TurnRow>('qm_turn')
+  const messages = store.collection<MessageRow>('qm_message')
+  const now = Date.now()
+  try {
+    await turns.insert({ id: 't1', session_id: 's_owner', status: 'ok', latency_ms: 100, created_at: now - 3000 })
+    await turns.insert({ id: 't2', session_id: 's_owner', status: 'ok', latency_ms: 300, created_at: now - 2000 })
+    await turns.insert({ id: 't3', session_id: 's_owner', status: 'failed', latency_ms: 200, error_code: '模型超时', created_at: now - 1000 })
+    await turns.insert({ id: 't4', session_id: 's_owner', status: 'ok', latency_ms: 999, created_at: now - 40 * 86_400_000 })
+    await messages.insert({
+      id: 'm1', session_id: 's_owner', role: 'user', direction: 'in', blocks_json: '[]', text: '在吗', trace_id: null, created_at: now - 500,
+    })
+
+    const overview = await ctx.history.overview({ since: new Date(now - 86_400_000), until: new Date(now + 1000) })
+    assert.equal(overview.turns.total, 3, '窗口外的那条不应计入')
+    assert.equal(overview.turns.ok, 2)
+    assert.equal(overview.turns.failed, 1)
+    assert.equal(overview.turns.avgLatencyMs, 200)
+    assert.deepEqual(overview.errors, [{ reason: '模型超时', count: 1 }])
+    assert.equal(overview.samples.length, 1)
+    assert.equal(overview.samples[0]?.text, '在吗')
+  } finally {
+    await historyFiber.dispose()
+    await storeFiber.dispose()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

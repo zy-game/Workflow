@@ -26,6 +26,7 @@ import {
   type Block,
   HistoryService,
   type HistoryMessage,
+  type HistoryOverview,
   type OutboundRecord,
   type Row,
   type StoreService,
@@ -65,10 +66,40 @@ interface StoredTurn extends Row {
 
 class HistoryReader extends HistoryService {
   private readonly collection
+  private readonly turns
 
   constructor(ctx: Context) {
     super(ctx)
     this.collection = ctx.store.collection<StoredMessage>(MESSAGE_COLLECTION)
+    this.turns = ctx.store.collection<StoredTurn>(TURN_COLLECTION)
+  }
+
+  /** 复盘用：回合统计 + 最近消息抽样。读自己的表，不把 collection 暴露给别的插件 */
+  async overview(query: { since?: Date; until?: Date; sampleLimit?: number } = {}): Promise<HistoryOverview> {
+    const since = query.since?.getTime() ?? 0
+    const until = query.until?.getTime() ?? Number.MAX_SAFE_INTEGER
+    const turnRows = (await this.turns.find({})).filter((row) => row.created_at >= since && row.created_at <= until)
+    const ok = turnRows.filter((row) => row.status === 'ok' || row.status === 'partial').length
+    const failed = turnRows.filter((row) => row.status === 'failed' || row.status === 'aborted').length
+    const latencies = turnRows.map((row) => Number(row.latency_ms) || 0).filter((value) => value > 0)
+    const avgLatencyMs =
+      latencies.length > 0 ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length) : 0
+    const samples = (await this.collection.find({}))
+      .filter((row) => row.created_at >= since && row.created_at <= until)
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(-Math.max(1, Math.min(200, query.sampleLimit ?? 12)))
+      .map((row) => ({ role: row.role, text: String(row.text ?? '').slice(0, 200) }))
+    const errors = new Map<string, number>()
+    for (const row of turnRows) {
+      if (row.status === 'ok' || row.status === 'partial') continue
+      const reason = String(row.error_code ?? '未知错误').slice(0, 80)
+      errors.set(reason, (errors.get(reason) ?? 0) + 1)
+    }
+    const topErrors = [...errors.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([reason, count]) => ({ reason, count }))
+    return { turns: { total: turnRows.length, ok, failed, avgLatencyMs }, errors: topErrors, samples }
   }
 
   async activity(fromMs: number, toMs: number): Promise<number[]> {
@@ -266,3 +297,5 @@ function messageOf(error: unknown): string {
 }
 
 export const defaultExport = { name, inject, apply }
+
+

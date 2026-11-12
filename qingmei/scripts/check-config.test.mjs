@@ -28,7 +28,7 @@ test('checkEntries：同名插件重复装配要报错', () => {
 test('workspacePackages：只认有 package.json 的目录', () => {
   const known = workspacePackages(REPO_ROOT)
   assert.equal(known.get('@qingmei/qm-agent'), 'packages/qm-agent')
-  assert.equal(known.get('@qingmei/qm-review'), 'experimental/qm-review')
+  assert.equal(known.get('@qingmei/qm-review'), 'packages/qm-review')
   assert.equal(known.has('@qingmei/service-store'), false)
 })
 
@@ -50,6 +50,7 @@ test('envRefs：嵌套收集 { $env } 引用', () => {
   ])
   assert.deepEqual(refs, ['QM_LLM_KEY', 'QM_TOKEN'])
 })
+
 
 
 

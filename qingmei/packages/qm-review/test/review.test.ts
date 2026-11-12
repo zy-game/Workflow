@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from 'cordis'
+import { Context, Service } from 'cordis'
 import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as reviewPlugin from '../src/index.ts'
+import { HistoryService, TaskService } from '@qingmei/core'
 import {
   ChannelService,
   type GatewayRequest,
@@ -54,6 +55,93 @@ function fakeResponse(): FakeResponse {
   return { res, read: () => ({ status, body }) }
 }
 
+class FakeHistory extends HistoryService {
+  private readonly store: StoreService
+  constructor(ctx: Context, store: StoreService) {
+    super(ctx)
+    this.store = store
+  }
+  async recent(): Promise<never[]> {
+    return []
+  }
+  async overview(query: { since?: Date; until?: Date; sampleLimit?: number } = {}) {
+    const since = query.since?.getTime() ?? 0
+    const until = query.until?.getTime() ?? Number.MAX_SAFE_INTEGER
+    const turns = (await this.store.collection('qm_turn').find({})).filter(
+      (row) => row.created_at >= since && row.created_at < until,
+    )
+    const ok = turns.filter((row) => row.status === 'ok').length
+    const latencies = turns.map((row) => Number(row.latency_ms) || 0).filter((value) => value > 0)
+    const errors = new Map<string, number>()
+    for (const row of turns) {
+      if (row.status === 'ok') continue
+      const reason = String(row.error_code ?? '未知错误')
+      errors.set(reason, (errors.get(reason) ?? 0) + 1)
+    }
+    const samples = (await this.store.collection('qm_message').find({}))
+      .filter((row) => row.created_at >= since && row.created_at < until)
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(-(query.sampleLimit ?? 12))
+      .map((row) => ({ role: String(row.role), text: String(row.text).slice(0, 200) }))
+    return {
+      turns: {
+        total: turns.length,
+        ok,
+        failed: turns.length - ok,
+        avgLatencyMs: latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0,
+      },
+      errors: [...errors.entries()].slice(0, 3).map(([reason, count]) => ({ reason, count })),
+      samples,
+    }
+  }
+}
+
+class FakeTask extends TaskService {
+  private readonly store: StoreService
+  constructor(ctx: Context, store: StoreService) {
+    super(ctx)
+    this.store = store
+  }
+  async list(limit = 20) {
+    const rows = await this.store.collection('qm_task_run').find({})
+    return rows.slice(0, limit).map((row) => ({
+      id: String(row.id),
+      title: String(row.title ?? '任务'),
+      prompt: '',
+      createdAt: new Date(Number(row.created_at)),
+      status: String(row.status),
+    })) as never
+  }
+  async create(): Promise<never> { throw new Error('not used') }
+  async get(): Promise<null> { return null }
+  async start(): Promise<null> { return null }
+  async resume(): Promise<null> { return null }
+  async setStatus(): Promise<null> { return null }
+  async reportProgress(): Promise<null> { return null }
+  async addArtifact(): Promise<null> { return null }
+  async reportUsage(): Promise<null> { return null }
+  async finish(): Promise<null> { return null }
+}
+
+class FakeIncidentStats extends Service {
+  private readonly store: StoreService
+  constructor(ctx: Context, store: StoreService) {
+    super(ctx, 'incidentStats')
+    this.store = store
+  }
+  async stats(query: { since?: Date; until?: Date } = {}) {
+    const since = query.since?.getTime() ?? 0
+    const until = query.until?.getTime() ?? Number.MAX_SAFE_INTEGER
+    const rows = (await this.store.collection('qm_incident').find({})).filter(
+      (row) => Number(row.first_at ?? row.created_at) >= since && Number(row.first_at ?? row.created_at) < until,
+    )
+    return {
+      total: rows.length,
+      open: rows.filter((row) => row.status === 'open' || row.status === 'proposed').length,
+      fused: rows.filter((row) => row.status === 'fused').length,
+    }
+  }
+}
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'qm-review-'))
   const ctx = new Context()
@@ -64,6 +152,9 @@ async function setup() {
   const reviewFiber = ctx.plugin(reviewPlugin, { minScore: 6 })
   await reviewFiber
   const store = ctx.reflect.get('store', false) as StoreService
+  new FakeHistory(ctx, store)
+  new FakeTask(ctx, store)
+  new FakeIncidentStats(ctx, store)
 
   return {
     ctx,
@@ -225,3 +316,5 @@ test('复盘提醒可暂停，手动评分不受影响', async () => {
     await h.dispose()
   }
 })
+
+

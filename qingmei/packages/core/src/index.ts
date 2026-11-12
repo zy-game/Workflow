@@ -1254,11 +1254,23 @@ export interface HistoryMessage {
 }
 
 /** qm_message 的唯一读取契约；写入仍由 qm-history 的事件监听完成。 */
+/** 复盘的只读视图：回合统计 + 最近消息抽样；由 qm-history 提供，别的插件不再直接读表 */
+export interface HistoryOverview {
+  turns: { total: number; ok: number; failed: number; avgLatencyMs: number }
+  /** 失败原因 Top，供复盘用 */
+  errors: { reason: string; count: number }[]
+  samples: { role: string; text: string }[]
+}
+
 export abstract class HistoryService extends Service {
   constructor(ctx: Context) {
     super(ctx, 'history')
   }
   abstract recent(conversationId: string, limit?: number): Promise<HistoryMessage[]>
+  /** 月度复盘用；默认返回空，provider 可覆盖 */
+  async overview(_query?: { since?: Date; until?: Date; sampleLimit?: number }): Promise<HistoryOverview> {
+    return { turns: { total: 0, ok: 0, failed: 0, avgLatencyMs: 0 }, errors: [], samples: [] }
+  }
 }
 export abstract class ChannelTargetService extends Service {
   constructor(ctx: Context) {
@@ -1405,4 +1417,5 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 

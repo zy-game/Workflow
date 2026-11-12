@@ -6,7 +6,7 @@
  *
  * 存储与循环放在同一个插件里：`qm_*` 是业务编排，自己的集合自己管（与 qm-history 一致）。
  */
-import type { Context } from 'cordis'
+import { Service, type Context } from 'cordis'
 import {
   AUTONOMY_ACTIONS,
   AutonomyService,
@@ -818,8 +818,35 @@ import * as openerModule from './modules/opener.ts'
 import * as restModule from './modules/rest.ts'
 import * as profileModule from './modules/conversation-profile.ts'
 
+interface IncidentStatRow extends Row {
+  status: string
+  first_at: number
+}
+
+/** 故障统计（只读）：qm_incident 的 owner 是本包的 modules/incident，复盘通过这个服务取数 */
+class IncidentStats extends Service {
+  private readonly collection
+
+  constructor(ctx: Context) {
+    super(ctx, 'incidentStats')
+    this.collection = ctx.store.collection<IncidentStatRow>('qm_incident')
+  }
+
+  async stats(query: { since?: Date; until?: Date } = {}): Promise<{ total: number; open: number; fused: number }> {
+    const since = query.since?.getTime() ?? 0
+    const until = query.until?.getTime() ?? Number.MAX_SAFE_INTEGER
+    const rows = (await this.collection.find({})).filter((row) => row.first_at >= since && row.first_at <= until)
+    return {
+      total: rows.length,
+      open: rows.filter((row) => row.status === 'open' || row.status === 'proposed').length,
+      fused: rows.filter((row) => row.status === 'fused').length,
+    }
+  }
+}
 export function apply(ctx: Context, config: AutonomyConfig = {}): void {
   const runner = new AutonomyRunner(ctx, config)
+  // 故障账本由本包（modules/incident）拥有；给复盘提供只读统计，别让别的插件直接读表
+  new IncidentStats(ctx)
   // 自治能力统一装配：主动建议、故障提案、督促、开场、休息、群策略
   if (config.modules) {
     ctx.plugin(incidentModule, {})
@@ -968,3 +995,4 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+

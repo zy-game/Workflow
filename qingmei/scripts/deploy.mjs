@@ -85,7 +85,7 @@ function pruneStalePackages() {
       if (entry.isDirectory()) local.add(`${group}/${entry.name}`)
     }
   }
-  const remote = ssh(`cd ${APP_DIR} && ls -d packages/*/ experimental/*/ 2>/dev/null`, { quiet: true })
+  const remote = ssh(`cd ${APP_DIR} && (ls -d packages/*/ experimental/*/ 2>/dev/null || true)`, { quiet: true })
   const stale = remote
     .split(/\s+/)
     .map((item) => item.replace(/\/+$/, ''))
@@ -114,6 +114,11 @@ function pruneReleases(keep = 5) {
     `ls -1 | wc -l`
   const left = ssh(script, { quiet: true })
   console.log(`[deploy] releases 保留 ${left.trim()} 个`)
+}
+
+function checkLinks() {
+  const output = ssh(`cd ${APP_DIR} && /opt/node24/bin/node scripts/check-links.mjs --config qingmei.yml`, { quiet: true })
+  console.log(output)
 }
 
 function buildWeb() {
@@ -154,6 +159,12 @@ async function deployServer({ install = false } = {}) {
   const remote = `/tmp/qingmei-${stamp}.tgz`
   scp(tarball, remote)
 
+  // 先把清单类文件同步到根目录：supervisor 回滚会把旧根文件合并回来，
+  // 旧 lockfile + 新包目录会让 --frozen-lockfile 直接失败（2026-11-12 踩过）。
+  ssh(
+    `sudo -n tar --wildcards -xzf ${remote} -C ${APP_DIR} './package.json' './pnpm-lock.yaml' './pnpm-workspace.yaml' './apps/*/package.json' './packages/*/package.json'`,
+  )
+
   console.log(`[deploy] supervisor：解包 → ${install ? '安装依赖 → ' : ''}重启 → 健康检查`)
   const installArg = install ? ` --install '${INSTALL_CMD}'` : ''
   ssh(
@@ -171,6 +182,7 @@ async function deployServer({ install = false } = {}) {
     { quiet: true },
   )
   console.log(check)
+  checkLinks()
   pruneReleases(5)
 
   rmSync(tarball, { force: true })
@@ -183,7 +195,11 @@ function ensureUpdatesDirs() {
 
 async function uploadDesktop() {
   const dir = path.join(REPO_ROOT, 'updates', 'desktop')
-  if (!existsSync(path.join(dir, 'latest.json'))) throw new Error('updates/desktop/latest.json 不存在：先跑 release-desktop.mjs')
+  if (!existsSync(path.join(dir, 'latest.json'))) {
+    // 桌面端这轮没发版时正常会缺 staging；不把它当部署失败
+    console.log('[deploy] updates/desktop/latest.json 不存在，跳过桌面更新源上传（需要时先跑 release-desktop.mjs）')
+    return
+  }
   ensureUpdatesDirs()
   run('scp', ['-i', SSH_KEY, '-o', 'BatchMode=yes', path.join(dir, '*'), `${HOST}:${APP_DIR}/updates/desktop/`])
   const manifest = JSON.parse(readFileSync(path.join(dir, 'latest.json'), 'utf8'))
@@ -231,7 +247,7 @@ async function main() {
   if (!onlyUpdates) {
     if (!has('--skip-tests')) gate()
     if (!has('--skip-build')) buildWeb()
-    await deployServer({ install: has('--install') })
+    await deployServer({ install: !has('--skip-install') })
   }
   if (!serverOnly) {
     await uploadDesktop()
@@ -248,5 +264,7 @@ if (invokedDirectly) {
     process.exitCode = 1
   })
 }
+
+
 
 

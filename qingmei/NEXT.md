@@ -1,3 +1,28 @@
+### 技术债 1：qm-review 服务化 + 一次 17 分钟停机（2026-11-12）
+
+**服务化**：
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/core` | 新增 `HistoryOverview` 与 `HistoryService.overview({since,until,sampleLimit})`（回合统计 + 失败原因 Top + 消息抽样），默认返回空 |
+| `packages/qm-history` | 实现 `overview()`（读自己的 `qm_turn/qm_message`），并加测试 |
+| `packages/qm-autonomy` | 新增 `incidentStats` 服务（读自己拥有的 `qm_incident`），给复盘提供 `{total,open,fused}` |
+| `packages/qm-review` | 从 `experimental/` 搬到 `packages/`；不再直接读别人的表，改用 `history.overview()` / `task.list()` / `incidentStats.stats()`；测试用 fake 服务 |
+| `scripts/check-architecture.mjs` | owner 表补 `qm_turn/qm_incident/qm_memory_candidate/qm_session_digest`，去掉已删包 |
+
+结果：架构门禁 **0 处跨插件 collection**，`experimental/` 目录彻底删除。
+
+**停机与修复（14:19–14:36，约 17 分钟）**：
+
+- 直接原因：包从 `experimental/` 搬到 `packages/` 后没重跑 `pnpm install`，`@qingmei/qm-review` 的 workspace 链接还是旧路径；
+  部署又沿用了「默认不装依赖」，于是新 release 起不来，回滚到旧 release 也共用同一份坏链接。
+- 修的过程还踩到：supervisor 回滚会把**旧根清单**合并回来，旧 lockfile 与新包目录不匹配 → `--frozen-lockfile` 失败；
+  以及在服务器上 `pnpm install` 会因 root 属主目录报 EACCES。
+- 已加的三道闸：
+  1. `scripts/check-links.mjs`：按清单逐项 `require.resolve`，断了直接报；已进 `pnpm gate` 与部署后校验；
+  2. 部署默认执行 `pnpm install`（`--skip-install` 才跳过），并在 supervisor 解包前先把 `package.json/pnpm-lock.yaml/各包 package.json` 同步到根目录；
+  3. `release-desktop` 缺失时不再让整个部署失败。
+
 ### P2 收尾：依赖、文档、性能基线、升级清单、仓库清理（2026-11-12）
 
 | 项 | 动作 | 证据 |

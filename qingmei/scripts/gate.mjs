@@ -18,6 +18,7 @@ const node = process.execPath
 const withSmoke = process.argv.includes('--with-smoke')
 const steps = [
   { name: 'config', args: ['scripts/check-config.mjs'] },
+  { name: 'links', args: ['scripts/check-links.mjs'] },
   { name: 'architecture', args: ['scripts/check-architecture.mjs', '--strict'] },
   { name: 'typecheck:all', args: ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.packages.json'] },
   { name: 'typecheck:core', args: ['node_modules/typescript/bin/tsc', '-p', 'packages/core/tsconfig.json'] },
@@ -46,4 +47,5 @@ for (const step of steps) {
 
 if (!withSmoke) process.stdout.write('\n[gate] smoke skipped (use --with-smoke)\n')
 process.exit(failed ? 1 : 0)
+
 

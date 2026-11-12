@@ -7,6 +7,7 @@
  * 只读其它 `qm_*` 账本（qm_turn / qm_task_run / qm_incident），不反向写它们。
  */
 import type { Context } from 'cordis'
+import type { HistoryService, TaskService } from '@qingmei/core'
 import {
   uid,
   type AutonomyService,
@@ -107,16 +108,20 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
   const gateway = ctx.gateway
   let autonomyService: AutonomyService | undefined
   let personaService: PersonaLike | undefined
+  let historyService: HistoryService | undefined
+  let taskService: TaskService | undefined
+  let incidentStats: { stats: (query?: { since?: Date; until?: Date }) => Promise<{ total: number; open: number; fused: number }> } | undefined
   ctx.inject(['autonomy'], (sub) => { autonomyService = sub.autonomy })
-  ctx.inject(['persona'], (sub) => { personaService = sub.persona as PersonaLike })
+  ctx.inject(['persona'], (sub) => { personaService = sub.persona as unknown as PersonaLike })
+  ctx.inject(['history'], (sub) => { historyService = sub.history })
+  ctx.inject(['task'], (sub) => { taskService = sub.task })
+  ctx.inject(['incidentStats'], (sub) => {
+    incidentStats = (sub as unknown as { incidentStats: typeof incidentStats }).incidentStats
+  })
 
   const reviews = store.collection<ReviewRow>(REVIEW_COLLECTION)
   const proposals = store.collection<ProposalRow>('qm_review_proposal')
   const cards = store.collection<CardRow>('qm_review_card')
-  const turns = store.collection<TurnRow>('qm_turn')
-  const messages = store.collection<{ id: string; role: string; text: string; created_at: number }>('qm_message')
-  const tasks = store.collection<TaskRow>('qm_task_run')
-  const incidents = store.collection<IncidentRow>('qm_incident')
   const reviewState = store.collection<ReviewStateRow>('qm_review_state')
   async function isPaused(): Promise<boolean> {
     const row = await reviewState.get('state')
@@ -127,54 +132,34 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
   const minScore = Math.min(10, Math.max(1, Math.round(Number(config.minScore ?? 6))))
 
   async function metricsFor(month: string): Promise<ReviewMetrics> {
-    const start = new Date(`${month}-01T00:00:00`).getTime()
+    const start = new Date(`${month}-01T00:00:00`)
     const end = new Date(start)
     end.setMonth(end.getMonth() + 1)
-    const inMonth = (at: number | undefined): boolean =>
-      typeof at === 'number' && at >= start && at < end.getTime()
 
-    const turnRows = (await turns.find({})).filter((row) => inMonth(row.created_at))
-    const taskRows = (await tasks.find({})).filter((row) => inMonth(row.created_at))
-    const incidentRows = (await incidents.find({})).filter((row) => inMonth(row.first_at ?? row.created_at))
+    const overview = historyService ? await historyService.overview({ since: start, until: end, sampleLimit: 12 }).catch(() => null) : null
+    const turnStats = overview?.turns ?? { total: 0, ok: 0, failed: 0, avgLatencyMs: 0 }
+    const topErrors = overview?.errors ?? []
+    const sampleRows = (overview?.samples ?? []).map((item, index) => ({ id: `sample_${index}`, role: item.role, text: item.text }))
+
+    const taskRows = taskService
+      ? (await taskService.list(1000)).filter((run) => run.createdAt >= start && run.createdAt < end)
+      : []
+    const incidentCounts = incidentStats
+      ? await incidentStats.stats({ since: start, until: end }).catch(() => ({ total: 0, open: 0, fused: 0 }))
+      : { total: 0, open: 0, fused: 0 }
+
     const autonomy = autonomyService
     const state = autonomy ? await autonomy.status().catch(() => null) : null
 
-    const errors = new Map<string, number>()
-    for (const row of turnRows) {
-      if (row.status === 'ok') continue
-      const reason = (row.error_code ?? '未知错误').slice(0, 80)
-      errors.set(reason, (errors.get(reason) ?? 0) + 1)
-    }
-    const topErrors = [...errors.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([reason, count]) => ({ reason, count }))
-
-    const sampleRows = (await messages.find({}))
-      .filter((row) => inMonth(row.created_at))
-      .sort((a, b) => a.created_at - b.created_at)
-      .slice(-12)
-      .map((row) => ({ id: row.id, role: row.role, text: String(row.text).slice(0, 200) }))
-
-    const latencies = turnRows.map((row) => row.latency_ms).filter((value): value is number => typeof value === 'number')
     return {
       month,
-      turns: {
-        total: turnRows.length,
-        ok: turnRows.filter((row) => row.status === 'ok').length,
-        failed: turnRows.filter((row) => row.status !== 'ok').length,
-        avgLatencyMs: latencies.length > 0 ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length) : 0,
-      },
+      turns: turnStats,
       tasks: {
         total: taskRows.length,
-        done: taskRows.filter((row) => row.status === 'done').length,
-        failed: taskRows.filter((row) => row.status === 'failed').length,
+        done: taskRows.filter((run) => run.status === 'done').length,
+        failed: taskRows.filter((run) => run.status === 'failed').length,
       },
-      incidents: {
-        total: incidentRows.length,
-        open: incidentRows.filter((row) => row.status === 'open' || row.status === 'proposed').length,
-        fused: incidentRows.filter((row) => row.status === 'fused').length,
-      },
+      incidents: incidentCounts,
       autonomy: state
         ? { accepted: state.accepted, ignored: state.ignored, complaints: state.complaints ?? 0 }
         : null,
@@ -563,3 +548,4 @@ const MAX_TIMEOUT = 2_147_000_000
 }
 
 export const defaultExport = { name, inject, apply }
+
