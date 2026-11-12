@@ -211,6 +211,25 @@ test('回滚：按批次撤回已采纳的事实', async () => {
   }
 })
 
+test('误点忽略可以恢复成待确认，再采纳', async () => {
+  const h = await boot()
+  try {
+    h.turn('我对花生过敏')
+    const item = await waitFor(async () => (await h.call('GET', '/api/v1/memory/candidates')).body.items?.[0], '候选')
+    await h.call('POST', '/api/v1/memory/candidates/decide', { id: item.id, allow: false })
+
+    const reopened = await h.call('POST', '/api/v1/memory/candidates/reopen', { id: item.id })
+    assert.equal(reopened.status, 200)
+    assert.equal(reopened.body.item.status, 'pending')
+
+    const accepted = await h.call('POST', '/api/v1/memory/candidates/decide', { id: item.id, allow: true })
+    assert.equal(accepted.body.item.status, 'accepted')
+    assert.equal(h.memory.ingested.length, 1)
+  } finally {
+    await h.dispose()
+  }
+})
+
 test('默认不调用 LLM', async () => {
   const h = await boot({ llmReply: '[{"subject":"主人","predicate":"喜欢","object":"拿铁"}]' })
   try {

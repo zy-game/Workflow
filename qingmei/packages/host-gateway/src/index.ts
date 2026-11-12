@@ -454,6 +454,16 @@ async function routeRequest(
       sendJson(res, 200, { facts })
       return
     }
+    if (pathname === '/api/v1/memory/profile' && method === 'GET') {
+      const memory = deps.resources.memory
+      if (!memory) {
+        sendJson(res, 503, { ok: false, error: 'no memory service' })
+        return
+      }
+      const entries = await memory.profile({ audience: 'owner' })
+      sendJson(res, 200, { entries })
+      return
+    }
     if (pathname === '/api/v1/memory/summary' && method === 'GET') {
       const memory = deps.resources.memory
       if (!memory) {
@@ -473,8 +483,25 @@ async function routeRequest(
       }
       const id = decodeURIComponent(pathname.slice('/api/v1/memory/facts/'.length))
       if (!id) throw new HttpError(400, 'id 必填')
+      const audit = deps.ctx.get('audit', false) as
+        | { append: (entry: Record<string, unknown>) => Promise<void> }
+        | undefined
       if (method === 'DELETE') {
-        sendJson(res, 200, { ok: true, deleted: await memory.forget([id]) })
+        const deleted = await memory.forget([id])
+        // 记忆的删除是纠错行为，要能查：谁在什么时候删了哪条
+        void audit
+          ?.append({
+            at: new Date(),
+            actorId: 'owner',
+            channel: 'web',
+            action: 'memory.fact.delete',
+            target: id,
+            decision: 'allow',
+            detail: { deleted },
+            traceId: `mem_${Date.now().toString(36)}`,
+          })
+          .catch(() => undefined)
+        sendJson(res, 200, { ok: true, deleted })
         return
       }
       const body = await readJsonBody(req)
@@ -488,6 +515,18 @@ async function routeRequest(
         ...(typeof record.salience === 'number' ? { salience: record.salience } : {}),
       })
       if (!updated) throw new HttpError(404, '事实不存在或没有可更新字段')
+      void audit
+        ?.append({
+          at: new Date(),
+          actorId: 'owner',
+          channel: 'web',
+          action: 'memory.fact.update',
+          target: id,
+          decision: 'allow',
+          detail: typeof record.object === 'string' ? { object: record.object } : {},
+          traceId: `mem_${Date.now().toString(36)}`,
+        })
+        .catch(() => undefined)
       sendJson(res, 200, { ok: true })
       return
     }    if (pathname === '/api/v1/memory' && method === 'GET') {

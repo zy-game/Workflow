@@ -688,6 +688,16 @@ test('记忆页 API：列表 / 修正 / 删除', async () => {
   })
   assert.equal(patch.status, 200)
 
+  const profile = await fetch(`${base}/api/v1/memory/profile`, { headers: auth })
+  assert.equal(profile.status, 200)
+  const profileBody = (await profile.json()) as { entries: { subject: string; facts: { object: string }[] }[] }
+  const ownerEntry = profileBody.entries.find((entry) => entry.subject === '主人')
+  assert.ok(ownerEntry, '画像应包含主人这一组')
+  assert.ok(
+    ownerEntry.facts.some((item) => item.object === '加奶咖啡'),
+    '画像要反映修正后的事实，而不是旧值',
+  )
+
   const del = await fetch(`${base}/api/v1/memory/facts/${fact.id}`, { method: 'DELETE', headers: auth })
   assert.equal(del.status, 200)
   const after = (await (await fetch(`${base}/api/v1/memory/facts`, { headers: auth })).json()) as {

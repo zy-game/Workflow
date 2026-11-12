@@ -56,6 +56,16 @@ test('qm-content 注册了内容层的全部路由并推送 content-updated', as
   assert.match(plugin, /'content-updated'/, 'qm-content 应把内容变更推到 SSE')
 })
 
+test('记忆页订阅候选/画像接口：采纳、恢复、撤回、画像', async () => {
+  const view = await readSource('views/MemoriesView.vue')
+  for (const key of ['memoryCandidates', 'memoryCandidateDecide', 'memoryCandidateReopen', 'memoryCandidateRollback', 'memoryProfile']) {
+    assert.ok(view.includes(`ENDPOINTS.${key}`), `MemoriesView 应调用 ENDPOINTS.${key}`)
+  }
+  for (const tab of ["tab = 'candidates'", "tab = 'profile'"]) {
+    assert.ok(view.includes(tab), `记忆页应有 ${tab} 的页签切换`)
+  }
+})
+
 test('导航与路由表一致：11 个面板都能落到视图文件', async () => {
   const router = await readSource('router.js')
   const nav = [

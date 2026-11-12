@@ -12,6 +12,8 @@ export const ENDPOINTS = {
   memoryCandidates: './api/v1/memory/candidates',
   memoryCandidateDecide: './api/v1/memory/candidates/decide',
   memoryCandidateRollback: './api/v1/memory/candidates/rollback',
+  memoryCandidateReopen: './api/v1/memory/candidates/reopen',
+  memoryProfile: './api/v1/memory/profile',
   conceptProposals: './api/v1/memory/concepts/proposals',
   conceptEvaluate: './api/v1/memory/concepts/evaluate',
   conceptApply: './api/v1/memory/concepts/apply',
@@ -73,3 +75,4 @@ export function resolveEndpoint(path) {
     typeof window !== 'undefined' ? String(window.__QM_SERVER_URL || '').replace(/\/+$/, '') : ''
   return base ? base + path.slice(1) : path
 }
+

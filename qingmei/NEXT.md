@@ -1,3 +1,13 @@
+### P1-⑦ 纠错复核与画像页（2026-11-12）
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `packages/host-gateway/src/index.ts` | 新增 `GET /api/v1/memory/profile`（owner 视角，memory.profile）；事实 PATCH/DELETE 写审计 `memory.fact.update / memory.fact.delete` |
+| `packages/qm-distill/src/index.ts` | 新增 `POST /api/v1/memory/candidates/reopen`：误点忽略/撤回的候选可恢复为待确认，reopen 也写审计 |
+| `apps/web/src/views/MemoriesView.vue` | 记忆页四个页签：事实 / 概念提案 / 待确认 / 画像；待确认里列出「最近忽略」（可恢复）与「最近采纳」（可整批撤回） |
+| `apps/web/src/lib/endpoints.js` | `memoryProfile`、`memoryCandidateReopen` |
+| 测试 | gateway：画像接口反映修正后的事实；qm-distill：忽略 → 恢复 → 采纳闭环；web 契约：四个页签与五个接口 |
+
 ### P1-⑥ 召回打分改进 + 是否上 embedding 的结论（2026-11-12）
 
 | 文件 | 改了什么 |

@@ -287,6 +287,34 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
   ctx.effect(() =>
     gateway.route({
       method: 'POST',
+      path: '/api/v1/memory/candidates/reopen',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const row = await candidates.get(id)
+        if (!row) {
+          res.status(404).send({ ok: false, error: '没有这条候选' })
+          return
+        }
+        if (row.status !== 'rejected' && row.status !== 'rolled_back') {
+          res.status(409).send({ ok: false, error: `候选是 ${row.status}，不需要恢复` })
+          return
+        }
+        await candidates.update(id, { status: 'pending', decided_at: null, fact_id: null })
+        const next = await candidates.get(id)
+        await auditDecision({ action: 'memory.candidate.reopen', decision: 'allow', row })
+        res.status(200).send({ ok: true, item: next })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
       path: '/api/v1/memory/candidates/rollback',
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const body = (req.body ?? {}) as Record<string, unknown>

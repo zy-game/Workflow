@@ -8,6 +8,8 @@ const proposals = ref([])
 const changes = ref([])
 const candidates = ref([])
 const accepted = ref([])
+const rejected = ref([])
+const profile = ref([])
 const stats = ref(null)
 const evaluations = ref({})
 const lastChangeId = ref('')
@@ -23,20 +25,25 @@ const appliedChanges = computed(() => changes.value.filter((item) => item.status
 async function load() {
   loading.value = true
   try {
-    const [factBody, statBody, proposalBody, changeBody, candidateBody, acceptedBody] = await Promise.all([
-      apiJson(ENDPOINTS.memoryFacts),
-      apiJson(ENDPOINTS.memoryStats).catch(() => ({ stats: null })),
-      apiJson(ENDPOINTS.conceptProposals).catch(() => ({ proposals: [] })),
-      apiJson(ENDPOINTS.conceptChanges).catch(() => ({ changes: [] })),
-      apiJson(ENDPOINTS.memoryCandidates).catch(() => ({ items: [] })),
-      apiJson(`${ENDPOINTS.memoryCandidates}?status=accepted&limit=10`).catch(() => ({ items: [] })),
-    ])
+    const [factBody, statBody, proposalBody, changeBody, candidateBody, acceptedBody, rejectedBody, profileBody] =
+      await Promise.all([
+        apiJson(ENDPOINTS.memoryFacts),
+        apiJson(ENDPOINTS.memoryStats).catch(() => ({ stats: null })),
+        apiJson(ENDPOINTS.conceptProposals).catch(() => ({ proposals: [] })),
+        apiJson(ENDPOINTS.conceptChanges).catch(() => ({ changes: [] })),
+        apiJson(ENDPOINTS.memoryCandidates).catch(() => ({ items: [] })),
+        apiJson(`${ENDPOINTS.memoryCandidates}?status=accepted&limit=10`).catch(() => ({ items: [] })),
+        apiJson(`${ENDPOINTS.memoryCandidates}?status=rejected&limit=10`).catch(() => ({ items: [] })),
+        apiJson(ENDPOINTS.memoryProfile).catch(() => ({ entries: [] })),
+      ])
     facts.value = Array.isArray(factBody?.facts) ? factBody.facts : []
     stats.value = statBody?.stats ?? null
     proposals.value = Array.isArray(proposalBody?.proposals) ? proposalBody.proposals : []
     changes.value = Array.isArray(changeBody?.changes) ? changeBody.changes : []
     candidates.value = Array.isArray(candidateBody?.items) ? candidateBody.items : []
     accepted.value = Array.isArray(acceptedBody?.items) ? acceptedBody.items : []
+    rejected.value = Array.isArray(rejectedBody?.items) ? rejectedBody.items : []
+    profile.value = Array.isArray(profileBody?.entries) ? profileBody.entries : []
     error.value = ''
   } catch (err) {
     error.value = err instanceof TypeError ? '无法连接服务' : err.message || '读取记忆失败'
@@ -52,6 +59,18 @@ async function decideCandidate(candidate, allow) {
     await load()
   } catch (err) {
     error.value = err.message || '候选处理失败'
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function reopenCandidate(candidate) {
+  busy.value = candidate.id
+  try {
+    await apiSend(ENDPOINTS.memoryCandidateReopen, { body: { id: candidate.id } })
+    await load()
+  } catch (err) {
+    error.value = err.message || '恢复失败'
   } finally {
     busy.value = ''
   }
@@ -214,6 +233,7 @@ onMounted(load)
       <button class="btn small" :class="{ ghost: tab !== 'candidates' }" type="button" @click="tab = 'candidates'">
         待确认 <span v-if="candidateCount">({{ candidateCount }})</span>
       </button>
+      <button class="btn small" :class="{ ghost: tab !== 'profile' }" type="button" @click="tab = 'profile'">画像</button>
     </div>
 
     <template v-if="tab === 'facts'">
@@ -303,7 +323,7 @@ onMounted(load)
       </div>
     </template>
 
-    <template v-else>
+    <template v-else-if="tab === 'candidates'">
       <p v-if="!loading && candidates.length === 0" class="empty">
         没有待确认的记忆。聊到「我住在…」「我对…过敏」这类陈述时，候选会出现在这里，点「采纳」才写入记忆。
       </p>
@@ -345,6 +365,41 @@ onMounted(load)
           </li>
         </ul>
       </div>
+      <div v-if="rejected.length" class="memory-history">
+        <h3>最近忽略（可恢复）</h3>
+        <ul class="list">
+          <li v-for="item in rejected" :key="item.id" class="item">
+            <div class="item-main">
+              <p class="item-title">{{ item.subject }} {{ item.predicate }} {{ item.object }}</p>
+              <p class="item-meta">规则 {{ item.rule }} · {{ new Date(item.decided_at || item.created_at).toLocaleString() }}</p>
+            </div>
+            <div class="item-actions">
+              <button class="btn small ghost" type="button" :disabled="busy === item.id" @click="reopenCandidate(item)">
+                恢复
+              </button>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </template>
+
+    <template v-else>
+      <p v-if="!loading && profile.length === 0" class="empty">
+        画像还没有内容。画像按「主体」聚合高置信事实，私聊里会作为稳定背景注入。
+      </p>
+      <ul class="list">
+        <li v-for="entry in profile" :key="entry.subject" class="item">
+          <div class="item-main">
+            <p class="item-title">{{ entry.subject }}</p>
+            <p class="item-meta">
+              <span v-for="(item, index) in entry.facts" :key="index">
+                {{ item.predicate }} {{ item.object }}
+                <span v-if="index < entry.facts.length - 1"> · </span>
+              </span>
+            </p>
+          </div>
+        </li>
+      </ul>
     </template>
   </section>
 </template>
