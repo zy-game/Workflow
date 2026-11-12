@@ -33,8 +33,10 @@ import {
   type TurnChunk,
   type ThreadService,
   type TurnEnd,
+  type TaskRun,
+  type Scheduled,
 } from '@qingmei/core'
-import type { LlmService } from '@qingmei/core'
+import type { LlmService, ScheduleService, TaskService } from '@qingmei/core'
 
 export interface AgentConfig {
   /** 注入 system 消息的人格设定 */
@@ -51,6 +53,78 @@ const HISTORY_LIMIT = 20
 
 /** 出错时给用户看的固定开头 */
 const FALLBACK_PREFIX = '我这边出了点问题：'
+
+/**
+ * 从用户话里解析时间窗（只认常见说法，解析不了就返回 null，不做猜测）。
+ * 「上周三我让你改了什么」这类问题，召回必须先有时间范围，否则只能碰关键词。
+ */
+export function parseTimeRange(text: string, now: Date = new Date()): { since: Date; until: Date } | null {
+  const value = String(text ?? '')
+  const dayStart = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const DAILY = 86_400_000
+
+  const lastDays = /(?:最近|近)\s*(\d{1,3})\s*天/.exec(value)
+  if (lastDays) {
+    const days = Math.max(1, Number(lastDays[1]))
+    return { since: new Date(now.getTime() - days * DAILY), until: now }
+  }
+  if (/前天/.test(value)) {
+    const start = dayStart(now)
+    start.setDate(start.getDate() - 2)
+    return { since: start, until: new Date(start.getTime() + DAILY) }
+  }
+  if (/昨天|昨日/.test(value)) {
+    const start = dayStart(now)
+    start.setDate(start.getDate() - 1)
+    return { since: start, until: new Date(start.getTime() + DAILY) }
+  }
+  if (/今天|今日|刚才|刚刚/.test(value)) return { since: dayStart(now), until: now }
+  if (/本周|这周|这星期/.test(value)) {
+    const start = dayStart(now)
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
+    return { since: start, until: now }
+  }
+  if (/上周/.test(value)) {
+    const start = dayStart(now)
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - 7)
+    return { since: start, until: new Date(start.getTime() + 7 * DAILY) }
+  }
+  if (/上个月|上月/.test(value)) {
+    return {
+      since: new Date(now.getFullYear(), now.getMonth() - 1, 1),
+      until: new Date(now.getFullYear(), now.getMonth(), 1),
+    }
+  }
+  if (/本月|这个月/.test(value)) return { since: new Date(now.getFullYear(), now.getMonth(), 1), until: now }
+  if (/去年/.test(value)) {
+    return { since: new Date(now.getFullYear() - 1, 0, 1), until: new Date(now.getFullYear(), 0, 1) }
+  }
+  if (/今年/.test(value)) return { since: new Date(now.getFullYear(), 0, 1), until: now }
+  return null
+}
+
+/** 最近活动的确定性摘要：不调模型，直接从任务账本和日程生成 */
+export function formatRecentActivity(input: { tasks: TaskRun[]; schedules: Scheduled[]; now?: Date }): string {
+  const now = input.now ?? new Date()
+  const weekAgo = now.getTime() - 7 * 86_400_000
+  const recent = input.tasks.filter((run) => run.createdAt.getTime() >= weekAgo)
+  const done = recent.filter((run) => run.status === 'done')
+  const failed = recent.filter((run) => run.status === 'failed')
+  const lines: string[] = []
+  if (recent.length > 0) {
+    lines.push(`任务：7 天内完成 ${done.length}，失败 ${failed.length}`)
+    for (const run of done.slice(0, 5)) lines.push(`- 完成：${run.title}`)
+    for (const run of failed.slice(0, 3)) lines.push(`- 失败：${run.title}`)
+  }
+  const upcoming = input.schedules
+    .filter((item) => item.nextAt.getTime() >= now.getTime())
+    .sort((a, b) => a.nextAt.getTime() - b.nextAt.getTime())
+    .slice(0, 3)
+  for (const item of upcoming) {
+    lines.push(`- 日程：${item.nextAt.toLocaleString('zh-CN')} ${item.text}`)
+  }
+  return lines.join('\n')
+}
 
 /**
  * 输出卫生：用户不该看到内部工具名、MCP 前缀、绝对路径与权限策略。
@@ -152,6 +226,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
   let profileService: ConversationProfileService | undefined
   let skillService: SkillService | undefined
   let auditService: AuditService | undefined
+  let taskService: TaskService | undefined
+  let scheduleService: ScheduleService | undefined
   ctx.inject(['harness'], (sub) => { harness = sub.harness })
   ctx.inject(['history'], (sub) => { historyService = sub.history })
   ctx.inject(['identity'], (sub) => { identityService = sub.identity })
@@ -159,6 +235,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ctx.inject(['conversationProfile'], (sub) => { profileService = sub.conversationProfile })
   ctx.inject(['skills'], (sub) => { skillService = sub.skills })
   ctx.inject(['audit'], (sub) => { auditService = sub.audit })
+  ctx.inject(['task'], (sub) => { taskService = sub.task })
+  ctx.inject(['schedule'], (sub) => { scheduleService = sub.schedule })
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
@@ -290,14 +368,18 @@ export function apply(ctx: Context, config: AgentConfig): void {
     let profileText = ''
     /** 跨端缝合：同一会话关联的 thread 摘要 */
     let threadText = ''
+    /** 最近 7 天活动：任务/日程的确定性摘要，回答「最近在忙什么」不靠模型 */
+    let activityText = ''
     if (memory) {
       try {
+        const range = parseTimeRange(userText)
         memoryText = (await memory.recall({
-        text: userText,
-        audience,
-        sessionId,
-        ...(message.deviceId ? { device: message.deviceId } : {}),
-      })).text
+          text: userText,
+          audience,
+          sessionId,
+          ...(message.deviceId ? { device: message.deviceId } : {}),
+          ...(range ? { since: range.since, until: range.until } : {}),
+        })).text
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
       }
@@ -361,8 +443,21 @@ export function apply(ctx: Context, config: AgentConfig): void {
       }
     }
 
+    if (audience === 'owner' && (taskService || scheduleService)) {
+      try {
+        const [tasks, schedules] = await Promise.all([
+          taskService ? taskService.list(100) : Promise.resolve([]),
+          scheduleService ? scheduleService.list() : Promise.resolve([]),
+        ])
+        activityText = formatRecentActivity({ tasks, schedules })
+      } catch {
+        // 增强项，失败不影响对话
+      }
+    }
+
     const memoryBlock = [
       profileText ? `【关于主人】\n${profileText}` : '',
+      activityText ? `【最近 7 天】\n${activityText}` : '',
       summaryText ? `【会话摘要】\n${summaryText}` : '',
       threadText ? `【跨端进展】\n${threadText}` : '',
       memoryText ? `【已知记忆】\n${memoryText}` : '',
@@ -563,3 +658,6 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+

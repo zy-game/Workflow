@@ -640,6 +640,9 @@ export interface RecallQuery {
   sessionId?: string
   /** 当前设备域；匹配的事实召回 +0.1 */
   device?: string
+  /** 只看这个时间窗内产生的记忆（按 occurredAt/created_at 过滤） */
+  since?: Date
+  until?: Date
 }
 
 export interface RecallResult {
@@ -1419,6 +1422,7 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 
 
 

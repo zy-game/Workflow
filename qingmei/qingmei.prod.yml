@@ -63,9 +63,12 @@
 - name: '@qingmei/qm-autonomy'
   config:
     tickMs: 300000
-    dailyBudget: 3
+    # 先按每天 1 条观察：主动开场/提醒都在预算内，静默时段照旧
+    dailyBudget: 1
     quietStart: 23
     quietEnd: 8
+    # 装上主动模块：开场、督促、休息、故障提案、群策略
+    modules: true
 
 # 任务账本与调度：同一时间最多 2 个 harness run，其余排队；重启后恢复
 - name: '@qingmei/qm-task'
@@ -122,5 +125,6 @@
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
+
 
 

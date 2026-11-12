@@ -283,7 +283,8 @@ test('手动会话收尾：user 轮次里的陈述进入候选，来源标记为
     assert.deepEqual(predicates, ['住在', '过敏'])
     assert.ok(items.every((item: { session_id: string }) => item.session_id === 'dev_test'))
     assert.ok(items.every((item: { batch_id: string }) => item.batch_id === 'ingest:dev_test:sess_1'))
-    assert.equal(h.memory.ingested.length, 0)
+    assert.equal(h.memory.ingested.filter((item) => item.kind === 'fact').length, 0, '没采纳之前不能写事实')
+    assert.equal(h.memory.ingested.filter((item) => item.kind === 'episode').length, 1, '会话摘要要落成 episode')
   } finally {
     await h.dispose()
   }
@@ -302,4 +303,5 @@ test('同一会话重复上报不会产生重复候选', async () => {
     await h.dispose()
   }
 })
+
 

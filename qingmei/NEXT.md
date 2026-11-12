@@ -1,3 +1,15 @@
+### 记忆 P0 + 自动化开启（2026-11-12）
+
+| 项 | 改动 | 证据 |
+| --- | --- | --- |
+| 时间维度 | `RecallQuery` 加 `since/until`；神经元召回按 `created_at`（尊重 `occurredAt`）过滤，并加近期加权 `1 + 0.25·e^(−age/30天)` | `neuron.test.ts` 时间窗用例：60 天前的事实不出现在「最近 30 天」里 |
+| 时间解析 | `parseTimeRange()`：今天/昨天/前天/最近 N 天/本周/上周/本月/上月/去年/今年，解析不了返回 null | `activity.test.ts` 5 条 |
+| 最近 7 天 | 聊天上下文注入【最近 7 天】：任务完成/失败 + 最近 5 条 + 未来 3 条日程，确定性生成，只对 owner | 同上 |
+| 手动会话进记忆 | `devices/ingest` → `qm/session/ingested` → `qm-distill` 抽候选 **并落一条 episode**（origin=`doc:<device>:<session>`） | 生产实测：episode 从 4 变 5，最新一条 `text=smoke 会话摘要：讨论了记忆分层` |
+| 自动化开启 | 生产 `modules: true`、`dailyBudget: 1`、切 A1 | `/api/v1/incidents` 与 `/api/v1/conversations/suggestions` 均 200；预算 `used=2/limit=1` 会拦截发送 |
+
+回滚：`POST /api/v1/autonomy/trust {"level":"A0"}` 一条接口切回观察模式。
+
 ### 技术债 7：手动会话也能进记忆了（2026-11-12）
 
 之前 `dsh-hook / worker ingest` 只把摘要写进 `qm_session_digest`，facts 恒空——你在 DSH GUI 里干的活，

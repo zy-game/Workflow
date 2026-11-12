@@ -219,6 +219,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
   async function onSessionIngested(input: {
     deviceId?: string
     sessionId?: string
+    summary?: string
     turns?: { role?: string; text?: string }[]
   }): Promise<void> {
     if (!enabled) return
@@ -248,6 +249,26 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
       sessionId: deviceId,
       traceId: null,
     })
+
+    // 摘要本身也落一条 episode：即使没有可抽的事实，「在 DSH 里做过什么」也要能被召回
+    const summary = String(input.summary ?? '').trim()
+    const episodeText = (summary || texts.join('\n')).slice(0, 2000)
+    if (episodeText) {
+      await memory.ingest([
+        {
+          kind: 'episode',
+          subject: `device:${deviceId}`,
+          predicate: '会话',
+          object: episodeText,
+          confidence: 0.7,
+          salience: 0.4,
+          sensitivity: 'private',
+          audience: 'owner',
+          origin: { kind: 'doc', id: `${deviceId}:${sessionId}` },
+          occurredAt: new Date(),
+        },
+      ])
+    }
   }
 
   ctx.events.on(EVENTS.turnEnd, (end: TurnEnd) => {
@@ -397,6 +418,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
 export const defaultExport = { name, inject, apply }
 export type { FactCandidate }
 export { extractCandidates }
+
 
 
 

@@ -374,7 +374,8 @@ export class NeuronMemory extends MemoryService {
           ...(normalized.device ? { device: normalized.device } : {}),
           origin_kind: normalized.origin.kind,
           origin_id: normalized.origin.id,
-          created_at: now,
+          // 事实的「发生时间」用于时间窗召回；不给就用入库时间
+          created_at: normalized.occurredAt?.getTime() ?? now,
           valid_to: null,
         })
         await this.bind(row.id, 'fact', `${row.subject} ${row.predicate} ${row.object}`)
@@ -391,7 +392,7 @@ export class NeuronMemory extends MemoryService {
         confidence: normalized.confidence,
         origin_kind: normalized.origin.kind,
         origin_id: normalized.origin.id,
-        created_at: Date.now(),
+        created_at: normalized.occurredAt?.getTime() ?? Date.now(),
         valid_to: null,
       })
       await this.bind(row.id, 'episode', row.text)
@@ -404,8 +405,12 @@ export class NeuronMemory extends MemoryService {
     await this.ready
     const audience = query.audience?.trim() || 'owner'
     const limit = clampInt(query.limit ?? this.limit, 1, 50)
-    const facts = (await this.facts.find({})).filter((row) => visible(row, audience))
-    const episodes = (await this.episodes.find({})).filter((row) => visibleEpisode(row, audience))
+    const since = query.since?.getTime() ?? null
+    const until = query.until?.getTime() ?? null
+    const inWindow = (at: number): boolean =>
+      (since === null || at >= since) && (until === null || at <= until)
+    const facts = (await this.facts.find({})).filter((row) => visible(row, audience) && inWindow(row.created_at))
+    const episodes = (await this.episodes.find({})).filter((row) => visibleEpisode(row, audience) && inWindow(row.created_at))
     if (facts.length === 0 && episodes.length === 0) return { facts: [], text: '' }
 
     const rawTokens = tokenize(query.text)
@@ -476,7 +481,10 @@ export class NeuronMemory extends MemoryService {
         const subject = flattenForMatch(fact.subject)
         if (subject.length >= 2 && queryText.includes(subject)) score += 1
       }
-      ranked.push({ score, id: ownerId, kind: fact ? 'fact' : 'episode' })
+      // 时间维度：越近的记忆越容易被想起（30 天半衰），长时间不用的靠突触衰减自然退后
+      const ageDays = Math.max(0, (Date.now() - row.created_at) / 86_400_000)
+      const recency = 1 + 0.25 * Math.exp(-ageDays / 30)
+      ranked.push({ score: score * recency, id: ownerId, kind: fact ? 'fact' : 'episode' })
     }
     if (ranked.length === 0) return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
 
@@ -1123,3 +1131,6 @@ export function apply(ctx: Context, config: NeuronMemoryConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+

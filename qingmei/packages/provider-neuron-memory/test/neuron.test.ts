@@ -245,3 +245,21 @@ test('stats：图规模可用于自治观察', async () => {
     await dispose()
   }
 })
+
+test('recall：时间窗过滤只返回窗口内的记忆', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    const old = new Date(Date.now() - 60 * 86_400_000)
+    await ctx.memory.ingest([
+      { kind: 'fact', subject: '主人', predicate: '喜欢', object: '手冲咖啡', confidence: 0.9, sensitivity: 'private', origin: ORIGIN, occurredAt: old },
+      { kind: 'fact', subject: '主人', predicate: '住在', object: '杭州', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+    ])
+    const recent = await ctx.memory.recall({ text: '咖啡', since: new Date(Date.now() - 30 * 86_400_000) })
+    assert.ok(!recent.text.includes('咖啡'), '60 天前的事实不该出现在最近 30 天里')
+    const all = await ctx.memory.recall({ text: '咖啡' })
+    assert.ok(all.text.includes('咖啡'))
+  } finally {
+    await dispose()
+  }
+})
+
