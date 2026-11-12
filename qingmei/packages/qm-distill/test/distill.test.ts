@@ -305,3 +305,22 @@ test('同一会话重复上报不会产生重复候选', async () => {
 })
 
 
+
+test('教训/决策：进同一个复核队列，采纳后写入对应 kind', async () => {
+  const h = await boot()
+  try {
+    h.turn('以后不要用 NSIS 做安装包了')
+    const item = await waitFor(async () => (await h.call('GET', '/api/v1/memory/candidates')).body.items?.[0], '教训候选')
+    assert.equal(item.kind, 'lesson')
+    assert.equal(item.predicate, '教训')
+    assert.match(item.object, /不要用 NSIS/)
+
+    const decided = await h.call('POST', '/api/v1/memory/candidates/decide', { id: item.id, allow: true })
+    assert.equal(decided.status, 200)
+    const written = h.memory.ingested.find((record) => record.kind === 'lesson')
+    assert.ok(written, '采纳后应写入 lesson')
+    assert.match(String(written?.object), /不要用 NSIS/)
+  } finally {
+    await h.dispose()
+  }
+})

@@ -97,6 +97,9 @@ importers:
       '@qingmei/qm-distill':
         specifier: workspace:*
         version: link:../../packages/qm-distill
+      '@qingmei/qm-evolve':
+        specifier: workspace:*
+        version: link:../../packages/qm-evolve
       '@qingmei/qm-history':
         specifier: workspace:*
         version: link:../../packages/qm-history
@@ -379,6 +382,25 @@ importers:
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../provider-store-sqlite
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-evolve:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/service-channel':
+        specifier: workspace:*
+        version: link:../service-channel
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway

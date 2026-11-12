@@ -1,3 +1,13 @@
+### 自我进化 P4：教训/决策 + 技能草稿（2026-11-12）
+
+| 项 | 实现 | 证据 |
+| --- | --- | --- |
+| 教训/决策抽取 | `qm-distill/learn.ts`：以后/下次不要、踩坑、决定/采用/选型；问句与假设跳过 | `learn.test.ts` 4 条 + 凝练端到端：候选 `kind=lesson`，采纳写入 `lesson` |
+| 同一个复核队列 | 候选表加 `kind`/`text`；`/memory/candidates/decide` 按 kind 写记忆 | `distill.test.ts` 新增用例 |
+| 技能草稿 | 新插件 `qm-evolve`：任务 `done` 且结果 ≥20 字 → `qm_skill_draft`（步骤/结果/产物），上限 20 | `evolve.test.ts` 3 条；生产 E2E：任务完成后草稿出现，已拒绝清理 |
+| 采纳/回滚 | `/api/v1/skills/drafts/install|reject`；技能安装走 `qm-skill`，回滚走 `/skills/rollback` | 单测断言采纳才 install |
+| 装配 | dev/prod 各 23 项；`apps/server` 依赖补齐；架构 owner 加 `qm_skill_draft` | gate 432 全绿 |
+
 ### 记忆 P2：关系图（2026-11-12）
 
 | 项 | 实现 | 证据 |

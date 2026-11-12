@@ -27,6 +27,7 @@ import {
   type TurnEnd,
 } from '@qingmei/core'
 import { extractCandidates, type FactCandidate } from './extract.ts'
+import { extractLearnings, type LearningCandidate } from './learn.ts'
 
 export interface DistillConfig {
   /** 总开关，默认 true */
@@ -53,6 +54,10 @@ const DEFAULT_LLM_DAILY_LIMIT = 20
 type CandidateStatus = 'pending' | 'accepted' | 'rejected' | 'rolled_back'
 
 interface CandidateRow extends Row {
+  /** 缺省 fact：老数据没有这个字段 */
+  kind?: 'fact' | 'lesson' | 'decision'
+  /** 教训/决策的原文 */
+  text?: string
   subject: string
   predicate: string
   object: string
@@ -169,26 +174,33 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
 
   /** 统一的入队逻辑：并发下也是串行调用（见 distillChain），查重和配额都在这里 */
   async function enqueue(
-    drafts: FactCandidate[],
+    drafts: (FactCandidate | LearningCandidate)[],
     meta: { batchId: string; sessionId: string; traceId: string | null },
   ): Promise<void> {
     if (drafts.length === 0) return
     const pending = await candidates.count({ where: { status: 'pending' } })
     let room = maxPending - pending
     for (const draft of drafts) {
+      const learning = 'text' in draft
+      const fact = draft as FactCandidate
+      const lesson = draft as LearningCandidate
+      const subject = learning ? '主人' : fact.subject
+      const predicate = learning ? (lesson.kind === 'lesson' ? '教训' : '决策') : fact.predicate
+      const object = learning ? lesson.text : fact.object
       if (room <= 0) {
-        ctx.logger?.warn?.(`[qm-distill] 待确认队列已满（${maxPending}），丢弃：${draft.predicate}=${draft.object}`)
+        ctx.logger?.warn?.(`[qm-distill] 待确认队列已满（${maxPending}），丢弃：${predicate}=${object}`)
         break
       }
       const same = await candidates.find({
-        where: { subject: draft.subject, predicate: draft.predicate, object: draft.object },
+        where: { subject, predicate, object },
       })
       if (same.some((row) => row.status === 'pending' || row.status === 'accepted')) continue
       await candidates.insert({
         id: uid('cand'),
-        subject: draft.subject,
-        predicate: draft.predicate,
-        object: draft.object,
+        ...(learning ? { kind: draft.kind, text: draft.text } : {}),
+        subject,
+        predicate,
+        object,
         confidence: draft.confidence,
         rule: draft.rule,
         status: 'pending',
@@ -209,7 +221,10 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
     const text = String(end.userText ?? '').trim()
     if (!text) return
 
-    const drafts = extractCandidates(text).filter((item) => item.confidence >= minConfidence)
+    const drafts: (FactCandidate | LearningCandidate)[] = extractCandidates(text).filter(
+      (item) => item.confidence >= minConfidence,
+    )
+    drafts.push(...extractLearnings(text).filter((item) => item.confidence >= minConfidence))
     if (config.llmExtract === true) drafts.push(...(await llmDrafts(text)))
     if (drafts.length === 0) return
     await enqueue(drafts, { batchId: end.traceId, sessionId: end.sessionId, traceId: end.traceId })
@@ -234,7 +249,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
     if (texts.length === 0) return
 
     const seen = new Set<string>()
-    const drafts: FactCandidate[] = []
+    const drafts: (FactCandidate | LearningCandidate)[] = []
     for (const text of texts) {
       for (const draft of extractCandidates(text)) {
         if (draft.confidence < minConfidence) continue
@@ -242,6 +257,13 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
         if (seen.has(key)) continue
         seen.add(key)
         drafts.push(draft)
+      }
+      for (const learning of extractLearnings(text)) {
+        if (learning.confidence < minConfidence) continue
+        const key = `${learning.kind}|${learning.text}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        drafts.push(learning)
       }
     }
     await enqueue(drafts, {
@@ -354,7 +376,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
         }
 
         const record: MemoryRecord = {
-          kind: 'fact',
+          kind: row.kind ?? 'fact',
           subject: row.subject,
           predicate: row.predicate,
           object: row.object,
@@ -435,6 +457,13 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
 export const defaultExport = { name, inject, apply }
 export type { FactCandidate }
 export { extractCandidates }
+
+
+
+
+
+
+
 
 
 
