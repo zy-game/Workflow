@@ -4,9 +4,6 @@ contextBridge.exposeInMainWorld('qmDesktop', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   probeServer: (input) => ipcRenderer.invoke('settings:probe', input),
-  writeWorkerConfig: () => ipcRenderer.invoke('agent:worker-config'),
-  startWorker: () => ipcRenderer.invoke('agent:worker-start'),
-  getDeviceId: () => ipcRenderer.invoke('device:id'),
   popupMenu: () => ipcRenderer.invoke('menu:popup'),
   quit: () => ipcRenderer.send('app:quit'),
   setIgnoreMouseEvents: (ignore) => ipcRenderer.send('window:ignore-mouse', Boolean(ignore)),
@@ -26,5 +23,6 @@ contextBridge.exposeInMainWorld('qmDesktop', {
     ipcRenderer.on('show-usage', () => callback())
   },
 })
+
 
 

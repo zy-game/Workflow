@@ -284,7 +284,8 @@ test('手动会话收尾：user 轮次里的陈述进入候选，来源标记为
     assert.ok(items.every((item: { session_id: string }) => item.session_id === 'dev_test'))
     assert.ok(items.every((item: { batch_id: string }) => item.batch_id === 'ingest:dev_test:sess_1'))
     assert.equal(h.memory.ingested.filter((item) => item.kind === 'fact').length, 0, '没采纳之前不能写事实')
-    assert.equal(h.memory.ingested.filter((item) => item.kind === 'episode').length, 1, '会话摘要要落成 episode')
+    assert.equal(h.memory.ingested.filter((item) => item.kind === 'episode').length, 2, '每个 user 轮次要落一条 episode（细节不丢）')
+    assert.ok(h.memory.ingested.some((item) => item.kind === 'episode' && String(item.object).includes('我住在杭州')))
   } finally {
     await h.dispose()
   }
@@ -324,3 +325,4 @@ test('教训/决策：进同一个复核队列，采纳后写入对应 kind', as
     await h.dispose()
   }
 })
+

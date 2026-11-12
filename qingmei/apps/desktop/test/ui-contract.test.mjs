@@ -31,8 +31,7 @@ test('preload 只暴露最小 API', () => {
   assert.match(preload, /getSettings/)
   assert.match(preload, /saveSettings/)
   assert.match(preload, /popupMenu/)
-  assert.match(preload, /writeWorkerConfig/)
-  assert.match(preload, /startWorker/)
+  assert.doesNotMatch(preload, /writeWorkerConfig|startWorker|getDeviceId/)
   assert.doesNotMatch(preload, /require\('node:fs'\)/)
 })
 
@@ -51,10 +50,6 @@ test('界面元素齐全', () => {
     'settings-modal',
     'settings-server',
     'settings-token',
-    'settings-setup-worker',
-    'settings-start-worker',
-    'settings-setup-worker',
-    'settings-agent-status',
     'settings-scale',
     'settings-font-scale',
     'settings-sound',
@@ -78,6 +73,12 @@ test('界面元素齐全', () => {
   for (const clip of ['idle-breath', 'idle-look', 'sleep', 'think', 'eat-rice', 'drag', 'click-happy', 'click-wave', 'click-shy', 'click-pout', 'click-tickle', 'fun-mirror', 'fun-whale', 'fun-water']) {
     assert.ok(existsSync(join(root, 'renderer', 'assets', 'webm', clip + '.webm')), '缺少动画 ' + clip + '.webm')
   }
+})
+
+test('桌宠不再内置 worker：聊天只走服务器', () => {
+  assert.doesNotMatch(app, /sendViaWorker|127\\.0\\.0\\.1:7431|workerSessionId/)
+  assert.doesNotMatch(main, /harness-worker|startWorker|ensureWorker/)
+  assert.ok(!pkg.build.extraResources.some((item) => String(item.to || '').startsWith('worker')))
 })
 
 test('通知与输入走现有 Web 协议', () => {
@@ -121,7 +122,9 @@ test('交互：点击/右键/拖动/设置', () => {
   assert.match(main, /setIgnoreMouseEvents/)
   assert.match(preload, /setIgnoreMouseEvents/)
   assert.doesNotMatch(html, /id="drag-handle"|id="status-dot"/)
+  assert.doesNotMatch(html, /worker|Worker/, '桌宠不再有 worker 入口')
   assert.match(app, /dataset\.state/)
   assert.match(app, /unstable/)
   assert.match(css, /pet-stutter/)
 })
+

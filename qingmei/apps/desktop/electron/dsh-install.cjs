@@ -114,7 +114,9 @@ function installDshPlugins({ home = os.homedir(), token, api, workspacePath, plu
       text: `- id: qingmei-hook
   name: "@qingmei/dsh-hook"
   config:
-    endpoint: http://127.0.0.1:7431/session/ingest`,
+    api: "${String(api).replace(/"/g, '')}"
+    token: "${String(token).replace(/"/g, '')}"
+    deviceId: "dev-dsh-${os.hostname().replace(/[^a-zA-Z0-9]+/g, '-')}"`,
     },
   })
 
@@ -127,3 +129,4 @@ function installDshPlugins({ home = os.homedir(), token, api, workspacePath, plu
 }
 
 module.exports = { installDshPlugins, dshInstalled }
+

@@ -235,7 +235,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
     deviceId?: string
     sessionId?: string
     summary?: string
-    turns?: { role?: string; text?: string }[]
+    turns?: { role?: string; text?: string; at?: number }[]
   }): Promise<void> {
     if (!enabled) return
     const deviceId = String(input.deviceId ?? '').trim()
@@ -273,24 +273,48 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
     })
 
     // 摘要本身也落一条 episode：即使没有可抽的事实，「在 DSH 里做过什么」也要能被召回
-    const summary = String(input.summary ?? '').trim()
-    const episodeText = (summary || texts.join('\n')).slice(0, 2000)
-    if (episodeText) {
-      await memory.ingest([
-        {
+    // 逐轮落 episode：细节比一句摘要更不容易失真；摘要只在没有轮次时兜底
+    const turns = (input.turns ?? []).filter(
+      (turn): turn is { role?: string; text: string; at?: number } =>
+        typeof turn?.text === 'string' && turn.text.trim().length > 0,
+    )
+    const episodes: MemoryRecord[] = []
+    for (let index = 0; index < turns.length && episodes.length < 20; index += 1) {
+      const turn = turns[index]!
+      if (turn.role !== 'user') continue
+      const reply = turns[index + 1]?.role === 'assistant' ? turns[index + 1] : undefined
+      const text = `主人：${turn.text.trim()}${reply ? `\n青梅：${reply.text.trim()}` : ''}`.slice(0, 2000)
+      episodes.push({
+        kind: 'episode',
+        subject: `device:${deviceId}`,
+        predicate: '会话',
+        object: text,
+        confidence: 0.7,
+        salience: 0.45,
+        sensitivity: 'private',
+        audience: 'owner',
+        origin: { kind: 'doc', id: `${deviceId}:${sessionId}:${index}` },
+        occurredAt: turn.at ? new Date(turn.at) : new Date(),
+      })
+    }
+    if (episodes.length === 0) {
+      const fallback = (String(input.summary ?? '').trim() || texts.join('\n')).slice(0, 2000)
+      if (fallback) {
+        episodes.push({
           kind: 'episode',
           subject: `device:${deviceId}`,
           predicate: '会话',
-          object: episodeText,
+          object: fallback,
           confidence: 0.7,
           salience: 0.4,
           sensitivity: 'private',
           audience: 'owner',
           origin: { kind: 'doc', id: `${deviceId}:${sessionId}` },
           occurredAt: new Date(),
-        },
-      ])
+        })
+      }
     }
+    if (episodes.length > 0) await memory.ingest(episodes)
   }
 
   ctx.events.on(EVENTS.turnEnd, (end: TurnEnd) => {
@@ -457,6 +481,7 @@ export function apply(ctx: Context, config: DistillConfig = {}): void {
 export const defaultExport = { name, inject, apply }
 export type { FactCandidate }
 export { extractCandidates }
+
 
 
 

@@ -1,3 +1,12 @@
+### 桌宠瘦身：移除 worker，会话细节直报（2026-11-13）
+
+- 桌宠只保留形象/聊天入口/控制/提示；聊天一律 `POST /api/v1/messages`，不再先试本地 `127.0.0.1:7431`；
+- 删除 worker 运行时、IPC、设置里的「写配置/启动 Worker」、打包资源与 `scripts/harness-worker.mjs`；
+- `dsh-hook` 改为直接 `POST /api/v1/devices/ingest`（api/token/deviceId），逐轮原文 + 工具事件，不再经 worker 转发；
+- `qm-distill` 收到会话后按「user 轮次 + 对应 assistant 回复」逐条落 episode（最多 20 条），摘要只在无轮次时兜底——细节不再被一句摘要覆盖；
+- 生产验证：向 `/devices/ingest` 提交两轮会话，`qm_episode` 里出现逐轮原文「主人：我周三要去上海出差，住静安 / 青梅：…」；
+- 桌面 0.1.9 已发布（无 worker）；gate 459 绿。
+
 ### 修复：派发任务跑错工作区（2026-11-13）
 
 - `dsh-companion` 之前只读 `task.cwd`（服务端给的是 `task.target.cwd`），找不到时回退到 `workspacePath`（E:\Workflow），导致三国任务在 Workflow 里开会话；

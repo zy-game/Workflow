@@ -1,6 +1,6 @@
 {
   "name": "qingmei-desktop",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -44,21 +44,6 @@
           "**/*",
           "!test/**",
           "!*.tgz"
-        ]
-      },
-      {
-        "from": "../../scripts",
-        "to": "worker/scripts",
-        "filter": [
-          "harness-worker.mjs"
-        ]
-      },
-      {
-        "from": "../../packages/provider-dsh-acp",
-        "to": "worker/packages/provider-dsh-acp",
-        "filter": [
-          "src/**/*",
-          "package.json"
         ]
       }
     ],

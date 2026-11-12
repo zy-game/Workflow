@@ -117,14 +117,7 @@
           <label><input id="settings-notify-hidden" type="checkbox" checked /> 隐藏时系统通知</label>
           <label><input id="settings-hide-fullscreen" type="checkbox" /> 全屏时自动隐藏</label>
         </div>
-        <div class="settings-agent">
-          <p class="settings-note">本机 Harness：worker 负责 ACP 会话，青梅只和设备队列通信。</p>
-          <div class="settings-actions">
-            <button id="settings-setup-worker" type="button" class="ghost">写 Worker 配置</button>
-            <button id="settings-start-worker" type="button" class="ghost">启动 Worker</button>
-          </div>
-          <p id="settings-agent-status" class="settings-note" hidden></p>
-        </div>
+
         <p id="settings-error" class="settings-error" hidden></p>
         <div class="settings-actions">
           <button id="settings-test" type="button" class="ghost">测试连接</button>
@@ -138,4 +131,5 @@
     <script type="module" src="./app.mjs"></script>
   </body>
 </html>
+
 

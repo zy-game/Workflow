@@ -10,8 +10,6 @@ const desktop = window.qmDesktop ?? {
   getSettings: async () => ({ serverUrl: 'http://127.0.0.1:7410', token: '' }),
   saveSettings: async () => ({ ok: true }),
   probeServer: async () => ({ ok: false, error: '仅桌面端支持连接测试' }),
-  writeWorkerConfig: async () => ({ ok: false, error: '仅桌面端支持' }),
-  startWorker: async () => ({ ok: false, error: '仅桌面端支持' }),
   getDeviceId: async () => '',
   popupMenu: async () => undefined,
   quit: () => undefined,
@@ -70,9 +68,6 @@ const el = {
   settingsServer: document.getElementById('settings-server'),
   settingsToken: document.getElementById('settings-token'),
 
-  settingsStartWorker: document.getElementById('settings-start-worker'),
-  settingsSetupWorker: document.getElementById('settings-setup-worker'),
-  settingsAgentStatus: document.getElementById('settings-agent-status'),
   settingsError: document.getElementById('settings-error'),
   settingsTest: document.getElementById('settings-test'),
   settingsCancel: document.getElementById('settings-cancel'),
@@ -96,7 +91,6 @@ let typingTimer = 0
 let stateResetTimer = 0
 let sending = false
 let historyLoaded = false
-let workerSessionId = null
 
 const KIND_LABEL = { message: '青梅', approval: '审批', error: '故障', pet: '青梅' }
 const PET_LINES = [
@@ -314,8 +308,7 @@ async function init() {
     else el.onboarding.hidden = false
   } else {
     connect()
-    void registerDevice()
-  }
+    }
 }
 
 function connect() {
@@ -753,66 +746,6 @@ async function sendImage(file) {
     finishThinking()
   }
 }
-async function sendViaWorker(text) {
-  try {
-    if (!workerSessionId) {
-      const created = await fetch('http://127.0.0.1:7431/session/new', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ harness: 'dsh' }),
-        signal: AbortSignal.timeout(1500),
-      })
-      if (!created.ok) return false
-      const detail = await created.json()
-      workerSessionId = detail.sessionId
-    }
-    const res = await fetch('http://127.0.0.1:7431/session/prompt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: workerSessionId, text, stream: true }),
-      signal: AbortSignal.timeout(120000),
-    })
-    if (!res.ok) {
-      workerSessionId = null
-      return false
-    }
-    if (!String(res.headers.get('content-type') || '').includes('text/event-stream')) {
-      const detail = await res.json()
-      finishThinking()
-      appendLine('assistant', detail.output || '（本机 ACP 没有返回文本）')
-      return true
-    }
-    const reader = res.body?.getReader()
-    if (!reader) return false
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let output = ''
-    let closed = false
-    finishThinking()
-    while (!closed) {
-      const read = await reader.read()
-      if (read.done) break
-      buffer += decoder.decode(read.value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const payload = JSON.parse(line.slice(6))
-        if (payload.text) {
-          output += payload.text
-          appendChunk(JSON.stringify({ text: payload.text }))
-        }
-        if (payload.output && !payload.text) output = payload.output
-        if (payload.stopReason) closed = true
-      }
-    }
-    finishAssistant(output || '（本机 ACP 没有返回文本）')
-    return true
-  } catch {
-    workerSessionId = null
-    return false
-  }
-}
 async function sendMessage(event) {
   event.preventDefault()
   const text = el.chatInput.value.trim()
@@ -835,12 +768,6 @@ async function sendMessage(event) {
   }
   appendLine('user', text)
   startThinking()
-  if (await sendViaWorker(text)) {
-    sending = false
-    el.chatSend.disabled = false
-    el.chatInput.focus()
-    return
-  }
   try {
     const res = await fetch(`${base}/api/v1/messages`, {
       method: 'POST',
@@ -866,29 +793,6 @@ async function sendMessage(event) {
   }
 }
 
-async function registerDevice() {
-  if (!settings.serverUrl || !settings.token) return
-  const deviceId =
-    (await desktop.getDeviceId?.().catch(() => '')) ||
-    localStorage.getItem('qm.device') ||
-    `desktop-${Math.random().toString(36).slice(2, 10)}`
-  localStorage.setItem('qm.device', deviceId)
-  try {
-    await fetch(`${settings.serverUrl.replace(/\/+$/, '')}/api/v1/devices/register`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${settings.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: deviceId,
-        name: navigator.userAgent.includes('Windows') ? 'Windows 桌面' : '桌面',
-        platform: navigator.userAgent.includes('Windows') ? 'windows' : 'unknown',
-        arch: navigator.userAgent.includes('x64') ? 'x64' : '',
-        workerVersion: 'desktop-0.1.0',
-      }),
-    })
-  } catch {
-    // 设备上报失败不阻塞聊天
-  }
-}
 function openSettings() {
   el.settingsServer.value = settings.serverUrl
   el.settingsToken.value = settings.token
@@ -1016,32 +920,7 @@ async function submitOnboarding(event, { save = true } = {}) {
   el.onboarding.hidden = true
   localStorage.setItem('qm.onboarded', '1')
   connect()
-  void registerDevice()
   void loadHistory()
-}
-
-async function writeWorkerConfig() {
-  if (!el.settingsAgentStatus) return
-  el.settingsAgentStatus.hidden = false
-  el.settingsAgentStatus.textContent = '正在写入 Worker 配置…'
-  try {
-    const result = await desktop.writeWorkerConfig()
-    el.settingsAgentStatus.textContent = result?.ok ? result.message : result?.error || '配置失败'
-  } catch (error) {
-    el.settingsAgentStatus.textContent = error instanceof Error ? error.message : '配置失败'
-  }
-}
-
-async function startWorker() {
-  if (!el.settingsAgentStatus) return
-  el.settingsAgentStatus.hidden = false
-  el.settingsAgentStatus.textContent = '正在启动 Worker…'
-  try {
-    const result = await desktop.startWorker()
-    el.settingsAgentStatus.textContent = result?.ok ? result.message : result?.error || '启动失败'
-  } catch (error) {
-    el.settingsAgentStatus.textContent = error instanceof Error ? error.message : '启动失败'
-  }
 }
 
 async function saveSettings(event) {
@@ -1078,8 +957,7 @@ async function saveSettings(event) {
     applyFontScale()
     localStorage.setItem('qm.onboarded', '1')
     historyLoaded = false
-    void registerDevice()
-    closeSettings()
+      closeSettings()
     connect()
   } catch (error) {
     showError(error instanceof Error ? error.message : '保存失败')
@@ -1226,8 +1104,6 @@ function bind() {
     void sendImage(file)
   })
   el.settingsForm.addEventListener('submit', (event) => void saveSettings(event))
-  el.settingsStartWorker?.addEventListener('click', () => void startWorker())
-  el.settingsSetupWorker?.addEventListener('click', () => void writeWorkerConfig())
   el.onboardingForm.addEventListener('submit', (event) => void submitOnboarding(event))
   el.onboardingTest.addEventListener('click', () => void submitOnboarding(null, { save: false }))
   el.onboardingSkip.addEventListener('click', () => {
@@ -1290,6 +1166,10 @@ function bind() {
 
 bind()
 void init()
+
+
+
+
 
 
 
