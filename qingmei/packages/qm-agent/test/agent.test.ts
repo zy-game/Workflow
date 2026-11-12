@@ -145,6 +145,8 @@ interface FakeOptions {
   failSend?: string
   /** 非空则 store 的 insert 抛错 */
   failInsert?: string
+  /** 不注册 llm，模拟「DSH 不可用且没有备用模型」 */
+  withoutLlm?: boolean
 }
 
 interface FakeState {
@@ -382,7 +384,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(fakes.FakeStore)
   await ctx.plugin(channelPlugin)
   await ctx.plugin(fakes.FakeGateway)
-  await ctx.plugin(fakes.FakeLlm)
+  if (!options.withoutLlm) await ctx.plugin(fakes.FakeLlm)
   await ctx.plugin(fakes.FakeMemory)
   await ctx.plugin(fakes.FakeProfile)
   await ctx.plugin(fakes.FakeIdentity)
@@ -576,6 +578,20 @@ test('模型出错：兜底回复、turn/end 仍发出且 ok=false、历史照�
     ],
   )
   assert.deepEqual(h.state.sent[0].blocks, [{ type: 'text', text: expected }])
+})
+
+test('DSH 不可用且没配 LLM：明确失败文案，不静默假装成功', async () => {
+  const h = await boot({ chunks: [], withoutLlm: true })
+
+  h.ctx.events.emit(EVENTS.inbound, inbound('帮我整理会议纪要'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+
+  assert.equal(h.chunks.length, 0, '没有执行器就不该有流式输出')
+  assert.equal(h.ends[0]?.ok, false)
+  assert.match(h.ends[0]?.text ?? '', /没有可用的执行器/)
+  const sent = h.state.sent.at(-1)
+  const text = (sent?.blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
+  assert.match(text, /没有可用的执行器/, '用户要看到明确原因，而不是空白或假成功')
 })
 
 test('同一会话的两个回合串行执行，后一回合能看到前一回合的历史', async () => {
