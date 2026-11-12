@@ -368,6 +368,24 @@ function createFakes(options: FakeOptions) {
   return { state, adapter, FakeStore, FakeGateway, FakeLlm, FakeMemory, FakeProfile, FakeIdentity }
 }
 
+class FakeDevices extends Service {
+  constructor(ctx: Context) { super(ctx, 'devices') }
+  async list() {
+    return [{ id: 'dev-1', name: 'Windows 桌面', workspaces: [{ id: 'ws-sanguo', title: '重生三国之修仙传', path: 'E:\\\\重生三国之修仙传' }] }]
+  }
+}
+
+class FakeTaskService extends Service {
+  readonly created: any[] = []
+  constructor(ctx: Context) { super(ctx, 'task') }
+  async list() { return [] }
+  async get() { return null }
+  async create(input: any) {
+    this.created.push(input)
+    return { id: 'run_fake_1', title: input.title, status: 'queued', createdAt: new Date() }
+  }
+}
+
 class FakeCost extends Service {
   constructor(ctx: Context) {
     super(ctx, 'cost')
@@ -398,6 +416,8 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(fakes.FakeProfile)
   await ctx.plugin(fakes.FakeIdentity)
   await ctx.plugin(FakeCost)
+  await ctx.plugin(FakeDevices)
+  await ctx.plugin(FakeTaskService)
   await ctx.plugin(historyPlugin)
   await ctx.plugin(agent, { persona: PERSONA })
   ctx.channel.register(fakes.adapter)
@@ -800,3 +820,23 @@ test('用量命令：直连 cost 服务，不调用模型', async () => {
   assert.match(text, /今日用量/)
   assert.match(text, /余额/)
 })
+
+test('项目问题：唯一工作区先问确认，确认后派任务到设备工作区', async () => {
+  const h = await boot()
+  h.ctx.events.emit(EVENTS.inbound, inbound('三国项目进度怎么样，有 bug 吗', 'owner'))
+  await waitFor(() => h.ends.length === 1, '第一轮')
+  const ask = h.state.sent.at(-1)?.blocks?.map((block) => ('text' in block ? block.text : '')).join('') ?? ''
+  assert.match(ask, /找到工作区/)
+  assert.match(ask, /回复「派」/)
+
+  h.ctx.events.emit(EVENTS.inbound, inbound('派', 'owner'))
+  await waitFor(() => h.ends.length === 2, '第二轮')
+  const created = (h.ctx.reflect.get('task', false) as unknown as { created: any[] }).created
+  assert.equal(created.length, 1)
+  assert.equal(created[0].target.executorId, 'device:dev-1')
+  assert.equal(created[0].target.workspaceId, 'ws-sanguo')
+  const reply = h.state.sent.at(-1)?.blocks?.map((block) => ('text' in block ? block.text : '')).join('') ?? ''
+  assert.match(reply, /已派/)
+})
+
+

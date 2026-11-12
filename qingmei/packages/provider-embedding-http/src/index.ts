@@ -62,6 +62,10 @@ export class HttpEmbedding extends EmbeddingService {
     }
   }
 
+  modelName(): string {
+    return `http:${this.model}`
+  }
+
   async embed(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return []
     const response = await this.fetchImpl(this.url, {
@@ -92,6 +96,7 @@ export function apply(ctx: Context, config: EmbeddingConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
 
 
 

@@ -12,6 +12,7 @@ const desktop = window.qmDesktop ?? {
   probeServer: async () => ({ ok: false, error: '仅桌面端支持连接测试' }),
   writeWorkerConfig: async () => ({ ok: false, error: '仅桌面端支持' }),
   startWorker: async () => ({ ok: false, error: '仅桌面端支持' }),
+  getDeviceId: async () => '',
   popupMenu: async () => undefined,
   quit: () => undefined,
   onOpenSettings: () => undefined,
@@ -867,7 +868,10 @@ async function sendMessage(event) {
 
 async function registerDevice() {
   if (!settings.serverUrl || !settings.token) return
-  const deviceId = localStorage.getItem('qm.device') || `desktop-${Math.random().toString(36).slice(2, 10)}`
+  const deviceId =
+    (await desktop.getDeviceId?.().catch(() => '')) ||
+    localStorage.getItem('qm.device') ||
+    `desktop-${Math.random().toString(36).slice(2, 10)}`
   localStorage.setItem('qm.device', deviceId)
   try {
     await fetch(`${settings.serverUrl.replace(/\/+$/, '')}/api/v1/devices/register`, {
@@ -878,7 +882,6 @@ async function registerDevice() {
         name: navigator.userAgent.includes('Windows') ? 'Windows 桌面' : '桌面',
         platform: navigator.userAgent.includes('Windows') ? 'windows' : 'unknown',
         arch: navigator.userAgent.includes('x64') ? 'x64' : '',
-        harnesses: [{ kind: 'desktop', acp: false, mcp: false }],
         workerVersion: 'desktop-0.1.0',
       }),
     })

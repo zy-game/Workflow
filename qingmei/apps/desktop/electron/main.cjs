@@ -8,7 +8,7 @@ const { app, BrowserWindow, Notification, dialog, ipcMain, Menu, safeStorage, sc
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
-const { writeWorkerConfig } = require('./agent-config.cjs')
+const { writeWorkerConfig, readWorkerConfig } = require('./agent-config.cjs')
 const { installDshPlugins } = require('./dsh-install.cjs')
 const { execFile, execFileSync, spawn } = require('node:child_process')
 const { defaultBoundsIn, isVisibleInDisplays, clampToDisplays, updateFeed, loginCommand } = require('./layout.cjs')
@@ -43,6 +43,7 @@ if (!process.argv.some((arg) => arg.startsWith('--user-data-dir'))) {
 
 let win = null
 let tray = null
+let workerStarted = false
 let settingsCache = null
 let fullscreenTimer = null
 let hiddenByFullscreen = false
@@ -120,6 +121,7 @@ function persist(settings) {
 }
 
 function startWorker() {
+  if (workerStarted) return { ok: true, message: 'Worker 已在运行' }
   const script = app.isPackaged
     ? path.join(process.resourcesPath, 'worker', 'scripts', 'harness-worker.mjs')
     : path.join(here, '..', '..', 'scripts', 'harness-worker.mjs')
@@ -131,7 +133,18 @@ function startWorker() {
     cwd: app.isPackaged ? path.join(process.resourcesPath, 'worker') : path.join(here, '..', '..'),
   })
   child.unref()
+  workerStarted = true
   return { ok: true, message: 'Worker 已启动；配置来自 ~/.qingmei/worker.json' }
+}
+
+/** 桌宠和 worker 共用一个 deviceId：启动时重写配置（保留 id）并拉起 worker */
+function ensureWorker() {
+  const settings = readSettings()
+  if (!settings?.serverUrl || !settings?.token) return
+  try {
+    writeWorkerConfig({ settings, home: app.getPath('home') })
+  } catch {}
+  startWorker()
 }
 function createTray() {
   try {
@@ -474,6 +487,7 @@ if (!gotLock) {
       persist(settings)
       applyAutoStart(settings.autoStart)
       setFullscreenWatch(settings.hideOnFullscreen)
+      ensureWorker()
       if (settings.token) {
         try {
           installDshPlugins({
@@ -506,6 +520,8 @@ if (!gotLock) {
       }
     })
     ipcMain.handle('agent:worker-start', () => startWorker())
+    ipcMain.handle('device:id', () => readWorkerConfig(app.getPath('home'))?.deviceId ?? '')
+    ensureWorker()
     ipcMain.handle('menu:popup', () => {
       Menu.buildFromTemplate([
         { label: '今日用量', click: () => { win?.show(); win?.webContents.send('show-usage') } },
@@ -577,4 +593,6 @@ if (!gotLock) {
 
   app.on('window-all-closed', () => app.quit())
 }
+
+
 

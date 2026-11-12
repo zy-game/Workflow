@@ -564,6 +564,10 @@ export abstract class EmbeddingService extends Service {
     super(ctx, 'embedding')
   }
   abstract embed(texts: string[]): Promise<number[][]>
+  /** 模型标识：向量与模型绑定，换模型必须让旧向量失效 */
+  modelName(): string {
+    return ''
+  }
 }
 // ────────────────────────────────────────────── Harness（内嵌 agent runtime）
 
@@ -1467,6 +1471,7 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 
 
 

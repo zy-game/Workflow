@@ -4,7 +4,7 @@
  * 设备上报平台/架构/可用 harness；青梅只把任务投递给目标设备，
  * 由设备侧 worker spawn 本机 dsh/zcode。服务端不假设客户端操作系统。
  */
-import type { Context } from 'cordis'
+import { Service, type Context } from 'cordis'
 import {
   EVENTS,
   uid,
@@ -108,6 +108,16 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   let memoryService: MemoryService | undefined
   ctx.inject(['memory'], (sub) => { memoryService = sub.memory })
   const devices = store.collection<DeviceRow>(DEVICE_COLLECTION)
+  // 只读目录服务：聊天/规划按名字找工作区，不直接读 collection
+  class DeviceDirectory extends Service {
+    constructor(context: Context) {
+      super(context, 'devices')
+    }
+    async list() {
+      return (await devices.find({})).sort((a, b) => b.last_seen - a.last_seen).map(toDevice)
+    }
+  }
+  new DeviceDirectory(ctx)
   let taskService: TaskService | undefined
   let taskRunner: TaskRunnerService | undefined
   ctx.inject(['task'], (sub) => { taskService = sub.task })
@@ -495,5 +505,6 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
 
 

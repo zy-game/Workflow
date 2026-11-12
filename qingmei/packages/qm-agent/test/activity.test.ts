@@ -76,6 +76,7 @@ test('formatRecentActivity：只算 7 天内，给出完成/失败与即将到�
       task({ title: '部署 0.1.5' }),
       task({ title: '旧任务', createdAt: new Date(now.getTime() - 30 * 86_400_000) }),
       task({ title: '迁移记忆', status: 'failed' }),
+      task({ title: '检查三国项目', status: 'running' }),
     ],
     schedules: [
       schedule('周会', new Date(now.getTime() + 3_600_000)),
@@ -85,11 +86,13 @@ test('formatRecentActivity：只算 7 天内，给出完成/失败与即将到�
   assert.match(output, /完成 1，失败 1/)
   assert.match(output, /完成：部署 0\.1\.5/)
   assert.match(output, /失败：迁移记忆/)
+  assert.match(output, /进行中：检查三国项目/)
+  assert.match(output, /今日日程：.*过期日程/)
   assert.match(output, /周会/)
   assert.ok(!output.includes('旧任务'))
-  assert.ok(!output.includes('过期日程'))
 })
 
 test('formatRecentActivity：没数据时返回空串', () => {
   assert.equal(formatRecentActivity({ tasks: [], schedules: [], now }), '')
 })
+

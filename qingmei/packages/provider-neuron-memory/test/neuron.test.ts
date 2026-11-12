@@ -394,3 +394,68 @@ test('embedding：零字面重叠也能召回同义事实', async () => {
 
 
 
+
+test('向量元数据与查询缓存：事实/事件都记 model，重复问题不再调 embedding', async () => {
+  class CountingEmbedding extends EmbeddingService {
+    calls = 0
+    modelName() {
+      return 'fake-model'
+    }
+    async embed(texts: string[]): Promise<number[][]> {
+      this.calls += 1
+      return texts.map(() => [1, 0, 0])
+    }
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'qm-neuron-vecmeta-'))
+  const ctx = new Context()
+  const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'memory.db') })
+  await storeFiber
+  const historyFiber = ctx.plugin(historyPlugin)
+  await historyFiber
+  const embedding = new CountingEmbedding(ctx)
+  const memoryFiber = ctx.plugin(memoryPlugin, { limit: 5, ticks: 4 })
+  await memoryFiber
+  try {
+    await ctx.memory.ingest([
+      { kind: 'fact', subject: '主人', predicate: '住在', object: '杭州', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+      { kind: 'episode', subject: 'session:s1', predicate: '说', object: '聊到杭州的天气', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+    ])
+    const store = ctx.reflect.get('store', false) as { collection(name: string): { find(): Promise<any[]> } }
+    const facts = await store.collection('qm_mem_fact').find({})
+    const episodes = await store.collection('qm_episode').find({})
+    assert.equal(facts[0].vector_model, 'fake-model')
+    assert.ok(facts[0].vector_json)
+    assert.equal(episodes[0].vector_model, 'fake-model')
+    assert.ok(episodes[0].vector_json)
+
+    const callsBefore = embedding.calls
+    await ctx.memory.recall({ text: '杭州天气', limit: 5 })
+    const afterFirst = embedding.calls
+    await ctx.memory.recall({ text: '杭州天气', limit: 5 })
+    assert.equal(embedding.calls, afterFirst, '同一问题应命中缓存，不再调 embedding')
+    assert.equal(afterFirst, callsBefore + 1)
+  } finally {
+    await memoryFiber.dispose()
+    await historyFiber.dispose()
+    await storeFiber.dispose()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('关系图别名：包含已有实体名的新说法并入同一节点', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      { kind: 'fact', subject: '主人', predicate: '在做项目', object: '三国', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+      { kind: 'fact', subject: '主人', predicate: '进度', object: '三国项目', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+    ])
+    const neighbors = await ctx.memory.neighbors('三国', { depth: 1 })
+    const entity = neighbors.entities.find((item) => item.name === '三国')
+    assert.ok(entity)
+    assert.ok(entity!.aliases.includes('三国项目'))
+    assert.ok(neighbors.text.includes('主人 —在做项目→ 三国'))
+  } finally {
+    await dispose()
+  }
+})
+

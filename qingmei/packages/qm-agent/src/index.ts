@@ -18,6 +18,7 @@ import {
   textOf,
   uid,
   type ChatMessage,
+  type ChannelId,
   type ChannelService,
   type GatewayService,
   type HarnessService,
@@ -108,18 +109,35 @@ export function formatRecentActivity(input: { tasks: TaskRun[]; schedules: Sched
   const now = input.now ?? new Date()
   const weekAgo = now.getTime() - 7 * 86_400_000
   const recent = input.tasks.filter((run) => run.createdAt.getTime() >= weekAgo)
+  const active = input.tasks.filter(
+    (run) => run.status === 'running' || run.status === 'queued' || run.status === 'needs_approval',
+  )
   const done = recent.filter((run) => run.status === 'done')
   const failed = recent.filter((run) => run.status === 'failed')
   const lines: string[] = []
+  if (active.length > 0) {
+    lines.push(`进行中/排队：${active.length} 个`)
+    for (const run of active.slice(0, 5)) {
+      const label = run.status === 'running' ? '进行中' : run.status === 'queued' ? '排队' : '待确认'
+      lines.push(`- ${label}：${run.title}`)
+    }
+  }
   if (recent.length > 0) {
     lines.push(`任务：7 天内完成 ${done.length}，失败 ${failed.length}`)
     for (const run of done.slice(0, 5)) lines.push(`- 完成：${run.title}`)
     for (const run of failed.slice(0, 3)) lines.push(`- 失败：${run.title}`)
   }
+  const todayKey = now.toDateString()
+  const todays = input.schedules
+    .filter((item) => item.nextAt.toDateString() === todayKey)
+    .sort((a, b) => a.nextAt.getTime() - b.nextAt.getTime())
   const upcoming = input.schedules
-    .filter((item) => item.nextAt.getTime() >= now.getTime())
+    .filter((item) => item.nextAt.getTime() >= now.getTime() && item.nextAt.toDateString() !== todayKey)
     .sort((a, b) => a.nextAt.getTime() - b.nextAt.getTime())
     .slice(0, 3)
+  for (const item of todays) {
+    lines.push(`- 今日日程：${item.nextAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} ${item.text}`)
+  }
   for (const item of upcoming) {
     lines.push(`- 日程：${item.nextAt.toLocaleString('zh-CN')} ${item.text}`)
   }
@@ -239,6 +257,34 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ctx.inject(['task'], (sub) => { taskService = sub.task })
   ctx.inject(['schedule'], (sub) => { scheduleService = sub.schedule })
   ctx.inject(['cost'], (sub) => { costService = (sub as unknown as { cost: { summary: () => Promise<{ text: string }> } }).cost })
+  let deviceService: {
+    list: () => Promise<Array<{ id: string; name: string; workspaces?: Array<{ id: string; title: string; path: string }> }>>
+  } | undefined
+  ctx.inject(['devices'], (sub) => {
+    deviceService = (sub as unknown as { devices: NonNullable<typeof deviceService> }).devices
+  })
+
+  /** 待确认的“派任务到工作区”：按会话保存一次，避免猜测 */
+  const pendingDispatch = new Map<
+    string,
+    { deviceId: string; workspaceId: string; title: string; path: string; prompt: string; taskTitle: string }
+  >()
+  /** 已派出、等结果的检查任务：完成后把结论回投原会话 */
+  const pendingResults = new Map<string, { channel: ChannelId; conversationId: string; title: string }>()
+
+  ctx.events.on(EVENTS.taskFinished, (run: TaskRun) => {
+    const pending = pendingResults.get(run.id)
+    if (!pending) return
+    pendingResults.delete(run.id)
+    const conclusion = String(run.result ?? '').trim()
+    const text =
+      run.status === 'done'
+        ? `「${pending.title}」检查完成：\n${conclusion.slice(0, 800) || '（没有返回结论）'}`
+        : `「${pending.title}」检查失败：${run.error ?? '未知原因'}`
+    void channel
+      .send({ channel: pending.channel, conversationId: pending.conversationId, blocks: [{ type: 'text', text }] })
+      .catch(() => undefined)
+  })
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
@@ -331,7 +377,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
       memoryCommand === null && (message.conversation.id === 'owner' || conversationIdFromSession(sessionId) === 'owner')
         ? await handleUsageCommand(userText)
         : null
-    const command = memoryCommand ?? usageCommand
+    const projectCommand =
+      memoryCommand === null && usageCommand === null
+        ? await handleProjectDispatch(userText, message, sessionId)
+        : null
+    const command = memoryCommand ?? usageCommand ?? projectCommand
     if (command !== null) {
       try {
         const result = await channel.send({
@@ -635,6 +685,120 @@ export function apply(ctx: Context, config: AgentConfig): void {
       return `用量读取失败：${messageOf(error)}`
     }
   }
+  const GENERIC_WORKSPACE_NAMES = new Set(['workspaces', 'workdir', 'work', 'src', 'projects', 'project'])
+
+  function baseNameOf(target: string): string {
+    const parts = String(target ?? '')
+      .split(/[\\/]/)
+      .filter(Boolean)
+    return (parts[parts.length - 1] ?? '').toLowerCase()
+  }
+
+  async function resolveWorkspaces(text: string): Promise<
+    Array<{ deviceId: string; deviceName: string; workspaceId: string; title: string; path: string }>
+  > {
+    if (!deviceService) return []
+    const lower = text.toLowerCase()
+    const devices = await deviceService.list().catch(() => [])
+    // 用户说的话里可能只有项目简称（「三国」），工作区名可能是全名（「重生三国之修仙传」），
+    // 所以两个方向都要匹配。
+    const STOP_WORDS = new Set(['项目', '进度', '进展', '状态', '情况', '检查', '怎么', '什么', '最近', '工作区', '那边', '问题', '帮我', '看看', '现在', '还有', '没有', '一下'])
+    const runs = lower.match(/[\p{L}\p{N}]{2,12}/gu) ?? []
+    const candidates = new Set<string>()
+    for (const run of runs) {
+      if (!STOP_WORDS.has(run)) candidates.add(run)
+      // 中文没有空格：把 2–6 字的片段都作为候选，才能从「三国项目进度」里认出「三国」
+      for (let start = 0; start < run.length - 1; start += 1) {
+        for (let size = 2; size <= Math.min(6, run.length - start); size += 1) {
+          const piece = run.slice(start, start + size)
+          if (!STOP_WORDS.has(piece)) candidates.add(piece)
+        }
+      }
+    }
+    const candidateList = [...candidates]
+    const matches: Array<{ deviceId: string; deviceName: string; workspaceId: string; title: string; path: string }> = []
+    const seen = new Set<string>()
+    for (const device of devices) {
+      for (const workspace of device.workspaces ?? []) {
+        const title = String(workspace.title ?? '').toLowerCase()
+        const base = baseNameOf(workspace.path)
+        const tokens = [title, base].filter((token) => token.length >= 2 && !GENERIC_WORKSPACE_NAMES.has(token))
+        if (tokens.length === 0) continue
+        const forward = tokens.some((token) => lower.includes(token))
+        const backward = tokens.some((token) => candidateList.some((word) => token.includes(word)))
+        if (!forward && !backward) continue
+        const key = `${device.id}:${workspace.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        matches.push({
+          deviceId: device.id,
+          deviceName: device.name,
+          workspaceId: workspace.id,
+          title: workspace.title || base,
+          path: workspace.path,
+        })
+      }
+    }
+    return matches
+  }
+
+  /**
+   * 项目类问题：先按工作区名解析，唯一命中就问一句确认，确认后在对应设备上派检查任务。
+   * 不做项目标签、不猜多个候选；模棱两可就问。
+   */
+  async function handleProjectDispatch(
+    text: string,
+    message: InboundMessage,
+    sessionId: string,
+  ): Promise<string | null> {
+    const value = text.trim()
+    const pending = pendingDispatch.get(sessionId)
+    if (pending) {
+      if (/^(派|好|确认|可以|行|是的|对|查|去吧)[!。.\s]*$/.test(value)) {
+        if (!taskService) {
+          pendingDispatch.delete(sessionId)
+          return '任务服务未就绪，暂时派不出去'
+        }
+        try {
+          const run = await taskService.create({
+            prompt: pending.prompt,
+            title: pending.taskTitle,
+            target: { executorId: `device:${pending.deviceId}`, workspaceId: pending.workspaceId, cwd: pending.path },
+          })
+          pendingDispatch.delete(sessionId)
+          pendingResults.set(run.id, { channel: message.channel, conversationId: message.conversation.id, title: pending.title })
+          return `已派「${pending.taskTitle}」到 ${pending.path}，完成后我把结论发给你。`
+        } catch (error) {
+          pendingDispatch.delete(sessionId)
+          return `派任务失败：${messageOf(error)}`
+        }
+      }
+      // 说了别的：放弃这次确认，继续正常对话
+      pendingDispatch.delete(sessionId)
+    }
+
+    if (!/(进度|进展|状态|bug|问题|检查|怎么样|卡在|卡住|在做什么)/i.test(value)) return null
+    const matches = await resolveWorkspaces(value)
+    if (matches.length === 0) return null
+    if (matches.length > 1) {
+      const list = matches
+        .slice(0, 5)
+        .map((item) => `- ${item.title}：${item.path}（${item.deviceName}）`)
+        .join('\n')
+      return `「${value}」匹配到多个工作区：\n${list}\n请说得更具体一点（比如直接说目录名）。`
+    }
+    const match = matches[0]!
+    pendingDispatch.set(sessionId, {
+      deviceId: match.deviceId,
+      workspaceId: match.workspaceId,
+      title: match.title,
+      path: match.path,
+      taskTitle: `项目检查：${match.title}`,
+      prompt: `检查项目「${match.title}」的当前进度与最近 bug。工作区：${match.path}。查看最近的改动、测试或构建状态，给出 3 条结论和风险。`,
+    })
+    return `找到工作区「${match.title}」：${match.path}（${match.deviceName}）。要我派任务去检查进度和最近 bug 吗？回复「派」确认。`
+  }
+
   function enqueue(sessionId: string, task: () => Promise<void>): void {
     const previous = lanes.get(sessionId) ?? Promise.resolve()
     const current = previous.then(task, task).catch((error) => {
@@ -677,6 +841,10 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+
+
 
 
 

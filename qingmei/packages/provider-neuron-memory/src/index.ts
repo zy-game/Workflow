@@ -110,6 +110,8 @@ interface EpisodeRow extends Row {
   valid_to: number | null
   /** 摘要来源的原始 episode id（逗号分隔，最多 20 个） */
   provenance?: string
+  vector_json?: string
+  vector_model?: string
 }
 
 interface EntityRow extends Row {
@@ -165,6 +167,8 @@ interface FactRow extends Row {
   valid_to: number | null
   /** 可选：语义向量（JSON 数组），只有装了 embedding 才有 */
   vector_json?: string
+  /** 生成向量的模型标识；模型变了旧向量必须失效 */
+  vector_model?: string
 }
 
 interface RuntimeNeuron {
@@ -425,7 +429,12 @@ export class NeuronMemory extends MemoryService {
           try {
             const embedding = this.embedder()!
             const [vector] = await embedding.embed([row.object])
-            if (vector && vector.length > 0) await this.facts.update(row.id, { vector_json: JSON.stringify(vector) })
+            if (vector && vector.length > 0) {
+              await this.facts.update(row.id, {
+                vector_json: JSON.stringify(vector),
+                vector_model: embedding.modelName?.() ?? '',
+              })
+            }
           } catch {
             // 向量服务失败不影响入库，召回退回词面匹配
           }
@@ -448,6 +457,7 @@ export class NeuronMemory extends MemoryService {
       })
       await this.bind(row.id, 'episode', row.text)
       await this.buildEpisodeRelations(row)
+      await this.embedInto(this.episodes, row.id, row.text)
       created.push(row.id)
     }
     return { created, merged }
@@ -475,15 +485,7 @@ export class NeuronMemory extends MemoryService {
       .map((token) => this.byLabel.get(token))
       .filter((id): id is string => Boolean(id))
 
-    let queryVector: number[] | null = null
-    if (this.embedder()) {
-      try {
-        const [vector] = await this.embedder()!.embed([query.text])
-        queryVector = vector && vector.length > 0 ? vector : null
-      } catch {
-        queryVector = null
-      }
-    }
+    const queryVector = await this.embedQuery(query.text)
     if (seeds.length === 0) {
       if (query.text.trim() && !queryVector) return this.lexicalFallback(facts, episodes, query.text, limit, queryTokens)
       if (!query.text.trim()) return this.recent(facts, episodes, limit)
@@ -536,9 +538,14 @@ export class NeuronMemory extends MemoryService {
       }
       // 语义向量：词面完全没命中时，靠余弦把「同义但不同词」的事实捞回来
       let vectorScore = 0
-      if (queryVector && fact?.vector_json) {
+      const episodeRow = fact ? undefined : (row as EpisodeRow)
+      const vectorJson = fact?.vector_json ?? episodeRow?.vector_json
+      const vectorModel = fact?.vector_model ?? episodeRow?.vector_model
+      const currentModel = this.embedder()?.modelName?.() ?? ''
+      const modelUsable = !vectorModel || !currentModel || vectorModel === currentModel
+      if (queryVector && vectorJson && modelUsable) {
         try {
-          const similarity = cosineSimilarity(queryVector, JSON.parse(fact.vector_json) as number[])
+          const similarity = cosineSimilarity(queryVector, JSON.parse(vectorJson) as number[])
           if (similarity > 0.5) vectorScore = similarity * 6
         } catch {
           vectorScore = 0
@@ -890,11 +897,34 @@ export class NeuronMemory extends MemoryService {
   }
 
   /** 事实三元组直接变成一条边：主人 —喜欢→ 手冲咖啡 */
+  /**
+   * 实体解析：同名直接用；否则看是否包含已有实体名（「三国项目」并入「三国」），
+   * 命中的名字记成别名，避免同一件事被拆成多个节点。
+   */
+  private async resolveEntity(name: string, kind: MemoryEntity['kind']): Promise<EntityRow | null> {
+    const clean = this.cleanName(name)
+    if (!clean) return null
+    const exact = await this.entities.get(clean)
+    if (exact && !exact.valid_to) return exact
+    const all = (await this.entities.find({})).filter((entity) => !entity.valid_to && entity.name.length >= 2)
+    const container = all
+      .filter((entity) => clean.includes(entity.name))
+      .sort((a, b) => b.name.length - a.name.length)[0]
+    if (container) {
+      const aliases = new Set<string>(JSON.parse(container.aliases_json || '[]') as string[])
+      aliases.add(clean)
+      const aliasesJson = JSON.stringify([...aliases].slice(0, 10))
+      await this.entities.update(container.id, { aliases_json: aliasesJson })
+      return { ...container, aliases_json: aliasesJson }
+    }
+    return this.ensureEntity(clean, kind)
+  }
+
   private async buildFactRelations(row: FactRow): Promise<void> {
-    const subject = await this.ensureEntity(row.subject, this.kindOfEntity(row.subject, row.predicate))
+    const subject = await this.resolveEntity(row.subject, this.kindOfEntity(row.subject, row.predicate))
     const objectName = cleanEntityName(row.object)
     if (!subject || !objectName) return
-    const object = await this.ensureEntity(objectName, this.kindOfEntity(objectName, row.predicate))
+    const object = await this.resolveEntity(objectName, this.kindOfEntity(objectName, row.predicate))
     if (!object) return
     await this.addEdge(subject.name, object.name, row.predicate, 'fact', row.confidence, row.created_at, 'fact', row.id)
   }
@@ -981,19 +1011,29 @@ export class NeuronMemory extends MemoryService {
   /** 给已有事实补向量（升级后回填；幂等，有向量的跳过） */
   async rebuildVectors(): Promise<{ embedded: number; skipped: number; failed: number }> {
     await this.ready
-    if (!this.embedder()) return { embedded: 0, skipped: 0, failed: 0 }
+    const embedder = this.embedder()
+    if (!embedder) return { embedded: 0, skipped: 0, failed: 0 }
+    const model = embedder.modelName?.() ?? ''
     let embedded = 0
     let skipped = 0
     let failed = 0
-    for (const row of (await this.facts.find({})).filter((item) => !item.valid_to)) {
-      if (row.vector_json) {
+    const fill = async (
+      collection: Collection<FactRow> | Collection<EpisodeRow>,
+      id: string,
+      text: string,
+      hasVector: boolean,
+    ): Promise<void> => {
+      if (hasVector) {
         skipped += 1
-        continue
+        return
       }
       try {
-        const [vector] = await this.embedder()!.embed([row.object])
+        const [vector] = await embedder.embed([text.slice(0, 2000)])
         if (vector && vector.length > 0) {
-          await this.facts.update(row.id, { vector_json: JSON.stringify(vector) })
+          await (collection as Collection<Row>).update(id, {
+            vector_json: JSON.stringify(vector),
+            vector_model: model,
+          } as Partial<Row>)
           embedded += 1
         } else {
           failed += 1
@@ -1002,6 +1042,12 @@ export class NeuronMemory extends MemoryService {
         failed += 1
       }
     }
+    for (const row of (await this.facts.find({})).filter((item) => !item.valid_to)) {
+      await fill(this.facts, row.id, row.object, Boolean(row.vector_json))
+    }
+    for (const row of (await this.episodes.find({})).filter((item) => !item.valid_to)) {
+      await fill(this.episodes, row.id, row.text, Boolean(row.vector_json))
+    }
     return { embedded, skipped, failed }
   }
   /** 兼容加载顺序：embedding 可能比本插件晚注册，取不到时再按名字找一次 */
@@ -1009,6 +1055,49 @@ export class NeuronMemory extends MemoryService {
     return this.embedding ?? (this.ctxRef.get('embedding', false) as unknown as EmbeddingService | undefined)
   }
 
+  /** 把一段文本的向量写进指定集合（事实/事件共用） */
+  private async embedInto<T extends Row & { vector_json?: string; vector_model?: string }>(
+    collection: Collection<T>,
+    id: string,
+    text: string,
+  ): Promise<void> {
+    const embedder = this.embedder()
+    if (!embedder) return
+    try {
+      const [vector] = await embedder.embed([text.slice(0, 2000)])
+      if (!vector || vector.length === 0) return
+      await collection.update(id, {
+        vector_json: JSON.stringify(vector),
+        vector_model: embedder.modelName?.() ?? '',
+      } as Partial<T>)
+    } catch {
+      // 向量失败不影响主流程
+    }
+  }
+
+  /** 查询向量缓存：同类问题（「我在忙什么」）不该每条都调一次 embedding */
+  private readonly queryVectors = new Map<string, { vector: number[] | null; at: number }>()
+
+  private async embedQuery(text: string): Promise<number[] | null> {
+    const embedder = this.embedder()
+    if (!embedder) return null
+    const model = embedder.modelName?.() ?? ''
+    const key = `${model}|${text}`
+    const hit = this.queryVectors.get(key)
+    if (hit && Date.now() - hit.at < 30 * 60_000) return hit.vector
+    try {
+      const [vector] = await embedder.embed([text])
+      const value = vector && vector.length > 0 ? vector : null
+      this.queryVectors.set(key, { vector: value, at: Date.now() })
+      if (this.queryVectors.size > 200) {
+        const oldest = this.queryVectors.keys().next().value
+        if (oldest) this.queryVectors.delete(oldest)
+      }
+      return value
+    } catch {
+      return null
+    }
+  }
   async consolidate() {
     await this.ready
     const beforeConsolidate = await this.snapshotGraph()
@@ -1541,7 +1630,14 @@ function dedupeEdges(rows: EdgeRow[]): EdgeRow[] {
 }
 
 function toEntity(row: EntityRow): MemoryEntity {
-  return { name: row.name, kind: row.kind, aliases: [], createdAt: new Date(row.created_at) }
+  let aliases: string[] = []
+  try {
+    const parsed = JSON.parse(row.aliases_json || '[]')
+    if (Array.isArray(parsed)) aliases = parsed.filter((item): item is string => typeof item === 'string')
+  } catch {
+    aliases = []
+  }
+  return { name: row.name, kind: row.kind, aliases, createdAt: new Date(row.created_at) }
 }
 
 function toEdge(row: EdgeRow): MemoryEdge {
@@ -1611,6 +1707,12 @@ function cosineSimilarity(a: number[], b: number[]): number {
   if (normA === 0 || normB === 0) return 0
   return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
+
+
+
+
+
+
 
 
 

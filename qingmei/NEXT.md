@@ -1,3 +1,13 @@
+### P0/P1 第一轮：设备/工作区闭环 + 向量元数据（2026-11-12）
+
+- 桌宠与 worker 共用 deviceId（worker.json 稳定 id，renderer 通过 IPC 读取）；worker 随桌宠自动启动；
+- worker 的 workspaces 从 DSH 工作区状态自动发现（`~/.dsh/storages/workspace.json`），无需手工打标签；
+- `qm-device` 新增只读 `devices` 服务；聊天按“用户简称 ↔ 工作区全名”双向匹配（「三国」↔「重生三国之修仙传」），歧义/未命中不猜；
+- 唯一命中先问「要派任务吗？回复派」，确认后创建 device+workspace 任务；完成后把结论回投原会话；
+- 上下文块补「进行中/排队任务」「今日日程」；
+- 向量加 `vector_model`（模型变更自动失效）、查询 embedding 缓存（30 分钟/200 条）、episode 也做向量化、关系图实体别名合并；
+- 生产实测：发「三国项目进度怎么样，有 bug 吗」→ 命中 `E:\重生三国之修仙传` 并询问；回「派」→ 任务创建并**在设备上 running**。
+
 ### 用量可视化：余额 / 花费 / embedding（2026-11-12）
 
 - `provider-embedding-http` 每次调用记录 `usage.total_tokens` 到 `qm_embedding_usage`（按天）；
