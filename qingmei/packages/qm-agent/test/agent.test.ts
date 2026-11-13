@@ -1039,3 +1039,24 @@ test('自我目标：goal 行动块建 proposed 任务，不直接执行', async
   assert.equal(created[0].origin, 'self')
   assert.equal(created[0].status, 'proposed')
 })
+
+test('内部心跳：伪造入站事件走管线，但不发给用户', async () => {
+  const h = await boot({ withHarness: true })
+  const harness = h.ctx.reflect.get('harness', false) as { reply: string; conversations: string[] }
+  harness.reply = '今日计划：先把笔记归档。'
+  h.ctx.events.emit(EVENTS.inbound, {
+    platformMessageId: 'ritual_test_plan',
+    channel: 'web',
+    accountId: 'ritual',
+    conversation: { kind: 'dm', id: 'owner' },
+    sender: { platformUserId: 'ritual', displayName: '青梅' },
+    blocks: [{ type: 'text', text: '【晨间计划】写今天的计划' }],
+    receivedAt: new Date(),
+    internal: true,
+    internalKind: 'plan',
+  })
+  await waitFor(() => harness.conversations.length > 0, 'harness 被调用')
+  await delay(50)
+  assert.equal(h.state.sent.length, 0, '内部事件不应发到用户')
+  assert.equal(harness.conversations[0], 's_owner')
+})

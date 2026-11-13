@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from 'cordis'
@@ -8,14 +8,14 @@ import * as storePlugin from '@qingmei/provider-store-sqlite'
 import * as gatewayPlugin from '@qingmei/service-gateway'
 import * as portraitPlugin from '../src/index.ts'
 
-async function boot(persona = '默认人格') {
+async function boot(persona = '默认人格', personaFile = '') {
   const dir = mkdtempSync(join(tmpdir(), 'qm-portrait-'))
   const ctx = new Context()
   const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'portrait.db') })
   await storeFiber
   const gatewayFiber = ctx.plugin(gatewayPlugin)
   await gatewayFiber
-  const portraitFiber = ctx.plugin(portraitPlugin, { persona })
+  const portraitFiber = ctx.plugin(portraitPlugin, { persona, ...(personaFile ? { personaFile } : {}) })
   await portraitFiber
   const portrait = ctx.reflect.get('portrait', false) as {
     self(): Promise<{ persona: string } | null>
@@ -64,5 +64,19 @@ test('画像：群规则可保存并按 conversationId 读取', async () => {
     assert.equal(groups.length, 1)
   } finally {
     await h.dispose()
+  }
+})
+
+test('人格文件优先于 persona 字符串', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qm-persona-'))
+  const file = join(dir, 'persona.md')
+  writeFileSync(file, '# 青梅\n\n你叫青梅，先给结论。', 'utf8')
+  const h = await boot('兜底人格', file)
+  try {
+    const self = await h.portrait.self()
+    assert.match(self?.persona ?? '', /先给结论/)
+  } finally {
+    await h.dispose()
+    rmSync(dir, { recursive: true, force: true })
   }
 })

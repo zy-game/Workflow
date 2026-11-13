@@ -5,6 +5,8 @@
  * - person：主人画像（偏好/习惯/边界）；
  * - group：群规则（禁提项目、脱敏、要不要审批）。
  */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { Service, type Context } from 'cordis'
 import { uid, type Collection, type GatewayRequest, type GatewayResponse, type Row } from '@qingmei/core'
 
@@ -46,16 +48,29 @@ interface PortraitRow extends Row {
 export interface PortraitConfig {
   /** self 画像没有时用的兜底人格 */
   persona?: string
+  /** 人格文件：优先于 persona 字符串，便于随仓库版本化 */
+  personaFile?: string
 }
 
 class PortraitService extends Service {
   private readonly collection: Collection<PortraitRow>
   private readonly fallbackPersona: string
+  private readonly personaFile: string
 
   constructor(ctx: Context, collection: Collection<PortraitRow>, config: PortraitConfig) {
     super(ctx, 'portrait')
     this.collection = collection
-    this.fallbackPersona = config.persona ?? ''
+    this.personaFile = config.personaFile ? path.resolve(config.personaFile) : ''
+    this.fallbackPersona = this.readPersonaFile() || (config.persona ?? '')
+  }
+
+  private readPersonaFile(): string {
+    if (!this.personaFile) return ''
+    try {
+      return readFileSync(this.personaFile, 'utf8').trim()
+    } catch {
+      return ''
+    }
   }
 
   async ensureDefaults(): Promise<void> {
@@ -203,3 +218,4 @@ export function apply(ctx: Context, config: PortraitConfig = {}): void {
     }),
   )
 }
+

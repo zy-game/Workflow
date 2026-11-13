@@ -229,6 +229,7 @@ export function apply(ctx: Context): void {
 
   // 用户消息：回合开始时写。没有谁等它写完，异步处理；失败只记日志，不能打断回合
   ctx.events.on(EVENTS.turnStart, (start: TurnStart) => {
+    if (start.message.internal) return
     const createdAt = nextCreatedAt()
     void enqueue(() =>
       append({
@@ -309,5 +310,6 @@ function messageOf(error: unknown): string {
 }
 
 export const defaultExport = { name, inject, apply }
+
 
 

@@ -121,18 +121,14 @@ onMounted(load)
     </article>
 
     <article v-if="psyche" class="card portrait-card">
-      <h3>心灵状态</h3>
-      <p class="item-title">{{ psyche.mood?.label }} · 愉悦 {{ Number(psyche.mood?.valence ?? 0).toFixed(2) }}</p>
-      <p class="item-meta">{{ psyche.mood?.reason || '还没有明显情绪' }}</p>
-      <p class="item-meta">
-        关系：{{ psyche.relation?.stage }} · 信任 {{ psyche.relation?.trust }}/100 ·
-        共同经历 {{ psyche.relation?.sharedEvents?.length ?? 0 }} 件
-      </p>
+      <h3>关系与日记</h3>
+      <p class="item-meta">只记一起做过的事，不做情绪评分。</p>
       <ul class="list">
-        <li v-for="event in (psyche.relation?.sharedEvents ?? []).slice(-3)" :key="event.text" class="item">
-          <p class="item-meta">{{ event.text }}</p>
+        <li v-for="event in (psyche.relation?.events ?? []).slice(-5)" :key="event.text" class="item">
+          <p class="item-meta">{{ event.kind === 'failed' ? '失败' : '完成' }} · {{ event.text }}</p>
         </li>
       </ul>
+      <p v-if="(psyche.relation?.events ?? []).length === 0" class="item-meta">还没有共同经历。</p>
       <h4>最近的日记</h4>
       <ul class="list">
         <li v-for="journal in (psyche.journals ?? []).slice(0, 3)" :key="journal.day" class="item">

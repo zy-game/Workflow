@@ -1,3 +1,11 @@
+### 减法：去掉情绪模拟，心跳走入站管线（2026-11-13）
+
+- 删除 `qm_mood` 状态机与心情衰减、关系 trust/stage/rituals/boundaries 评分；`qm_relation` 只保留 `events`（一起完成/失败的事），旧 `shared_events` 自动迁移；
+- `GET /api/v1/psyche` 只返回 relation 事件、日记、每日笔记；删掉表达指令，像不像人交给人格文件 + 模型；
+- 人格改为可版本化文件 `apps/server/persona.md`（200–400 字），`qm-portrait` 支持 `personaFile`，生产 self 画像已同步为该文件；
+- 心跳/晨间计划/晚间日记不再直接调 harness，而是伪造 `internal: true` 的入站事件走 `qm/inbound` 完整管线；内部事件不发用户、不落聊天历史，只写笔记/日记或产出行动块；
+- gate 454 绿；生产 healthz 200，`/psyche` 不含 mood，晨间计划与 proposed 自我目标已验证。
+
 ### 拟人化 1–14 收口（2026-11-13）
 
 - 心情/关系/日记：`qm-psyche` 已上线；心情半衰期衰减、关系信任/共同经历、日记写入时同时落 episode；

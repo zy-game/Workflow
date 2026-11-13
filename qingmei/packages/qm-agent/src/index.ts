@@ -484,7 +484,6 @@ export function apply(ctx: Context, config: AgentConfig): void {
   let psycheService:
     | {
         context: () => Promise<string>
-        onUserMessage: (text: string) => Promise<void>
         writeJournal: (text: string, day?: string) => Promise<unknown>
         writeNote: (kind: 'plan' | 'review', text: string, day?: string) => Promise<unknown>
       }
@@ -609,29 +608,29 @@ export function apply(ctx: Context, config: AgentConfig): void {
         .catch(() => undefined)
     }
 
-    let raw = ''
-    try {
-      for await (const event of harness.run({
-        conversationId: ownerSession,
-        text: [
-          '【内部事件】不要把这条当成主人说的话，也不要回复主人。',
-          `任务「${run.title}」刚结束：${run.status}。`,
-          `结果：${String(run.result ?? run.error ?? '').slice(0, 600) || '无'}`,
-          '根据你的人格和刚才的对话，判断要不要有下一步（建任务/提醒/申请规划）。',
-          '需要就只输出行动块；不需要就回复"不用"。',
-        ].join('\n'),
-      })) {
-        if (event.type === 'text') raw += event.text
-      }
-    } catch {
-      return
-    }
-    await executeActions(raw, {
+    const message: InboundMessage = {
+      platformMessageId: `heartbeat_${run.id}_${Date.now()}`,
       channel: 'web',
-      conversationId: 'owner',
-      sessionId: ownerSession,
-      origin: 'internal',
-    })
+      accountId: 'heartbeat',
+      conversation: { kind: 'dm', id: 'owner' },
+      sender: { platformUserId: 'heartbeat', displayName: '青梅' },
+      blocks: [
+        {
+          type: 'text',
+          text: [
+            '【内部事件】不要把这条当成主人说的话，也不要回复主人。',
+            `任务「${run.title}」刚结束：${run.status}。`,
+            `结果：${String(run.result ?? run.error ?? '').slice(0, 600) || '无'}`,
+            '根据你的人格和刚才的对话，判断要不要有下一步（建任务/提醒/申请规划）。',
+            '需要就只输出行动块；不需要就回复"不用"。',
+          ].join('\n'),
+        },
+      ],
+      receivedAt: new Date(),
+      internal: true,
+      internalKind: 'heartbeat',
+    }
+    ctx.events.emit(EVENTS.inbound, message)
   }
 
   ctx.events.on(EVENTS.taskFinished, (run: TaskRun) => {
@@ -653,57 +652,36 @@ export function apply(ctx: Context, config: AgentConfig): void {
 
   /** 每天一次晨间计划 / 晚间日记；用同一个 owner 会话，输出不发给用户 */
   async function runRitual(kind: 'plan' | 'journal', force = false): Promise<void> {
-    if (!psycheService || !harness || !storeService) return
+    if (!psycheService || !storeService) return
     const day = dayKeyOf()
     const stateId = `${kind}:${day}`
     const done = force ? null : await storeService.collection('qm_psyche_ritual').get(stateId).catch(() => null)
     if (done) return
-    const available = await harness.available().catch(() => false)
-    if (!available) return
     const prompt =
       kind === 'plan'
         ? [
-            '【晨间计划】这是你的内部回合，不是回复用户。',
+            '【晨间计划】这是内部事件，不是主人说的话。',
             '用第一人称写今天打算做的事（最多 3 条），语气像你自己。',
             '如果你有想探索/想整理/想学的事，可以在计划后输出一个 taskKind=goal、origin=self 的行动块；最近没探索新东西时，也可以给自己提一个小探索。',
             '不要解释这段指令。',
           ].join('\n')
         : [
-            '【晚间日记】这是你的内部回合，不是回复用户。',
+            '【晚间日记】这是内部事件，不是主人说的话。',
             '用第一人称写今天做了什么、感受如何、明天想做什么，200 字以内。',
             '不要解释这段指令。',
           ].join('\n')
-    let raw = ''
-    try {
-      for await (const event of harness.run({ conversationId: conversationSessionId('owner'), text: prompt })) {
-        if (event.type === 'text') raw += event.text
-      }
-    } catch {
-      return
+    const message: InboundMessage = {
+      platformMessageId: `ritual_${kind}_${day}_${Date.now()}`,
+      channel: 'web',
+      accountId: 'ritual',
+      conversation: { kind: 'dm', id: 'owner' },
+      sender: { platformUserId: 'ritual', displayName: '青梅' },
+      blocks: [{ type: 'text', text: prompt }],
+      receivedAt: new Date(),
+      internal: true,
+      internalKind: kind,
     }
-    const parsed = extractActions(raw)
-    const text = parsed.visible.trim()
-    try {
-      if (kind === 'plan') {
-        await psycheService.writeNote('plan', text || '今天暂时没有特别计划。', day)
-      } else {
-        await psycheService.writeJournal(text || '今天没什么特别的，就这样过去了。', day)
-      }
-    } catch {
-      // 写日记失败不阻塞
-    }
-    if (parsed.actions.length > 0) {
-      await executeActions(raw, {
-        channel: 'web',
-        conversationId: 'owner',
-        sessionId: conversationSessionId('owner'),
-        origin: 'self',
-      }).catch(() => undefined)
-    }
-    await storeService
-      .collection('qm_psyche_ritual')
-      .insert({ id: stateId, at: Date.now() })
-      .catch(() => undefined)
+    ctx.events.emit(EVENTS.inbound, message)
   }
 
   if (config.rituals !== false) {
@@ -785,7 +763,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
     if (message.handledBy) return
 
     // 身份闸：私聊必须解析到 owner；每渠道首个私聊自动绑 owner（单用户部署）
-    if (message.conversation.kind !== 'group') {
+    if (message.conversation.kind !== 'group' && !message.internal) {
       const identity = identityService
       if (identity) {
         const actor =
@@ -809,9 +787,6 @@ export function apply(ctx: Context, config: AgentConfig): void {
     }
     const sessionId = sessionIdOf(message)
     const userText = textOf(message.blocks)
-    if (userText && message.conversation.kind !== 'group') {
-      void psycheService?.onUserMessage(userText).catch(() => undefined)
-    }
     const traceId = uid('turn')
     const startedAt = Date.now()
     // 轮到这条消息了：先报 turn/start，qm-history 按这个顺序写用户消息
@@ -826,14 +801,15 @@ export function apply(ctx: Context, config: AgentConfig): void {
     let tokensOut = 0
 
     // 显式记忆：不调用 LLM，用户说「记住/忘掉」就直接落库。
-    const memoryCommand = await handleMemoryCommand(userText, sessionId)
+    const memoryCommand = message.internal ? null : await handleMemoryCommand(userText, sessionId)
     // 用量命令也直连服务，不经过模型；只对主人开
     const usageCommand =
+      !message.internal &&
       memoryCommand === null && (message.conversation.id === 'owner' || conversationIdFromSession(sessionId) === 'owner')
         ? await handleUsageCommand(userText)
         : null
     const projectCommand =
-      memoryCommand === null && usageCommand === null
+      !message.internal && memoryCommand === null && usageCommand === null
         ? await handleProjectDispatch(userText, message, sessionId)
         : null
     const command = memoryCommand ?? usageCommand ?? projectCommand
@@ -1058,7 +1034,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
           channel: message.channel,
           conversationId: message.conversation.id,
           sessionId,
-          origin: 'chat',
+          origin: message.internal ? 'self' : 'chat',
         })
         if (actionFailures.length > 0) reply += `\n\n（${actionFailures.join('；')}）`
         if (!reply.trim()) reply = '好，我这就去办。'
@@ -1076,7 +1052,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
           channel: message.channel,
           conversationId: message.conversation.id,
           sessionId,
-          origin: 'chat',
+          origin: message.internal ? 'self' : 'chat',
         })
         if (actionFailures.length > 0) reply += `\n\n（${actionFailures.join('；')}）`
         steps = 1
@@ -1091,6 +1067,27 @@ export function apply(ctx: Context, config: AgentConfig): void {
     reply = sanitizeReply(reply)
     if (maxChars > 0 && reply.length > maxChars) {
       reply = `${reply.slice(0, Math.max(0, maxChars - 1))}…`
+    }
+
+    // 内部事件（晨间计划/日记）：走完整入站管线，但不出站、不落聊天历史
+    if (message.internal) {
+      const kind = message.internalKind ?? 'plan'
+      const day = dayKeyOf()
+      const text = reply.trim()
+      try {
+        if (kind === 'plan') {
+          await psycheService?.writeNote('plan', text || '今天没有特别计划。', day)
+        } else if (kind === 'journal') {
+          await psycheService?.writeJournal(text || '今天没什么特别的。', day)
+        }
+      } catch {
+        // 写日记失败不阻塞
+      }
+      await storeService
+        ?.collection('qm_psyche_ritual')
+        .insert({ id: `${kind}:${day}`, at: Date.now() })
+        .catch(() => undefined)
+      return
     }
 
     // 第二道闸：群策略后置校验（docs/11 §8）
@@ -1506,6 +1503,10 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+
+
 
 
 
