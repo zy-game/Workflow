@@ -1129,3 +1129,36 @@ select.input:focus {
 .task-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .task-filters .input { max-width: 180px; }
 
+
+/* 记忆 3D 图谱：画布铺满，详情浮层 */
+.graph-view { display: flex; flex-direction: column; }
+.graph-view .graph-head { flex: 0 0 auto; }
+.graph-stage {
+  position: relative;
+  flex: 1 1 auto;
+  height: max(460px, calc(100vh - 250px));
+  min-height: 460px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #1a2438 0%, #0b101b 70%);
+  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.55);
+}
+.graph-stage .graph-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+.graph-stage .graph-canvas:active { cursor: grabbing; }
+.graph-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: min(340px, 46%);
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(10, 15, 25, 0.86);
+  border: 1px solid rgba(120, 150, 200, 0.22);
+  backdrop-filter: blur(8px);
+}
+@media (max-width: 760px) {
+  .graph-stage { height: 62vh; min-height: 340px; }
+  .graph-panel { width: auto; left: 8px; right: 8px; top: auto; bottom: 8px; max-height: 40%; }
+}

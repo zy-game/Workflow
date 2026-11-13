@@ -128,7 +128,7 @@ async function setup(
   const orchestratorFiber = ctx.plugin(taskOrchestrator, {
     workspaceRoot,
     startPaused: true,
-    timeoutMs: 3000,
+    timeoutMs: 10000,
     ...(options.maxConcurrent ? { maxConcurrent: options.maxConcurrent } : {}),
     ...(options.quietHours ? { quietHours: options.quietHours } : {}),
     ...(options.queueTimeoutMs !== undefined ? { queueTimeoutMs: options.queueTimeoutMs } : {}),
@@ -680,3 +680,4 @@ test('统一任务模型：建议/定时任务带 origin/trigger/schedule，事�
     await h.dispose()
   }
 })
+

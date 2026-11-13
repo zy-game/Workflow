@@ -13,15 +13,23 @@ const depth = ref(2)
 const error = ref('')
 const loading = ref(false)
 const selected = ref('')
+const showPanel = ref(true)
+const stage = ref(null)
 const canvas = ref(null)
+
 let frame = 0
 let positions = new Map()
-let drag = null
+let angleY = 0.2
+let angleX = -0.15
+let zoom = 1
+let dragging = null
+
+const FOV = 900
 
 async function load() {
   loading.value = true
   try {
-    const query = { depth: depth.value }
+    const query = { depth: depth.value, limit: 240 }
     if (focus.value.trim()) query.focus = focus.value.trim()
     const body = await apiJson(ENDPOINTS.memoryGraph, { query })
     nodes.value = Array.isArray(body?.nodes) ? body.nodes : []
@@ -38,23 +46,24 @@ async function load() {
 }
 
 function seedPositions() {
-  const width = canvas.value?.clientWidth || 600
-  const height = canvas.value?.clientHeight || 420
   positions = new Map()
+  const count = Math.max(1, nodes.value.length)
   nodes.value.forEach((node, index) => {
-    const angle = (index / Math.max(1, nodes.value.length)) * Math.PI * 2
+    const phi = Math.acos(1 - (2 * (index + 0.5)) / count)
+    const theta = Math.PI * (1 + Math.sqrt(5)) * index
+    const radius = 180 + (index % 5) * 18
     positions.set(node.id, {
-      x: width / 2 + Math.cos(angle) * 120,
-      y: height / 2 + Math.sin(angle) * 120,
+      x: Math.sin(phi) * Math.cos(theta) * radius,
+      y: Math.cos(phi) * radius,
+      z: Math.sin(phi) * Math.sin(theta) * radius,
       vx: 0,
       vy: 0,
+      vz: 0,
     })
   })
 }
 
-function tick() {
-  const width = canvas.value?.clientWidth || 600
-  const height = canvas.value?.clientHeight || 420
+function simulate() {
   const list = nodes.value
   for (let i = 0; i < list.length; i += 1) {
     const a = positions.get(list[i].id)
@@ -64,17 +73,19 @@ function tick() {
       if (!b) continue
       const dx = a.x - b.x
       const dy = a.y - b.y
-      const dist = Math.max(20, Math.hypot(dx, dy))
-      const force = 2200 / (dist * dist)
-      const nx = dx / dist
-      const ny = dy / dist
-      a.vx += nx * force
-      a.vy += ny * force
-      b.vx -= nx * force
-      b.vy -= ny * force
+      const dz = a.z - b.z
+      const dist = Math.max(30, Math.hypot(dx, dy, dz))
+      const force = 90000 / (dist * dist * dist)
+      a.vx += dx * force
+      a.vy += dy * force
+      a.vz += dz * force
+      b.vx -= dx * force
+      b.vy -= dy * force
+      b.vz -= dz * force
     }
-    a.vx += (width / 2 - a.x) * 0.002
-    a.vy += (height / 2 - a.y) * 0.002
+    a.vx -= a.x * 0.0015
+    a.vy -= a.y * 0.0015
+    a.vz -= a.z * 0.0015
   }
   for (const edge of edges.value) {
     const a = positions.get(edge.from)
@@ -82,22 +93,37 @@ function tick() {
     if (!a || !b) continue
     const dx = b.x - a.x
     const dy = b.y - a.y
-    const dist = Math.max(1, Math.hypot(dx, dy))
-    const target = 110
-    const force = (dist - target) * 0.004
+    const dz = b.z - a.z
+    const dist = Math.max(1, Math.hypot(dx, dy, dz))
+    const force = (dist - 120) * 0.0016
     a.vx += (dx / dist) * force
     a.vy += (dy / dist) * force
+    a.vz += (dz / dist) * force
     b.vx -= (dx / dist) * force
     b.vy -= (dy / dist) * force
+    b.vz -= (dz / dist) * force
   }
-  for (const [id, pos] of positions) {
-    pos.vx *= 0.85
-    pos.vy *= 0.85
-    pos.x = Math.max(24, Math.min(width - 24, pos.x + pos.vx))
-    pos.y = Math.max(24, Math.min(height - 24, pos.y + pos.vy))
+  for (const pos of positions.values()) {
+    pos.vx *= 0.9
+    pos.vy *= 0.9
+    pos.vz *= 0.9
+    pos.x += pos.vx
+    pos.y += pos.vy
+    pos.z += pos.vz
   }
-  draw()
-  frame = requestAnimationFrame(tick)
+}
+
+function project(pos) {
+  const cosY = Math.cos(angleY)
+  const sinY = Math.sin(angleY)
+  const cosX = Math.cos(angleX)
+  const sinX = Math.sin(angleX)
+  const x1 = pos.x * cosY - pos.z * sinY
+  const z1 = pos.x * sinY + pos.z * cosY
+  const y1 = pos.y * cosX - z1 * sinX
+  const z2 = pos.y * sinX + z1 * cosX
+  const scale = (FOV / Math.max(260, FOV + z2)) * zoom
+  return { x: x1 * scale, y: y1 * scale, scale, depth: z2 }
 }
 
 function draw() {
@@ -113,56 +139,114 @@ function draw() {
   }
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
   ctx.clearRect(0, 0, width, height)
-  ctx.lineWidth = 1
-  for (const edge of edges.value) {
-    const a = positions.get(edge.from)
-    const b = positions.get(edge.to)
+  const cx = width / 2
+  const cy = height / 2
+  const projected = new Map()
+  for (const node of nodes.value) {
+    const pos = positions.get(node.id)
+    if (!pos) continue
+    const p = project(pos)
+    projected.set(node.id, { ...p, x: cx + p.x, y: cy + p.y })
+  }
+  const sortedEdges = [...edges.value].sort((a, b) => {
+    const da = projected.get(a.from)?.depth ?? 0
+    const db = projected.get(b.from)?.depth ?? 0
+    return db - da
+  })
+  for (const edge of sortedEdges) {
+    const a = projected.get(edge.from)
+    const b = projected.get(edge.to)
     if (!a || !b) continue
-    ctx.strokeStyle = 'rgba(120, 160, 220, 0.35)'
+    const alpha = Math.max(0.06, Math.min(0.45, 0.4 - ((a.depth + b.depth) / 2) / 2200))
+    ctx.strokeStyle = `rgba(120, 165, 230, ${alpha})`
+    ctx.lineWidth = 1
     ctx.beginPath()
     ctx.moveTo(a.x, a.y)
     ctx.lineTo(b.x, b.y)
     ctx.stroke()
-    const mx = (a.x + b.x) / 2
-    const my = (a.y + b.y) / 2
-    ctx.fillStyle = 'rgba(160, 180, 210, 0.7)'
-    ctx.font = '10px sans-serif'
-    ctx.fillText(String(edge.predicate).slice(0, 8), mx + 2, my - 2)
   }
-  for (const node of nodes.value) {
-    const pos = positions.get(node.id)
-    if (!pos) continue
-    const radius = Math.min(22, 7 + Math.sqrt(node.degree + 1) * 3)
+  const sortedNodes = [...nodes.value].sort(
+    (a, b) => (projected.get(b.id)?.depth ?? 0) - (projected.get(a.id)?.depth ?? 0),
+  )
+  for (const node of sortedNodes) {
+    const p = projected.get(node.id)
+    if (!p) continue
+    const radius = Math.min(26, (6 + Math.sqrt(node.degree + 1) * 3) * p.scale)
+    const highlight = node.id === selected.value
     ctx.beginPath()
-    ctx.fillStyle = node.id === selected.value ? '#ffb347' : 'rgba(107, 164, 255, 0.9)'
-    ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2)
+    ctx.fillStyle = highlight ? '#ffb347' : `rgba(107, 164, 255, ${Math.max(0.25, Math.min(0.95, p.scale))})`
+    ctx.arc(p.x, p.y, Math.max(2, radius), 0, Math.PI * 2)
     ctx.fill()
-    ctx.fillStyle = '#e8eefc'
-    ctx.font = '11px sans-serif'
-    ctx.fillText(String(node.name).slice(0, 10), pos.x + radius + 3, pos.y + 3)
+    if (radius > 4) {
+      ctx.fillStyle = 'rgba(232, 238, 252, 0.85)'
+      ctx.font = `${Math.max(9, 11 * Math.min(1.4, p.scale))}px sans-serif`
+      ctx.fillText(String(node.name).slice(0, 12), p.x + radius + 3, p.y + 3)
+    }
   }
+  return projected
 }
 
-function onCanvasClick(event) {
+let lastProjected = new Map()
+
+function tick() {
+  if (!dragging) angleY += 0.0015
+  simulate()
+  lastProjected = draw() ?? lastProjected
+  frame = requestAnimationFrame(tick)
+}
+
+function onPointerDown(event) {
+  dragging = { x: event.clientX, y: event.clientY, angleY, angleX }
+  canvas.value?.setPointerCapture?.(event.pointerId)
+}
+
+function onPointerMove(event) {
+  if (!dragging) return
+  angleY = dragging.angleY + (event.clientX - dragging.x) * 0.008
+  angleX = dragging.angleX + (event.clientY - dragging.y) * 0.006
+  angleX = Math.max(-1.2, Math.min(1.2, angleX))
+}
+
+function onPointerUp(event) {
+  if (dragging && Math.abs(event.clientX - dragging.x) < 4 && Math.abs(event.clientY - dragging.y) < 4) {
+    selectAt(event)
+  }
+  dragging = null
+}
+
+function selectAt(event) {
   const rect = canvas.value?.getBoundingClientRect()
   if (!rect) return
   const x = event.clientX - rect.left
   const y = event.clientY - rect.top
   let nearest = null
-  let best = 30
+  let best = 26
   for (const node of nodes.value) {
-    const pos = positions.get(node.id)
-    if (!pos) continue
-    const dist = Math.hypot(pos.x - x, pos.y - y)
+    const p = lastProjected.get(node.id)
+    if (!p) continue
+    const dist = Math.hypot(p.x - x, p.y - y)
     if (dist < best) {
       best = dist
       nearest = node
     }
   }
   if (nearest) {
+    selected.value = nearest.id
     focus.value = nearest.id
+    showPanel.value = true
     void load()
   }
+}
+
+function onWheel(event) {
+  event.preventDefault()
+  zoom = Math.max(0.45, Math.min(2.6, zoom - event.deltaY * 0.0012))
+}
+
+function resetView() {
+  angleY = 0.2
+  angleX = -0.15
+  zoom = 1
 }
 
 onMounted(() => {
@@ -172,20 +256,21 @@ onMounted(() => {
 onBeforeUnmount(() => cancelAnimationFrame(frame))
 
 const subtitle = computed(() =>
-  mode.value === 'graph' ? '节点是实体，连线是关系；点节点看向它的事实。' : '列表视图保留原有的事实检索。',
+  mode.value === 'graph' ? '拖动旋转、滚轮缩放、点节点看它的事实。' : '列表视图保留原有的事实检索。',
 )
 </script>
 
 <template>
-  <section class="view">
-    <header class="view-head">
+  <section class="view graph-view">
+    <header class="view-head graph-head">
       <div>
         <h2 class="view-title">记忆</h2>
         <p class="view-sub">{{ subtitle }}</p>
       </div>
       <div class="view-actions">
-        <button class="btn ghost" type="button" :class="{ primary: mode === 'graph' }" @click="mode = 'graph'">图谱</button>
+        <button class="btn ghost" type="button" :class="{ primary: mode === 'graph' }" @click="mode = 'graph'">3D 图谱</button>
         <button class="btn ghost" type="button" :class="{ primary: mode === 'list' }" @click="mode = 'list'">列表</button>
+        <button v-if="mode === 'graph'" class="btn ghost" type="button" @click="resetView">复位</button>
       </div>
     </header>
 
@@ -198,15 +283,24 @@ const subtitle = computed(() =>
           <option :value="3">3 跳</option>
         </select>
         <button class="btn ghost" type="button" :disabled="loading" @click="load">{{ loading ? '加载中…' : '刷新' }}</button>
+        <button class="btn ghost" type="button" @click="showPanel = !showPanel">{{ showPanel ? '隐藏详情' : '显示详情' }}</button>
       </div>
       <p v-if="error" class="alert" role="alert">{{ error }}</p>
-      <div class="graph-layout">
-        <canvas ref="canvas" class="graph-canvas" @click="onCanvasClick"></canvas>
-        <aside class="graph-side">
+      <div ref="stage" class="graph-stage">
+        <canvas
+          ref="canvas"
+          class="graph-canvas"
+          @pointerdown="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="onPointerUp"
+          @pointercancel="onPointerUp"
+          @wheel="onWheel"
+        ></canvas>
+        <aside v-if="showPanel" class="graph-panel">
           <p class="item-meta">节点 {{ nodes.length }} · 关系 {{ edges.length }}</p>
           <p v-if="selected" class="item-title">聚焦：{{ selected }}</p>
           <ul class="list">
-            <li v-for="(fact, index) in facts.slice(0, 12)" :key="index" class="item">
+            <li v-for="(fact, index) in facts.slice(0, 14)" :key="index" class="item">
               <p class="item-meta">{{ fact.subject }} · {{ fact.predicate }}</p>
               <p class="item-title">{{ fact.object }}</p>
             </li>
