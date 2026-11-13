@@ -1137,6 +1137,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
     message: InboundMessage,
     sessionId: string,
   ): Promise<string | null> {
+    // 群里不做确定性的项目派发：先让带群画像的聊天路径处理
+    if (message.conversation.kind === 'group') return null
     const value = text.trim()
     const pending = pendingDispatch.get(sessionId)
     if (pending) {
@@ -1257,6 +1259,7 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
 
 
 

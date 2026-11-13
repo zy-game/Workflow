@@ -1,5 +1,7 @@
 ### 任务模型收口：日程/主动/审计/复盘并入（2026-11-13）
 
+- 群画像兜底：群里不再走确定性的项目派发（避免命令回复绕过画像直接发群）；命中禁提词的回复转 `group.send` 审批，批准后才发；未命中才正常发群（测试覆盖）；
+
 - 日程 = 带 trigger 的任务：创建日程时同步创建 `scheduled reminder` 任务，到点由调度器 `enqueue`，旧日程启动时自动补建任务；验证：POST /schedules 后任务列表出现 `scheduled reminder schedule at 日程任务验证`；
 - 主动建议 = `proposed suggestion` 任务：autonomy 发出 `notify.self` 时落一条 proposed 任务，A1 仍不建可执行任务（测试已调整）；
 - 失败任务挂故障：`qm_incident.task_id` 记录失败任务 id，故障与任务共用账本；

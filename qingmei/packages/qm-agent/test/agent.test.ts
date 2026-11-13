@@ -400,6 +400,16 @@ class FakeHarness extends Service {
   async close() {}
 }
 
+class FakePortrait extends Service {
+  groupRules: { blocked?: string[]; note?: string } | null = null
+  constructor(ctx: Context) { super(ctx, 'portrait') }
+  async self() { return null }
+  async person() { return null }
+  async group(id: string) {
+    return id === 'g1' && this.groupRules ? { name: '测试群', rules: this.groupRules } : null
+  }
+}
+
 class FakeApproval extends Service {
   readonly created: any[] = []
   constructor(ctx: Context) { super(ctx, 'approval') }
@@ -441,6 +451,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(fakes.FakeIdentity)
   await ctx.plugin(FakeCost)
   await ctx.plugin(FakeApproval)
+  await ctx.plugin(FakePortrait)
   if (options.withHarness) await ctx.plugin(FakeHarness)
   await ctx.plugin(FakeDevices)
   await ctx.plugin(FakeTaskService)
@@ -954,3 +965,25 @@ test('任务结束：用同一个 owner 会话做一次内部思考，行动块�
   assert.equal(created[0].title, '跟进失败')
   assert.deepEqual(harness.conversations, ['s_owner'])
 })
+
+test('群画像：命中禁提词不发群，转 group.send 审批', async () => {
+  const h = await boot({ chunks: ['三国项目现在在跑，进度正常。'] })
+  const portrait = h.ctx.reflect.get('portrait', false) as { groupRules: { blocked: string[] } | null }
+  portrait.groupRules = { blocked: ['三国'], note: '聊天群不能提项目' }
+  h.ctx.events.emit(EVENTS.inbound, {
+    platformMessageId: 'pm_group',
+    channel: 'web',
+    accountId: 'account-1',
+    conversation: { kind: 'group', id: 'g1' },
+    sender: { platformUserId: 'user-1', displayName: '测试用户' },
+    blocks: [{ type: 'text', text: '三国那边怎么样' }],
+    receivedAt: new Date(),
+  })
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  const approval = (h.ctx.reflect.get('approval', false) as unknown as { created: any[] }).created
+  assert.equal(approval.length, 1)
+  assert.equal(approval[0].action, 'group.send')
+  assert.equal(h.state.sent.length, 0, '命中禁提词不应直接发群')
+})
+
+

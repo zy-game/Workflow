@@ -292,3 +292,22 @@ test('回滚：自动自愈任务可取消，incident 收尾', async () => {
     await h.dispose()
   }
 })
+
+test('任务失败的故障挂 task_id，故障和任务共用账本', async () => {
+  const h = await setup({ maxProposalsPerDay: 5 })
+  try {
+    h.ctx.events.emit(EVENTS.taskFinished, {
+      id: 'run_failed_task',
+      title: '检查三国',
+      status: 'failed',
+      error: '模型超时',
+      project: null,
+    } as TaskRun)
+    await waitFor(() => h.channel.sent.length > 0, '故障通知')
+    const res = await h.call({ method: 'GET', path: '/api/v1/incidents', query: {}, headers: {} })
+    const items = (res.body as { items: Array<{ taskId?: string | null }> }).items
+    assert.equal(items[0]?.taskId, 'run_failed_task')
+  } finally {
+    await h.dispose()
+  }
+})
