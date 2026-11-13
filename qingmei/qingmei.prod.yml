@@ -111,9 +111,6 @@
 # 自规划循环：任务结束后读目标账本+最近任务，让模型决定下一步（建任务/提醒/申请研究/跳过）
 # 默认只允许一层自建任务、每天最多 3 个；研究申请走审批
 
-# 审计只读查询面：GET /api/v1/audit
-- name: '@qingmei/qm-audit'
-
 # 身份绑定：每渠道第一个私聊自动绑 owner
 - name: '@qingmei/qm-identity'
 
@@ -125,6 +122,7 @@
     llmExtract: false
 
 # 月度复盘：每月 1 号出报告，可在「复盘」页评分、采纳 prompt 提案
+# 月度复盘：内部报告生成器，结果写入 review 任务；不再是独立 UI 概念
 - name: '@qingmei/qm-review'
   config:
     dayOfMonth: 1

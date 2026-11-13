@@ -20,7 +20,6 @@
     "@qingmei/qm-identity": "workspace:*",
     "@qingmei/qm-review": "workspace:*",
     "@qingmei/qm-skill": "workspace:*",
-    "@qingmei/qm-audit": "workspace:*",
     "@qingmei/service-channel": "workspace:*",
     "@qingmei/service-gateway": "workspace:*",
     "cordis": "4.0.0-rc.12",

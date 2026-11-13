@@ -988,3 +988,54 @@ test('群画像：命中禁提词不发群，转 group.send 审批', async () =>
 
 
 
+
+test('extractActions：代码块里的自我目标也能解析并从正文移除', () => {
+  const raw = [
+    '今天先做三件小事。',
+    '```action',
+    '{"taskKind":"goal","origin":"self","title":"建立开口前的自检判据","detail":"写一份判据并在对话里执行"}',
+    '```',
+  ].join('\n')
+  const parsed = agent.extractActions(raw)
+  assert.equal(parsed.actions.length, 1)
+  assert.equal(parsed.actions[0].kind, 'task.create')
+  assert.equal(parsed.actions[0].taskKind, 'goal')
+  assert.equal(parsed.actions[0].origin, 'self')
+  assert.match(parsed.actions[0].prompt ?? '', /判据/)
+  assert.ok(!parsed.visible.includes('taskKind'))
+})
+
+test('extractActions：XML 风格 action 也解析成自我目标', () => {
+  const raw = '今天先归档旧笔记。\n<action taskKind="goal" origin="self">\nobjective: 把已结束的行程归档\n</action>'
+  const parsed = agent.extractActions(raw)
+  assert.equal(parsed.actions.length, 1)
+  assert.equal(parsed.actions[0].taskKind, 'goal')
+  assert.equal(parsed.actions[0].origin, 'self')
+  assert.match(parsed.actions[0].prompt ?? '', /归档/)
+  assert.ok(!parsed.visible.includes('<action'))
+})
+
+test('extractActions：代码块里的 key=value 目标也能解析', () => {
+  const raw = '先做三件事。\n```action\ntaskKind=goal\norigin=self\nobjective=归档旧行程并写检查清单\n```\n好。'
+  const parsed = agent.extractActions(raw)
+  assert.equal(parsed.actions.length, 1)
+  assert.equal(parsed.actions[0].taskKind, 'goal')
+  assert.match(parsed.actions[0].prompt ?? '', /归档旧行程/)
+  assert.ok(!parsed.visible.includes('taskKind'))
+})
+
+test('自我目标：goal 行动块建 proposed 任务，不直接执行', async () => {
+  const h = await boot({
+    chunks: [
+      '我想给自己留个活。',
+      '<action taskKind="goal" origin="self">objective: 整理旧笔记并建立索引</action>',
+    ],
+  })
+  h.ctx.events.emit(EVENTS.inbound, inbound('今天还好吗', 'owner'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  const created = (h.ctx.reflect.get('task', false) as unknown as { created: any[] }).created
+  assert.equal(created.length, 1)
+  assert.equal(created[0].kind, 'goal')
+  assert.equal(created[0].origin, 'self')
+  assert.equal(created[0].status, 'proposed')
+})

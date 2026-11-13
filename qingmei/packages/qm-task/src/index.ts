@@ -532,10 +532,14 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 
   // 内置调度器：status=scheduled 的任务到点入队；cron 任务再排下一轮
   const schedulerMs = Math.max(1000, Number(config.schedulerMs) || 15_000)
+  let schedulerStopped = false
+  ctx.effect(() => () => { schedulerStopped = true })
   async function schedulerTick(): Promise<void> {
+    if (schedulerStopped) return
     const runs = await task.list(200).catch(() => [])
     const now = Date.now()
     for (const run of runs) {
+      if (schedulerStopped) return
       if (run.status !== 'scheduled') continue
       // 老日程插件仍负责 schedule 触发的任务；内置调度器只接新模型任务，避免重复排期
       if (run.origin === 'schedule') continue
@@ -657,10 +661,10 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           ...(Array.isArray(body.dependsOn)
             ? { dependsOn: body.dependsOn.map((item) => String(item)).filter(Boolean) }
             : {}),
-          ...(body.kind === 'suggestion' || body.kind === 'review' || body.kind === 'reminder' || body.kind === 'inventory'
+          ...(body.kind === 'suggestion' || body.kind === 'review' || body.kind === 'reminder' || body.kind === 'inventory' || body.kind === 'goal'
             ? { kind: body.kind }
             : {}),
-          ...(body.origin === 'user' || body.origin === 'chat' || body.origin === 'internal' || body.origin === 'schedule' || body.origin === 'autonomy' || body.origin === 'review'
+          ...(body.origin === 'user' || body.origin === 'chat' || body.origin === 'internal' || body.origin === 'schedule' || body.origin === 'autonomy' || body.origin === 'review' || body.origin === 'self'
             ? { origin: body.origin }
             : {}),
           ...(body.trigger === 'at' || body.trigger === 'cron' || body.trigger === 'event' || body.trigger === 'manual' || body.trigger === 'now'
@@ -868,6 +872,8 @@ function messageOf(error: unknown): string {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
 
 
 

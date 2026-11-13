@@ -1,3 +1,16 @@
+### 拟人化 1–14 收口（2026-11-13）
+
+- 心情/关系/日记：`qm-psyche` 已上线；心情半衰期衰减、关系信任/共同经历、日记写入时同时落 episode；
+- 表达：qm-agent 注入心情/关系/今日计划/日记，语气随状态；
+- 每日仪式：08:00 晨间计划、22:00 晚间日记，同一 owner 会话；`POST /api/v1/psyche/ritual` 可手动强制触发；
+- 自我目标：`origin=self`、`kind=goal`，默认 `proposed`、每天最多 2 个；行动块支持 `<qm-action>`、代码块 JSON、`key=value`、`<action>` 四种写法；
+- 实体质量：清洗路径/长句/引号/状态短语；图谱支持 kind/时间筛选；
+- 记忆：`POST /api/v1/memory/vectors/backfill` 补齐向量（生产 10 条补齐）；`GET /api/v1/memory/recalls` 返回召回历史，图谱刷新后仍可见；
+- 审批质量：`GET /api/v1/approvals/stats` 输出接受率与按 action 统计；
+- 日程兼容：`PATCH /api/v1/schedules/:id` 转发到任务 reschedule；
+- 清理：删除 `qm-audit` 插件与依赖；`qm-review` 保留为内部月报生成器（结果写 review 任务），文档与配置注明；
+- gate 453 绿；生产 healthz 200，`/api/v1/audit` 404，晨间计划/自我目标/召回历史/审批统计均已验证。
+
 ### 拟人化 1/4：心情 + 关系 + 日记（2026-11-13）
 
 - 新插件 `qm-psyche`：`qm_mood`（愉悦/唤醒/标签/原因/半衰期回落）、`qm_relation`（信任/阶段/共同经历/边界/习惯）、`qm_journal`（按天第一人称日记）；

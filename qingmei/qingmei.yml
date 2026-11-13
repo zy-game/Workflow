@@ -96,9 +96,6 @@
 
 - name: '@qingmei/qm-approval'
 
-# 审计的只读查询面：GET /api/v1/audit
-- name: '@qingmei/qm-audit'
-
 # 身份绑定：每渠道第一个私聊自动绑 owner，之后陌生账号需显式 bind
 - name: '@qingmei/qm-identity'
 

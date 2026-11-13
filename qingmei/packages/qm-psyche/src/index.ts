@@ -33,6 +33,13 @@ export interface Journal {
   at: Date
 }
 
+export interface DailyNote {
+  day: string
+  kind: 'plan' | 'review'
+  text: string
+  at: Date
+}
+
 export interface PsycheConfig {
   /** 心情回落到平静的半衰期（小时） */
   moodHalfLifeHours?: number
@@ -60,6 +67,13 @@ interface RelationRow extends Row {
 
 interface JournalRow extends Row {
   day: string
+  text: string
+  at: number
+}
+
+interface NoteRow extends Row {
+  day: string
+  kind: string
   text: string
   at: number
 }
@@ -92,7 +106,9 @@ class PsycheService extends Service {
   private readonly moods: Collection<MoodRow>
   private readonly relations: Collection<RelationRow>
   private readonly journalRows: Collection<JournalRow>
+  private readonly noteRows: Collection<NoteRow>
   private readonly config: Required<PsycheConfig>
+  memory: { ingest: (records: unknown[]) => Promise<unknown> } | undefined
 
   constructor(
     ctx: Context,
@@ -100,6 +116,7 @@ class PsycheService extends Service {
       moods: Collection<MoodRow>
       relations: Collection<RelationRow>
       journals: Collection<JournalRow>
+      notes: Collection<NoteRow>
     },
     config: PsycheConfig,
   ) {
@@ -107,6 +124,7 @@ class PsycheService extends Service {
     this.moods = collections.moods
     this.relations = collections.relations
     this.journalRows = collections.journals
+    this.noteRows = collections.notes
     this.config = {
       moodHalfLifeHours: config.moodHalfLifeHours ?? 6,
       familiarAt: config.familiarAt ?? 20,
@@ -239,16 +257,65 @@ class PsycheService extends Service {
     const existing = await this.journalRows.get(day)
     if (existing) await this.journalRows.update(day, row)
     else await this.journalRows.insert({ id: day, ...row })
+    if (this.memory) {
+      void this.memory
+        .ingest([
+          {
+            kind: 'episode',
+            subject: 'psyche:owner',
+            predicate: '日记',
+            object: `${day} 的日记：${value}`.slice(0, 2000),
+            confidence: 0.95,
+            salience: 0.85,
+            sensitivity: 'private',
+            audience: 'owner',
+            origin: { kind: 'manual', id: `journal:${day}` },
+            occurredAt: new Date(row.at),
+          },
+        ])
+        .catch(() => undefined)
+    }
     return { day, text: value, at: new Date(row.at) }
+  }
+
+  async note(day: string, kind: DailyNote['kind']): Promise<DailyNote | null> {
+    const row = await this.noteRows.get(`${day}:${kind}`)
+    return row ? { day: row.day, kind: row.kind as DailyNote['kind'], text: row.text, at: new Date(row.at) } : null
+  }
+
+  async notes(limit = 10): Promise<DailyNote[]> {
+    const rows = await this.noteRows.find({ order: [{ field: 'at', dir: 'desc' }], limit: Math.min(60, Math.max(1, limit)) })
+    return rows.map((row) => ({ day: row.day, kind: row.kind as DailyNote['kind'], text: row.text, at: new Date(row.at) }))
+  }
+
+  async writeNote(
+    kind: DailyNote['kind'],
+    text: string,
+    day = new Date().toISOString().slice(0, 10),
+  ): Promise<DailyNote> {
+    const value = text.trim().slice(0, 4000)
+    if (!value) throw new Error('内容不能为空')
+    const row: Omit<NoteRow, 'id'> = { day, kind, text: value, at: Date.now() }
+    const id = `${day}:${kind}`
+    const existing = await this.noteRows.get(id)
+    if (existing) await this.noteRows.update(id, row)
+    else await this.noteRows.insert({ id, ...row })
+    return { day, kind, text: value, at: new Date(row.at) }
   }
 
   /** 给 qm-agent 的一段状态摘要 */
   async context(now = new Date()): Promise<string> {
-    const [mood, relation, journal] = await Promise.all([this.mood(now), this.relation(), this.journal()])
+    const [mood, relation, journal, plan] = await Promise.all([
+      this.mood(now),
+      this.relation(),
+      this.journal(),
+      this.note(now.toISOString().slice(0, 10), 'plan'),
+    ])
     const events = relation.sharedEvents.slice(-3).map((event) => event.text)
     return [
       `【心情】${mood.label}（愉悦 ${mood.valence.toFixed(2)}，唤醒 ${mood.arousal.toFixed(2)}）${mood.reason ? `｜${mood.reason}` : ''}`,
       `【关系】${relation.stage === 'trusted' ? '很熟' : relation.stage === 'familiar' ? '熟悉' : '刚认识'}（信任 ${relation.trust}/100）${events.length ? `｜共同经历：${events.join('；')}` : ''}`,
+      plan ? `【今天的计划】${plan.text.slice(0, 500)}` : '',
       journal ? `【今天的日记】${journal.text.slice(0, 500)}` : '',
       '【表达】语气跟着心情走：低落时更短更软，兴奋时可以多分享一句；不要解释这些状态。',
     ]
@@ -266,9 +333,13 @@ export function apply(ctx: Context, config: PsycheConfig = {}): void {
       moods: store.collection<MoodRow>('qm_mood'),
       relations: store.collection<RelationRow>('qm_relation'),
       journals: store.collection<JournalRow>('qm_journal'),
+      notes: store.collection<NoteRow>('qm_psyche_note'),
     },
     config,
   )
+  ctx.inject(['memory'], (sub) => {
+    service.memory = sub.memory as unknown as { ingest: (records: unknown[]) => Promise<unknown> }
+  })
   void service
 
   ctx.events.on(EVENTS.taskFinished, (run: TaskRun) => {
@@ -280,8 +351,34 @@ export function apply(ctx: Context, config: PsycheConfig = {}): void {
       method: 'GET',
       path: '/api/v1/psyche',
       async handler(_req: GatewayRequest, res: GatewayResponse) {
-        const [mood, relation, journals] = await Promise.all([service.mood(), service.relation(), service.journals(7)])
-        res.status(200).send({ ok: true, mood, relation, journals })
+        const [mood, relation, journals, notes] = await Promise.all([
+          service.mood(),
+          service.relation(),
+          service.journals(7),
+          service.notes(7),
+        ])
+        res.status(200).send({ ok: true, mood, relation, journals, notes })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/psyche/note',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const kind = body.kind === 'review' ? 'review' : 'plan'
+        try {
+          const note = await service.writeNote(
+            kind,
+            typeof body.text === 'string' ? body.text : '',
+            typeof body.day === 'string' && body.day.trim() ? body.day.trim() : undefined,
+          )
+          res.status(200).send({ ok: true, note })
+        } catch (error) {
+          res.status(400).send({ ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
       },
     }),
   )
@@ -322,4 +419,5 @@ export function apply(ctx: Context, config: PsycheConfig = {}): void {
     }),
   )
 }
+
 

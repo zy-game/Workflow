@@ -253,6 +253,37 @@ export function apply(ctx: Context): void {
   ctx.effect(() =>
     gateway.route({
       method: 'GET',
+      path: '/api/v1/approvals/stats',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const items = await approval.list()
+        const allowed = items.filter((item) => item.status === 'allowed').length
+        const denied = items.filter((item) => item.status === 'denied').length
+        const pending = items.filter((item) => item.status === 'pending').length
+        const byAction = new Map<string, { action: string; total: number; allowed: number; denied: number; pending: number }>()
+        for (const item of items) {
+          const entry = byAction.get(item.action) ?? { action: item.action, total: 0, allowed: 0, denied: 0, pending: 0 }
+          entry.total += 1
+          if (item.status === 'allowed') entry.allowed += 1
+          else if (item.status === 'denied') entry.denied += 1
+          else if (item.status === 'pending') entry.pending += 1
+          byAction.set(item.action, entry)
+        }
+        const decided = allowed + denied
+        res.status(200).send({
+          ok: true,
+          total: items.length,
+          pending,
+          allowed,
+          denied,
+          acceptance: decided === 0 ? 0 : Math.round((allowed / decided) * 100) / 100,
+          byAction: [...byAction.values()].sort((a, b) => b.total - a.total).slice(0, 10),
+        })
+      },
+    }),
+  )
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
       path: '/api/v1/approvals',
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const raw = (req.query.status ?? '').trim()
@@ -302,3 +333,4 @@ export const defaultExport = { name, inject, apply }
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
+

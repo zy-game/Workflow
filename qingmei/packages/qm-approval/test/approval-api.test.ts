@@ -290,3 +290,32 @@ test('点已决定的旧卡片：把那张卡改成结果，不重复决定', as
     await h.dispose()
   }
 })
+
+test('GET /api/v1/approvals/stats：接受率与按 action 统计', async () => {
+  const h = await setup()
+  try {
+    const a = await h.approval.create({ action: 'qm.plan', prompt: '计划 A' })
+    const b = await h.approval.create({ action: 'qm.plan', prompt: '计划 B' })
+    const c = await h.approval.create({ action: 'group.send', prompt: '群消息' })
+    await h.approval.decide(a.id, { allow: true })
+    await h.approval.decide(b.id, { allow: false })
+    const stats = await h.call(request('GET', '/api/v1/approvals/stats'))
+    const body = stats.body as {
+      total: number
+      allowed: number
+      denied: number
+      pending: number
+      acceptance: number
+      byAction: Array<{ action: string; total: number }>
+    }
+    assert.equal(body.total, 3)
+    assert.equal(body.allowed, 1)
+    assert.equal(body.denied, 1)
+    assert.equal(body.pending, 1)
+    assert.equal(body.acceptance, 0.5)
+    assert.equal(body.byAction[0]?.action, 'qm.plan')
+    void c
+  } finally {
+    await h.dispose()
+  }
+})

@@ -783,6 +783,10 @@ export abstract class MemoryService extends Service {
     super(ctx, 'memory')
   }
   /** 幂等写入：完全相同的三元组只合并，不重复 */
+  /** 给旧事实/事件补向量；不支持时返回 0 */
+  async rebuildVectors(): Promise<{ embedded: number; skipped: number; failed: number }> {
+    return { embedded: 0, skipped: 0, failed: 0 }
+  }
   abstract ingest(records: MemoryRecord[]): Promise<{ created: string[]; merged: string[] }>
   abstract recall(query: RecallQuery): Promise<RecallResult>
   abstract forget(ids: string[]): Promise<number>
@@ -953,8 +957,8 @@ export type TaskStatus =
   | 'failed'
   | 'cancelled'
 
-export type TaskKind = 'task' | 'inventory' | 'suggestion' | 'review' | 'reminder'
-export type TaskOrigin = 'user' | 'chat' | 'internal' | 'schedule' | 'autonomy' | 'review' | 'system'
+export type TaskKind = 'task' | 'inventory' | 'suggestion' | 'review' | 'reminder' | 'goal'
+export type TaskOrigin = 'user' | 'chat' | 'internal' | 'schedule' | 'autonomy' | 'review' | 'system' | 'self'
 export type TaskTrigger = 'now' | 'at' | 'cron' | 'event' | 'manual'
 export interface TaskSchedule {
   /** at 触发：一次性时刻 */
@@ -1181,6 +1185,13 @@ export abstract class TaskService extends Service {
   }
   /** 批准/拒绝一个 proposed/scheduled/needs_approval 任务 */
   async decide(_id: string, _allow: boolean): Promise<TaskRun | null> {
+    return null
+  }
+  /** 改一个未结束任务的文字/时间/cron；排期兼容层用 */
+  async reschedule(
+    _id: string,
+    _patch: { text?: string; at?: Date; rrule?: string; timezone?: string },
+  ): Promise<TaskRun | null> {
     return null
   }
   abstract start(id: string, patch?: { sessionId?: string }): Promise<TaskRun | null>
@@ -1532,6 +1543,9 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
+
+
 
 
 

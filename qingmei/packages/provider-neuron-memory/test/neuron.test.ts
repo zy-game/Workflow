@@ -466,3 +466,12 @@ test('关系图别名：包含已有实体名的新说法并入同一节点', as
 })
 
 
+
+test('实体名清洗：路径、长句、引号、状态短语不进图', () => {
+  assert.equal(cleanEntityName('E:\\Workflow'), null)
+  assert.equal(cleanEntityName('项目「」'), null)
+  assert.equal(cleanEntityName('神经元记忆库已经上线'), null)
+  assert.equal(cleanEntityName('这个功能正在做了'), null)
+  assert.equal(cleanEntityName('青梅项目'), '青梅项目')
+  assert.equal(cleanEntityName('杭州'), '杭州')
+})

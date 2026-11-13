@@ -1660,7 +1660,9 @@ function toEdge(row: EdgeRow): MemoryEdge {
 export function cleanEntityName(raw: string): string | null {
   const value = String(raw ?? '').trim().replace(/^["'“”]+|["'“”]+$/g, '')
   if (!value) return null
-  if (value.length > 16) return null
+  if (value.length > 14) return null
+  if (/[\\/:|`"']/.test(value)) return null
+  if (/(已经|正在|做了|说了|觉得|认为|上线)/.test(value)) return null
   if (/[，。：；！？、（）()【】「」<>\n\r]/.test(value)) return null
   if (/^(不实|否认|不成立|未确认|不确定)/.test(value)) return null
   if (/(情况|的事|问题|内容|的时候)$/.test(value)) return null

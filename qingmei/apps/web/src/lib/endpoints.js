@@ -34,6 +34,7 @@ export const ENDPOINTS = {
   portraits: './api/v1/portraits',
   psyche: './api/v1/psyche',
   memoryGraph: './api/v1/memory/graph',
+  memoryRecalls: './api/v1/memory/recalls',
   taskEvents: './api/v1/tasks/events',
   taskEventsAll: './api/v1/tasks/events/all',
   taskDecide: './api/v1/tasks/decide',

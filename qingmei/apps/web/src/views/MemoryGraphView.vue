@@ -11,6 +11,8 @@ const edges = ref([])
 const facts = ref([])
 const focus = ref('')
 const depth = ref(2)
+const kind = ref('')
+const sinceDays = ref(0)
 const error = ref('')
 const loading = ref(false)
 const selected = ref('')
@@ -30,10 +32,35 @@ let dragging = null
 
 const FOV = 900
 
+async function loadSignals() {
+  try {
+    const body = await apiJson(ENDPOINTS.memoryRecalls, { query: { limit: 8 } })
+    const items = Array.isArray(body?.items) ? body.items : []
+    signals.value = items.map((item) => ({
+      at: new Date(item.at).getTime(),
+      query: String(item.query ?? ''),
+      facts: Array.isArray(item.facts) ? item.facts : [],
+    }))
+    for (const signal of signals.value) {
+      for (const fact of signal.facts) {
+        if (fact?.subject) pulse.set(String(fact.subject), Date.now() + 1500)
+        if (fact?.object) pulse.set(String(fact.object), Date.now() + 1500)
+      }
+    }
+  } catch {
+    // 历史信号失败不影响图谱
+  }
+}
+
 async function load() {
   loading.value = true
   try {
-    const query = { depth: depth.value, limit: 240 }
+    const query = {
+      depth: depth.value,
+      limit: 240,
+      ...(kind.value ? { kind: kind.value } : {}),
+      ...(sinceDays.value ? { since: Date.now() - sinceDays.value * 86_400_000 } : {}),
+    }
     if (focus.value.trim()) query.focus = focus.value.trim()
     const body = await apiJson(ENDPOINTS.memoryGraph, { query })
     nodes.value = Array.isArray(body?.nodes) ? body.nodes : []
@@ -418,6 +445,7 @@ function resetView() {
 
 onMounted(() => {
   void load()
+  void loadSignals()
   unsubscribe = on('memory-recall', onRecallSignal)
   frame = requestAnimationFrame(tick)
 })
@@ -464,6 +492,20 @@ const layerStats = computed(() => {
           <option :value="1">1 跳</option>
           <option :value="2">2 跳</option>
           <option :value="3">3 跳</option>
+        </select>
+        <select v-model="kind" class="input" @change="load">
+          <option value="">全部类型</option>
+          <option value="person">人物</option>
+          <option value="project">项目</option>
+          <option value="place">地点</option>
+          <option value="org">组织</option>
+          <option value="topic">话题</option>
+        </select>
+        <select v-model.number="sinceDays" class="input" @change="load">
+          <option :value="0">全部时间</option>
+          <option :value="7">最近 7 天</option>
+          <option :value="30">最近 30 天</option>
+          <option :value="90">最近 90 天</option>
         </select>
         <button class="btn ghost" type="button" :disabled="loading" @click="load">{{ loading ? '加载中…' : '刷新' }}</button>
         <button class="btn ghost" type="button" @click="showPanel = !showPanel">{{ showPanel ? '隐藏详情' : '显示详情' }}</button>

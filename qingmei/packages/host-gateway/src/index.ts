@@ -643,7 +643,24 @@ async function routeRequest(
     if (pathname.startsWith('/api/v1/schedules/') && method === 'PATCH') {
       const schedule = deps.resources.schedule
       if (!schedule) {
-        sendJson(res, 503, { ok: false, error: 'no schedule service' })
+        const task = deps.resources.task
+        const id = scheduleIdOf(pathname)
+        if (!task || !id) {
+          sendJson(res, 503, { ok: false, error: 'no schedule service' })
+          return
+        }
+        const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, unknown>
+        const run = await task.reschedule(id, {
+          ...(typeof body.text === 'string' ? { text: body.text } : {}),
+          ...(typeof body.at === 'string' ? { at: new Date(body.at) } : {}),
+          ...(typeof body.cron === 'string' ? { rrule: body.cron } : {}),
+          ...(typeof body.timezone === 'string' ? { timezone: body.timezone } : {}),
+        })
+        if (!run) {
+          sendJson(res, 404, { ok: false, error: '这条提醒不存在或已经结束' })
+          return
+        }
+        sendJson(res, 200, { ok: true, item: taskAsSchedule(run) })
         return
       }
       const id = scheduleIdOf(pathname)

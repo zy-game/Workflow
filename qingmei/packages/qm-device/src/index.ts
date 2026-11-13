@@ -385,6 +385,8 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       path: '/api/v1/memory/graph',
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const focus = String(req.query.focus ?? '').trim()
+        const kindFilter = String(req.query.kind ?? '').trim()
+        const since = Number(req.query.since ?? 0) || 0
         const depth = Math.min(3, Math.max(1, Number(req.query.depth ?? 2) || 2))
         const limit = Math.min(500, Math.max(20, Number(req.query.limit ?? 200) || 200))
         const entities = (await store.collection('qm_entity').find({})) as unknown as Array<{
@@ -408,8 +410,10 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
           name.length <= 20 &&
           !/[\\\\/「」]/.test(name) &&
           !/^\\d+$/.test(name)
-        const liveEdges = edges.filter((edge) => !edge.valid_to)
-        const liveEntities = entities.filter((entity) => !entity.valid_to && usable(entity.name))
+        const liveEdges = edges.filter((edge) => !edge.valid_to && (!since || edge.last_seen >= since))
+        const liveEntities = entities.filter(
+          (entity) => !entity.valid_to && usable(entity.name) && (!kindFilter || entity.kind === kindFilter),
+        )
         const byName = new Map(liveEntities.map((entity) => [entity.name, entity]))
         let selected = liveEdges
         let nodeNames = new Set<string>()
@@ -484,6 +488,49 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
               .map((fact) => ({ subject: fact.subject, predicate: fact.predicate, object: fact.object }))
           : []
         res.status(200).send({ ok: true, focus: focus || null, nodes, edges: graphEdges, facts })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/memory/vectors/backfill',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const memory = memoryService
+        if (!memory) {
+          res.status(503).send({ ok: false, error: 'no memory service' })
+          return
+        }
+        const report = await memory.rebuildVectors()
+        res.status(200).send({ ok: true, ...report })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/memory/recalls',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 20) || 20))
+        const rows = await store
+          .collection<{ id: string; at: number; query: string; audience?: string; facts_json?: string }>('qm_recall_signal')
+          .find({ order: [{ field: 'at', dir: 'desc' }], limit })
+        const items = rows.map((row) => ({
+          id: row.id,
+          at: new Date(row.at),
+          query: row.query,
+          audience: row.audience ?? 'owner',
+          facts: (() => {
+            try {
+              return JSON.parse(row.facts_json ?? '[]')
+            } catch {
+              return []
+            }
+          })(),
+        }))
+        res.status(200).send({ ok: true, items })
       },
     }),
   )
@@ -614,6 +661,9 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
 
 
 

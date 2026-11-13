@@ -229,6 +229,31 @@ export class SqliteTask extends TaskService {
       : this.patch(row, { status: 'cancelled', finished_at: Date.now(), approval_id: null }, 'decided')
   }
 
+  async reschedule(
+    id: string,
+    patch: { text?: string; at?: Date; rrule?: string; timezone?: string },
+  ): Promise<TaskRun | null> {
+    const row = await this.collection.get(id)
+    if (!row || row.finished_at !== null) return null
+    const changes: Partial<TaskRow> = { status: 'scheduled' }
+    if (patch.text !== undefined) {
+      const text = patch.text.trim().slice(0, 500)
+      if (text) {
+        changes.prompt = text
+        changes.title = text.slice(0, 40)
+      }
+    }
+    if (patch.at || patch.rrule) {
+      const schedule: { at?: Date; rrule?: string; timezone?: string } = {}
+      if (patch.at) schedule.at = patch.at
+      if (patch.rrule) schedule.rrule = patch.rrule
+      if (patch.timezone) schedule.timezone = patch.timezone
+      changes.schedule_json = JSON.stringify(serializeSchedule(schedule))
+      changes.trigger = patch.rrule ? 'cron' : 'at'
+    }
+    return this.patch(row, changes, 'rescheduled')
+  }
+
   async enqueue(id: string): Promise<TaskRun | null> {
     const row = await this.collection.get(id)
     if (!row) return null
@@ -386,7 +411,7 @@ function parseUsage(raw: string | null): TaskUsage | null {
 }
 
 function normalizeKind(value: unknown): TaskKind {
-  return value === 'inventory' || value === 'suggestion' || value === 'review' || value === 'reminder' ? value : 'task'
+  return value === 'inventory' || value === 'suggestion' || value === 'review' || value === 'reminder' || value === 'goal' ? value : 'task'
 }
 
 function serializeSchedule(schedule: TaskSchedule): Record<string, unknown> {
@@ -559,6 +584,8 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
 
 
 

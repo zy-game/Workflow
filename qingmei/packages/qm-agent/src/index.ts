@@ -43,6 +43,12 @@ import type { LlmService, ScheduleService, TaskService } from '@qingmei/core'
 export interface AgentConfig {
   /** 注入 system 消息的人格设定 */
   persona?: string
+  /** 晨间计划小时（本地时区，默认 8） */
+  planHour?: number
+  /** 晚间日记小时（本地时区，默认 22） */
+  journalHour?: number
+  /** 关掉每日仪式 */
+  rituals?: boolean
 }
 
 export const name = 'qm-agent'
@@ -232,9 +238,11 @@ export const ACTION_PROTOCOL = [
   '【行动协议】',
   '你能在回复末尾输出一个或多个行动块，行动块不会展示给用户：',
   '<qm-action>{"kind":"task.create","title":"短标题","prompt":"给执行器的一句话任务","project":"可选的项目名"}</qm-action>',
+  '<qm-action>{"kind":"task.create","taskKind":"goal","origin":"self","title":"我自己想做的事","prompt":"为什么想做、想怎么做"}</qm-action>',
   '<qm-action>{"kind":"approval.request","action":"qm.plan","prompt":"要不要我帮你规划明天出行计划和路线？","reason":"用户表达了一个愿望但还没决定"}</qm-action>',
   '判断规则：',
   '- 用户明确要求做事（如「审查一下三国项目的进度」「把 X 查一下」）：输出 task.create；',
+  '- 你自己想做的事（好奇、想整理、想学、长期目标）：输出 taskKind=goal、origin=self 的 task.create；',
   '- 用户表达模糊愿望或两难（如「明天想去看演唱会，但又想看电影」）：输出 approval.request，先问一句要不要规划；',
   '- 普通聊天、问答、情绪表达：不要输出行动块；',
   '- 行动块只能放在回复最后，不要在正文里解释它。',
@@ -247,23 +255,108 @@ export interface AgentAction {
   project?: string
   action?: string
   reason?: string
+  taskKind?: 'goal'
+  origin?: 'self'
 }
 
 /** 从模型输出里抽出行动块；正文里的块会被移除 */
 export function extractActions(raw: string): { visible: string; actions: AgentAction[] } {
   const actions: AgentAction[] = []
-  const visible = raw.replace(/<qm-action>([\s\S]*?)<\/qm-action>/g, (_match, body: string) => {
+  const accept = (value: unknown): AgentAction | null => {    if (!value || typeof value !== 'object') return null
+    const item = value as Record<string, unknown>
+    if (item.kind === 'task.create' && typeof item.prompt === 'string' && item.prompt.trim()) {
+      return item as unknown as AgentAction
+    }
+    if (item.kind === 'approval.request' && typeof item.prompt === 'string' && item.prompt.trim()) {
+      return item as unknown as AgentAction
+    }
+    // 模型偶尔会把自我目标写成 {"taskKind":"goal",...} 的代码块
+    if (item.taskKind === 'goal' && (typeof item.title === 'string' || typeof item.detail === 'string')) {
+      const title = String(item.title ?? item.detail ?? '').slice(0, 80)
+      return {
+        kind: 'task.create',
+        taskKind: 'goal',
+        origin: 'self',
+        title,
+        prompt: String(item.detail ?? item.prompt ?? title),
+      }
+    }
+    return null
+  }
+  const parseLoose = (text: string): AgentAction | null => {
+    const map: Record<string, string> = {}
+    for (const line of text.split(/\r?\n/)) {
+      const match = /^\s*([A-Za-z]+)\s*[=:]\s*(.+)$/.exec(line)
+      if (match) map[match[1]!.toLowerCase()] = match[2]!.trim()
+    }
+    const prompt = map.objective ?? map.detail ?? map.title ?? ''
+    if (!prompt) return null
+    return {
+      kind: 'task.create',
+      ...(map.taskkind === 'goal' || map.origin === 'self' ? { taskKind: 'goal' as const } : {}),
+      ...(map.origin === 'self' ? { origin: 'self' as const } : {}),
+      title: prompt.slice(0, 60),
+      prompt,
+    }
+  }
+  let visible = raw.replace(/<qm-action>([\s\S]*?)<\/qm-action>/g, (_match, body: string) => {
     try {
-      const value = JSON.parse(body) as AgentAction
-      if (value?.kind === 'task.create' && typeof value.prompt === 'string' && value.prompt.trim()) {
-        actions.push(value)
-      } else if (value?.kind === 'approval.request' && typeof value.prompt === 'string' && value.prompt.trim()) {
-        actions.push(value)
+      const action = accept(JSON.parse(body))
+      if (action) actions.push(action)
+      else {
+        const loose = parseLoose(body)
+        if (loose) actions.push(loose)
       }
     } catch {
-      // 坏块直接丢弃，不影响正文
+      const loose = parseLoose(body)
+      if (loose) actions.push(loose)
     }
     return ''
+  })
+  visible = visible.replace(/```(?:action|json)?\s*([\s\S]*?)```/g, (match, body: string) => {
+    try {
+      const action = accept(JSON.parse(body))
+      if (action) {
+        actions.push(action)
+        return ''
+      }
+    } catch {
+      const loose = parseLoose(body)
+      if (loose) {
+        actions.push(loose)
+        return ''
+      }
+    }
+    return match
+  })
+  // 模型偶尔写成 XML 风格：<action taskKind="goal" origin="self">objective: …</action>
+  visible = visible.replace(/<action([^>]*)>([\s\S]*?)<\/action>/g, (match, attrs: string, body: string) => {
+    const taskKind = /taskKind\s*=\s*["']?(\w+)/.exec(attrs)?.[1]
+    const origin = /origin\s*=\s*["']?(\w+)/.exec(attrs)?.[1]
+    let prompt = ''
+    try {
+      const parsed = JSON.parse(body) as Record<string, unknown>
+      const action = accept(parsed)
+      if (action) {
+        actions.push(action)
+        return ''
+      }
+    } catch {
+      // 不是 JSON，按 YAML 风格读取 objective/detail/title
+    }
+    const field = /^\s*(?:objective|detail|title)\s*[=:]\s*([\s\S]+)$/i.exec(body.trim())
+    prompt = (field?.[1] ?? body).trim()
+    if (prompt) {
+      actions.push({
+        kind: 'task.create',
+        ...(taskKind === 'goal' ? { taskKind: 'goal' as const } : {}),
+        ...(origin === 'self' ? { origin: 'self' as const } : {}),
+        title: prompt.slice(0, 60),
+        prompt,
+      })
+      return ''
+    }
+    return match
   })
   return { visible: visible.trim(), actions }
 }
@@ -392,6 +485,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
     | {
         context: () => Promise<string>
         onUserMessage: (text: string) => Promise<void>
+        writeJournal: (text: string, day?: string) => Promise<unknown>
+        writeNote: (kind: 'plan' | 'review', text: string, day?: string) => Promise<unknown>
       }
     | undefined
   ctx.inject(['psyche'], (sub) => {
@@ -543,6 +638,101 @@ export function apply(ctx: Context, config: AgentConfig): void {
     void maybeThinkNext(run).catch(() => undefined)
   })
 
+  const TIME_ZONE = 'Asia/Shanghai'
+
+  function dayKeyOf(now = new Date()): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(now)
+  }
+
+  function hourOf(now = new Date()): number {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, hour: '2-digit', hour12: false }).formatToParts(
+      now,
+    )
+    return Number(parts.find((part) => part.type === 'hour')?.value ?? '0') % 24
+  }
+
+  /** 每天一次晨间计划 / 晚间日记；用同一个 owner 会话，输出不发给用户 */
+  async function runRitual(kind: 'plan' | 'journal', force = false): Promise<void> {
+    if (!psycheService || !harness || !storeService) return
+    const day = dayKeyOf()
+    const stateId = `${kind}:${day}`
+    const done = force ? null : await storeService.collection('qm_psyche_ritual').get(stateId).catch(() => null)
+    if (done) return
+    const available = await harness.available().catch(() => false)
+    if (!available) return
+    const prompt =
+      kind === 'plan'
+        ? [
+            '【晨间计划】这是你的内部回合，不是回复用户。',
+            '用第一人称写今天打算做的事（最多 3 条），语气像你自己。',
+            '如果你有想探索/想整理/想学的事，可以在计划后输出一个 taskKind=goal、origin=self 的行动块；最近没探索新东西时，也可以给自己提一个小探索。',
+            '不要解释这段指令。',
+          ].join('\n')
+        : [
+            '【晚间日记】这是你的内部回合，不是回复用户。',
+            '用第一人称写今天做了什么、感受如何、明天想做什么，200 字以内。',
+            '不要解释这段指令。',
+          ].join('\n')
+    let raw = ''
+    try {
+      for await (const event of harness.run({ conversationId: conversationSessionId('owner'), text: prompt })) {
+        if (event.type === 'text') raw += event.text
+      }
+    } catch {
+      return
+    }
+    const parsed = extractActions(raw)
+    const text = parsed.visible.trim()
+    try {
+      if (kind === 'plan') {
+        await psycheService.writeNote('plan', text || '今天暂时没有特别计划。', day)
+      } else {
+        await psycheService.writeJournal(text || '今天没什么特别的，就这样过去了。', day)
+      }
+    } catch {
+      // 写日记失败不阻塞
+    }
+    if (parsed.actions.length > 0) {
+      await executeActions(raw, {
+        channel: 'web',
+        conversationId: 'owner',
+        sessionId: conversationSessionId('owner'),
+        origin: 'self',
+      }).catch(() => undefined)
+    }
+    await storeService
+      .collection('qm_psyche_ritual')
+      .insert({ id: stateId, at: Date.now() })
+      .catch(() => undefined)
+  }
+
+  if (config.rituals !== false) {
+    const planHour = Math.min(23, Math.max(0, Number(config.planHour ?? 8)))
+    const journalHour = Math.min(23, Math.max(0, Number(config.journalHour ?? 22)))
+    const ritualTimer = setInterval(() => {
+      const hour = hourOf()
+      if (hour === planHour) void runRitual('plan')
+      if (hour === journalHour) void runRitual('journal')
+    }, 10 * 60_000)
+    ritualTimer.unref?.()
+    ctx.effect(() => () => clearInterval(ritualTimer))
+    const hour = hourOf()
+    if (hour === planHour) void runRitual('plan')
+    if (hour === journalHour) void runRitual('journal')
+  }
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/psyche/ritual',
+      async handler(req, res) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const kind = body.kind === 'journal' ? 'journal' : 'plan'
+        await runRitual(kind, body.force === true)
+        res.status(200).send({ ok: true, kind })
+      },
+    }),
+  )
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
   const lanes = new Map<string, Promise<void>>()
 
@@ -704,19 +894,30 @@ export function apply(ctx: Context, config: AgentConfig): void {
           ...(range ? { since: range.since, until: range.until } : {}),
         })
         memoryText = recalled.text
+        const recallFacts = recalled.facts.map((fact) => ({
+          subject: fact.subject,
+          predicate: fact.predicate,
+          object: fact.object,
+        }))
         gateway.publish({
           type: 'memory-recall',
           data: {
             at: Date.now(),
             query: userText.slice(0, 80),
             audience,
-            facts: recalled.facts.map((fact) => ({
-              subject: fact.subject,
-              predicate: fact.predicate,
-              object: fact.object,
-            })),
+            facts: recallFacts,
           },
         })
+        void storeService
+          ?.collection('qm_recall_signal')
+          .insert({
+            id: `recall_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            at: Date.now(),
+            query: userText.slice(0, 200),
+            audience,
+            facts_json: JSON.stringify(recallFacts.slice(0, 20)),
+          })
+          .catch(() => undefined)
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
       }
@@ -1088,7 +1289,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
   /** 执行模型给出的行动块：明确任务直接派，模糊愿望走审批 */
   async function executeActions(
     raw: string,
-    target: { channel: ChannelId; conversationId: string; sessionId: string; origin: 'chat' | 'internal' },
+    target: { channel: ChannelId; conversationId: string; sessionId: string; origin: 'chat' | 'internal' | 'self' },
   ): Promise<string[]> {
     const { actions } = extractActions(raw)
     const failures: string[] = []
@@ -1106,7 +1307,25 @@ export function apply(ctx: Context, config: AgentConfig): void {
               ? { executorId: `device:${matches[0]!.deviceId}`, workspaceId: matches[0]!.workspaceId, cwd: matches[0]!.path }
               : { executorId: 'local' }
           const title = (action.title ?? action.prompt ?? '').slice(0, 60)
-          const run = await taskService.create({ prompt: action.prompt ?? title, title, target: taskTarget })
+          const isSelfGoal = action.origin === 'self' || action.taskKind === 'goal'
+          if (isSelfGoal) {
+            const today = new Date().toDateString()
+            const runs = await taskService.list(200).catch(() => [])
+            const createdToday = runs.filter(
+              (item) => item.origin === 'self' && item.createdAt.toDateString() === today,
+            ).length
+            if (createdToday >= 2) {
+              failures.push('今天的自我目标已达上限')
+              continue
+            }
+          }
+          const run = await taskService.create({
+            prompt: action.prompt ?? title,
+            title,
+            target: taskTarget,
+            status: isSelfGoal ? 'proposed' : 'queued',
+            ...(isSelfGoal ? { kind: 'goal' as const, origin: 'self' as const } : {}),
+          })
           pendingResults.set(run.id, { channel: target.channel, conversationId: target.conversationId, title })
           void storeService
             ?.collection('qm_pending_result')
@@ -1287,6 +1506,13 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+
+
+
+
+
 
 
 
