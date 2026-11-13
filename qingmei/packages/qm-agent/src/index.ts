@@ -684,13 +684,27 @@ export function apply(ctx: Context, config: AgentConfig): void {
     if (memory) {
       try {
         const range = parseTimeRange(userText)
-        memoryText = (await memory.recall({
+        const recalled = await memory.recall({
           text: userText,
           audience,
           sessionId,
           ...(message.deviceId ? { device: message.deviceId } : {}),
           ...(range ? { since: range.since, until: range.until } : {}),
-        })).text
+        })
+        memoryText = recalled.text
+        gateway.publish({
+          type: 'memory-recall',
+          data: {
+            at: Date.now(),
+            query: userText.slice(0, 80),
+            audience,
+            facts: recalled.facts.map((fact) => ({
+              subject: fact.subject,
+              predicate: fact.predicate,
+              object: fact.object,
+            })),
+          },
+        })
       } catch (error) {
         problems.push(`记忆召回失败：${messageOf(error)}`)
       }
@@ -1259,6 +1273,7 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
 
 
 

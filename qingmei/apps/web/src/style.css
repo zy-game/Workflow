@@ -209,10 +209,13 @@ p {
 
 .view {
   width: 100%;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 24px 28px 56px;
-  overflow-y: auto;
+  max-width: none;
+  margin: 0;
+  padding: 24px 28px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .view-head,
@@ -222,6 +225,7 @@ p {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 18px;
+  flex: 0 0 auto;
 }
 
 .view-title {
@@ -1115,7 +1119,7 @@ select.input:focus {
 }
 
 .workbench-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-.graph-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+.graph-controls { display: flex; gap: 8px; margin-bottom: 12px; flex: 0 0 auto; }
 .graph-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(200px, 1fr); gap: 16px; align-items: start; }
 .graph-canvas { width: 100%; height: 460px; border-radius: 12px; background: radial-gradient(circle at 50% 40%, #182236, #0d1220); cursor: pointer; }
 .graph-side { max-height: 460px; overflow: auto; }
@@ -1131,17 +1135,19 @@ select.input:focus {
 
 
 /* 记忆 3D 图谱：画布铺满，详情浮层 */
-.graph-view { display: flex; flex-direction: column; }
+.graph-view { display: flex; flex-direction: column; height: 100%; }
 .graph-view .graph-head { flex: 0 0 auto; }
 .graph-stage {
   position: relative;
   flex: 1 1 auto;
-  height: max(460px, calc(100vh - 250px));
-  min-height: 460px;
+  min-height: 0;
   border-radius: 14px;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 40%, #1a2438 0%, #0b101b 70%);
-  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.55);
+  background: radial-gradient(circle at 50% 30%, #253550 0%, #1a2540 30%, #0d1620 60%, #050a10 100%);
+  box-shadow: 
+    inset 0 0 200px rgba(0, 0, 0, 0.8),
+    inset 0 0 80px rgba(30, 80, 150, 0.1),
+    inset 0 2px 20px rgba(100, 150, 255, 0.05);
 }
 .graph-stage .graph-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
 .graph-stage .graph-canvas:active { cursor: grabbing; }
@@ -1159,6 +1165,11 @@ select.input:focus {
   backdrop-filter: blur(8px);
 }
 @media (max-width: 760px) {
-  .graph-stage { height: 62vh; min-height: 340px; }
+  .graph-stage { min-height: auto; }
   .graph-panel { width: auto; left: 8px; right: 8px; top: auto; bottom: 8px; max-height: 40%; }
 }
+
+.recall-feed { margin-top: 12px; border-top: 1px solid rgba(120,150,200,0.2); padding-top: 8px; }
+.recall-item { margin-top: 8px; padding-top: 6px; border-top: 1px dashed rgba(120,150,200,0.16); }
+.recall-item .item-title { color: #ffb347; }
+

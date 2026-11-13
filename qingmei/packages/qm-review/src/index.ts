@@ -122,7 +122,10 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
   ctx.inject(['autonomy'], (sub) => { autonomyService = sub.autonomy })
   ctx.inject(['persona'], (sub) => { personaService = sub.persona as unknown as PersonaLike })
   ctx.inject(['history'], (sub) => { historyService = sub.history })
-  ctx.inject(['task'], (sub) => { taskService = sub.task })
+  ctx.inject(['task'], (sub) => {
+    taskService = sub.task
+    void backfillReviewTasks()
+  })
   ctx.inject(['incidentStats'], (sub) => {
     incidentStats = (sub as unknown as { incidentStats: typeof incidentStats }).incidentStats
   })
@@ -138,6 +141,21 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
   const dayOfMonth = Math.min(28, Math.max(1, Math.round(Number(config.dayOfMonth ?? 1))))
   const hour = Math.min(23, Math.max(0, Math.round(Number(config.hour ?? 9))))
   const minScore = Math.min(10, Math.max(1, Math.round(Number(config.minScore ?? 6))))
+
+  /** 历史复盘报告回填成 review 任务：旧表只作为内容来源，可见账本统一在任务里 */
+  async function backfillReviewTasks(): Promise<void> {
+    if (!taskService) return
+    const rows = await reviews.find({}).catch(() => [])
+    const tasks = await taskService.list(200).catch(() => [])
+    for (const row of rows) {
+      const title = `复盘 ${row.month}`
+      if (tasks.some((item) => item.title === title)) continue
+      const task = await taskService
+        .create({ title, prompt: `生成 ${row.month} 复盘报告`, kind: 'review', origin: 'review', target: { executorId: 'local' } })
+        .catch(() => null)
+      if (task) await taskService.finish(task.id, { status: 'done', result: row.markdown.slice(0, 2000) }).catch(() => null)
+    }
+  }
 
   async function metricsFor(month: string): Promise<ReviewMetrics> {
     const start = new Date(`${month}-01T00:00:00`)
@@ -636,6 +654,7 @@ const MAX_TIMEOUT = 2_147_000_000
 }
 
 export const defaultExport = { name, inject, apply }
+
 
 
 

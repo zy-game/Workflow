@@ -1,19 +1,11 @@
 <script setup>
 import { computed, ref } from 'vue'
 import TasksView from './TasksView.vue'
-import SchedulesView from './SchedulesView.vue'
-import AutonomyView from './AutonomyView.vue'
-import AuditView from './AuditView.vue'
-import IncidentsView from './IncidentsView.vue'
-import ReviewView from './ReviewView.vue'
+import TaskEventsView from './TaskEventsView.vue'
 
 const tabs = [
-  { id: 'tasks', label: '任务', component: TasksView },
-  { id: 'schedules', label: '定时', component: SchedulesView },
-  { id: 'suggestions', label: '建议', component: AutonomyView },
-  { id: 'audit', label: '记录', component: AuditView },
-  { id: 'failed', label: '失败', component: IncidentsView },
-  { id: 'review', label: '复盘', component: ReviewView },
+  { id: 'tasks', label: '全部任务', component: TasksView },
+  { id: 'events', label: '记录', component: TaskEventsView },
 ]
 const active = ref('tasks')
 const current = computed(() => tabs.find((tab) => tab.id === active.value)?.component ?? TasksView)
@@ -24,7 +16,7 @@ const current = computed(() => tabs.find((tab) => tab.id === active.value)?.comp
     <header class="view-head">
       <div>
         <h2 class="view-title">工作台</h2>
-        <p class="view-sub">任务、定时、建议、记录、失败、复盘都收在这里：它们都是任务的不同状态或触发方式。</p>
+        <p class="view-sub">任务、定时、建议、复盘、失败、审计都在这一张任务账本里；状态/来源/触发方式在上面筛。</p>
       </div>
     </header>
     <nav class="workbench-tabs" aria-label="工作台分类">

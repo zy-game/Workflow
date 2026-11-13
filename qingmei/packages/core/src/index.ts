@@ -1179,6 +1179,10 @@ export abstract class TaskService extends Service {
   async enqueue(_id: string): Promise<TaskRun | null> {
     return null
   }
+  /** 批准/拒绝一个 proposed/scheduled/needs_approval 任务 */
+  async decide(_id: string, _allow: boolean): Promise<TaskRun | null> {
+    return null
+  }
   abstract start(id: string, patch?: { sessionId?: string }): Promise<TaskRun | null>
   /** 重启后把中断的 run 放回队列（不清空原始 prompt/产物） */
   abstract resume(id: string): Promise<TaskRun | null>
@@ -1528,6 +1532,7 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 
 
 

@@ -542,11 +542,11 @@ test('一次 inbound：chunk 事件、turn/end、store 两条消息、渠道回�
   assert.deepEqual(h.chunks.map((chunk) => chunk.text), ['你好呀', '，我是青梅', '。'])
   assert.ok(h.chunks.every((chunk) => chunk.sessionId === 's_conv-1'))
 
-  // 网关广播与 chunk 事件同源同内容
-  assert.equal(h.state.published.length, 3)
-  assert.ok(h.state.published.every((event) => event.type === 'chunk'))
+  // 网关广播与 chunk 事件同源同内容（另外会有 memory-recall 信号）
+  const publishedChunks = h.state.published.filter((event) => event.type === 'chunk')
+  assert.equal(publishedChunks.length, 3)
   assert.deepEqual(
-    h.state.published.map((event) => (event.data as TurnChunk).text),
+    publishedChunks.map((event) => (event.data as TurnChunk).text),
     ['你好呀', '，我是青梅', '。'],
   )
 
@@ -985,5 +985,6 @@ test('群画像：命中禁提词不发群，转 group.send 审批', async () =>
   assert.equal(approval[0].action, 'group.send')
   assert.equal(h.state.sent.length, 0, '命中禁提词不应直接发群')
 })
+
 
 

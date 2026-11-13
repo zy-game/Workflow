@@ -62,6 +62,8 @@ export const ENDPOINTS = {
   portraits: './api/v1/portraits',
   memoryGraph: './api/v1/memory/graph',
   taskEvents: './api/v1/tasks/events',
+  taskEventsAll: './api/v1/tasks/events/all',
+  taskDecide: './api/v1/tasks/decide',
   cost: './api/v1/cost',
   costRefresh: './api/v1/cost/refresh',
   // 账号运维 · 内容层（docs/18 §10）
@@ -73,6 +75,7 @@ export function resolveEndpoint(path) {
     typeof window !== 'undefined' ? String(window.__QM_SERVER_URL || '').replace(/\/+$/, '') : ''
   return base ? base + path.slice(1) : path
 }
+
 
 
 

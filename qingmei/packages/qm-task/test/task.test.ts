@@ -116,6 +116,7 @@ async function setup(
     urgentPriority?: number
     queueTimeoutMs?: number
     leaseTimeoutMs?: number
+    schedulerMs?: number
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'qm-task-orch-'))
@@ -133,6 +134,7 @@ async function setup(
     ...(options.quietHours ? { quietHours: options.quietHours } : {}),
     ...(options.queueTimeoutMs !== undefined ? { queueTimeoutMs: options.queueTimeoutMs } : {}),
     ...(options.leaseTimeoutMs !== undefined ? { leaseTimeoutMs: options.leaseTimeoutMs } : {}),
+    ...(options.schedulerMs !== undefined ? { schedulerMs: options.schedulerMs } : {}),
     ...(options.urgentPriority !== undefined ? { urgentPriority: options.urgentPriority } : {}),
   })
   await orchestratorFiber
@@ -680,4 +682,79 @@ test('统一任务模型：建议/定时任务带 origin/trigger/schedule，事�
     await h.dispose()
   }
 })
+
+
+test('内置调度器：scheduled 任务到点自动入队', async () => {
+  const h = await setup({ chunks: ['ok'] }, { schedulerMs: 20 })
+  try {
+    const run = await h.task.create({
+      prompt: '到点提醒',
+      kind: 'task',
+      status: 'scheduled',
+      trigger: 'at',
+      schedule: { at: new Date(Date.now() + 40) },
+    })
+    const moved = await waitFor(async () => {
+      const current = await h.task.get(run.id)
+      return current && current.status !== 'scheduled' ? current : null
+    }, '调度入队')
+    assert.notEqual(moved.status, 'scheduled')
+    const finished = await waitFor(async () => {
+      const current = await h.task.get(run.id)
+      return current?.status === 'done' ? current : null
+    }, '提醒执行')
+    assert.equal(finished.status, 'done')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('任务决策：拒绝 proposed 直接取消', async () => {
+  const h = await setup({ chunks: ['ok'] })
+  try {
+    const run = await h.task.create({ prompt: '建议', kind: 'suggestion', status: 'proposed', origin: 'autonomy' })
+    const decided = await (h.task as unknown as { decide: (id: string, allow: boolean) => Promise<TaskRun | null> }).decide(
+      run.id,
+      false,
+    )
+    assert.equal(decided?.status, 'cancelled')
+  } finally {
+    await h.dispose()
+  }
+})
+
+test('POST /tasks 支持 scheduled/proposed 字段，且不会立刻派发', async () => {
+  const h = await setup({ chunks: ['ok'] })
+  try {
+    const at = new Date(Date.now() + 3_600_000).toISOString()
+    const created = await h.call(
+      request('POST', '/api/v1/tasks', {
+        prompt: '定时测试',
+        status: 'scheduled',
+        trigger: 'at',
+        schedule: { at },
+        kind: 'reminder',
+        origin: 'schedule',
+      }),
+    )
+    const run = (created.body as { run: TaskRun }).run
+    assert.equal(run.status, 'scheduled')
+    assert.equal(run.kind, 'reminder')
+    assert.equal(run.origin, 'schedule')
+    assert.ok(run.schedule?.at)
+    const current = await h.task.get(run.id)
+    assert.equal(current?.status, 'scheduled', '调度器不应立即把未来任务入队')
+
+    const proposed = await h.call(
+      request('POST', '/api/v1/tasks', { prompt: '建议', status: 'proposed', kind: 'suggestion', origin: 'autonomy' }),
+    )
+    const proposedRun = (proposed.body as { run: TaskRun }).run
+    assert.equal(proposedRun.status, 'proposed')
+    const decided = await h.call(request('POST', '/api/v1/tasks/decide', { id: proposedRun.id, allow: false }))
+    assert.equal((decided.body as { run: TaskRun }).run.status, 'cancelled')
+  } finally {
+    await h.dispose()
+  }
+})
+
 

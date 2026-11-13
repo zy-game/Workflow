@@ -23,6 +23,7 @@ import {
   type GatewayResponse,
   type GatewayService,
   type HarnessService,
+  nextCronTime,
   type TaskContract,
   type TaskRun,
   type TaskTarget,
@@ -35,6 +36,10 @@ export interface TaskConfig {
   workspaceRoot?: string
   /** 单次执行的时间上限，默认 10 分钟 */
   timeoutMs?: number
+  /** 定时任务扫描间隔（毫秒），默认 15 秒 */
+  schedulerMs?: number
+  /** 关掉内置调度器（测试/人工控制时） */
+  scheduler?: boolean
   /** 同时最多跑几个 run；超出的排队，默认 2 */
   maxConcurrent?: number
   /** 静默时段（如 23:00-08:00）：非紧急任务不启动，跨午夜也支持 */
@@ -525,6 +530,47 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
   if (!config.startPaused) void runner.resumeOnRestart()
   ctx.effect(() => () => runner.stop())
 
+  // 内置调度器：status=scheduled 的任务到点入队；cron 任务再排下一轮
+  const schedulerMs = Math.max(1000, Number(config.schedulerMs) || 15_000)
+  async function schedulerTick(): Promise<void> {
+    const runs = await task.list(200).catch(() => [])
+    const now = Date.now()
+    for (const run of runs) {
+      if (run.status !== 'scheduled') continue
+      // 老日程插件仍负责 schedule 触发的任务；内置调度器只接新模型任务，避免重复排期
+      if (run.origin === 'schedule') continue
+      const at = run.schedule?.at?.getTime()
+      if (!at || at > now) continue
+      const moved = await task.enqueue(run.id).catch(() => null)
+      if (!moved) continue
+      if (moved.target.executorId === LOCAL_EXECUTOR) runner.dispatch(moved)
+      if (run.schedule?.rrule) {
+        const next = nextCronTime(run.schedule.rrule, new Date(now), run.schedule.timezone)
+        await task
+          .create({
+            prompt: run.prompt,
+            title: run.title,
+            kind: run.kind,
+            origin: run.origin,
+            trigger: 'cron',
+            priority: run.priority,
+            target: run.target,
+            schedule: { at: next, rrule: run.schedule.rrule, ...(run.schedule.timezone ? { timezone: run.schedule.timezone } : {}) },
+            status: 'scheduled',
+            ...(run.parentId ? { parentId: run.parentId } : {}),
+            depth: run.depth,
+          })
+          .catch(() => null)
+      }
+    }
+  }
+  if (config.scheduler !== false) {
+    const schedulerTimer = setInterval(() => void schedulerTick(), schedulerMs)
+    schedulerTimer.unref?.()
+    ctx.effect(() => () => clearInterval(schedulerTimer))
+    void schedulerTick()
+  }
+
   // 任务状态变化推给 SSE，Web 任务面板直接订阅
   for (const [event, type] of [
     [EVENTS.taskRunStarted, 'task-started'],
@@ -548,6 +594,7 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           res.status(400).send({ ok: false, error: 'prompt 不能为空' })
           return
         }
+        const desiredStatus = body.status === 'proposed' || body.status === 'scheduled' ? body.status : 'queued'
         const target = parseTarget(body.target)
         const local = target.executorId === LOCAL_EXECUTOR
         const prepared = local
@@ -562,7 +609,7 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           res.status(400).send({ ok: false, error: '没有这个执行器或 target 不合法' })
           return
         }
-        if (local) {
+        if (local && desiredStatus === 'queued') {
           const available = harness ? await harness.available().catch(() => false) : false
           if (!harness || !available) {
             res.status(503).send({ ok: false, error: '没有可用的执行器' })
@@ -577,13 +624,40 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
           ...(Array.isArray(body.dependsOn)
             ? { dependsOn: body.dependsOn.map((item) => String(item)).filter(Boolean) }
             : {}),
+          ...(body.kind === 'suggestion' || body.kind === 'review' || body.kind === 'reminder' || body.kind === 'inventory'
+            ? { kind: body.kind }
+            : {}),
+          ...(body.origin === 'user' || body.origin === 'chat' || body.origin === 'internal' || body.origin === 'schedule' || body.origin === 'autonomy' || body.origin === 'review'
+            ? { origin: body.origin }
+            : {}),
+          ...(body.trigger === 'at' || body.trigger === 'cron' || body.trigger === 'event' || body.trigger === 'manual' || body.trigger === 'now'
+            ? { trigger: body.trigger }
+            : {}),
+          ...(body.schedule && typeof body.schedule === 'object'
+            ? {
+                schedule: {
+                  ...(typeof (body.schedule as Record<string, unknown>).at === 'string'
+                    ? { at: new Date(String((body.schedule as Record<string, unknown>).at)) }
+                    : {}),
+                  ...(typeof (body.schedule as Record<string, unknown>).rrule === 'string'
+                    ? { rrule: String((body.schedule as Record<string, unknown>).rrule) }
+                    : {}),
+                  ...(typeof (body.schedule as Record<string, unknown>).timezone === 'string'
+                    ? { timezone: String((body.schedule as Record<string, unknown>).timezone) }
+                    : {}),
+                },
+              }
+            : {}),
+          status: desiredStatus,
+          ...(typeof body.parentId === 'string' && body.parentId.trim() ? { parentId: body.parentId.trim() } : {}),
+          ...(Number.isFinite(Number(body.depth)) ? { depth: Number(body.depth) } : {}),
           ...(normalizeContract(body.contract) ? { contract: normalizeContract(body.contract)! } : {}),
           target: prepared.target,
           ...(prepared.sessionId ? { sessionId: prepared.sessionId } : {}),
           ...(!prepared.sessionId && typeof body.sessionId === 'string' && body.sessionId.trim() ? { sessionId: body.sessionId.trim() } : {}),
         })
         res.status(202).send({ ok: true, run: taskViewOf(run) })
-        if (local) runner.dispatch(run)
+        if (local && run.status === 'queued') runner.dispatch(run)
       },
     }),
   )
@@ -612,6 +686,30 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 
   ctx.effect(() =>
     gateway.route({
+      method: 'POST',
+      path: '/api/v1/tasks/decide',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const id = typeof body.id === 'string' ? body.id.trim() : ''
+        if (!id || typeof body.allow !== 'boolean') {
+          res.status(400).send({ ok: false, error: 'id 与 allow 必填' })
+          return
+        }
+        const run = await (task as unknown as { decide?: (id: string, allow: boolean) => Promise<TaskRun | null> }).decide?.(
+          id,
+          body.allow,
+        )
+        if (!run) {
+          res.status(404).send({ ok: false, error: '没有这个任务或状态不允许决策' })
+          return
+        }
+        if (run.status === 'queued' && run.target.executorId === LOCAL_EXECUTOR) runner.dispatch(run)
+        res.status(200).send({ ok: true, run: taskViewOf(run) })
+      },
+    }),
+  )
+  ctx.effect(() =>
+    gateway.route({
       method: 'GET',
       path: '/api/v1/tasks/events',
       async handler(req: GatewayRequest, res: GatewayResponse) {
@@ -622,6 +720,20 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
         }
         const events = await (task as unknown as { events?: (id: string) => Promise<unknown[]> }).events?.(id)
         res.status(200).send({ ok: true, items: events ?? [] })
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/tasks/events/all',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const limit = Number(req.query.limit ?? 100)
+        const items = await (task as unknown as { listEvents?: (limit: number) => Promise<unknown[]> }).listEvents?.(
+          Number.isFinite(limit) ? limit : 100,
+        )
+        res.status(200).send({ ok: true, items: items ?? [] })
       },
     }),
   )
@@ -723,5 +835,11 @@ function messageOf(error: unknown): string {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
+
+
+
 
 

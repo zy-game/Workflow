@@ -1,3 +1,12 @@
+### 任务合并收口：决策 / 调度 / 事件 / 单工作台（2026-11-13）
+
+- `POST /api/v1/tasks/decide`：proposed/needs_approval/scheduled → queued（批准）或 cancelled（拒绝）；Web 任务项加批准/拒绝；
+- 内置调度器搬进 `qm-task`：扫描 scheduled 任务，到点 enqueue 并 dispatch；cron 用 nextCronTime 排下一轮；`POST /tasks` 现在透传 kind/origin/trigger/schedule/status；
+- 工作台收敛：只保留「全部任务」和「记录」两个 tab；记录读 `task_event`（新增 `GET /api/v1/tasks/events/all`），不再依赖审计/建议/故障/复盘旧视图；
+- Web 加「新建定时任务」表单（时间或 cron），直接创建 scheduled 任务；
+- 历史复盘报告回填成 review 任务（幂等）；
+- 生产验证：定时任务 8 秒后自动 enqueued → running → done，事件流完整；proposed 任务拒绝即 cancelled；健康检查 200，gate 467。
+
 ### 记忆图谱 3D + 铺满（2026-11-13）
 
 - 记忆页画布改为 3D 力导向：节点在三维空间受力，透视投影到 canvas，自动缓慢旋转；

@@ -12,6 +12,7 @@ import type { Context } from 'cordis'
 import {
   EVENTS,
   TaskService,
+  nextCronTime,
   uid,
   type CreateTaskInput,
   type Row,
@@ -123,6 +124,10 @@ export class SqliteTask extends TaskService {
       ...(input.target?.sessionKey?.trim() ? { sessionKey: input.target.sessionKey.trim() } : {}),
       cwd: input.target?.cwd?.trim() || `${this.workspaceRoot}/${id}`,
     }
+    const schedule = input.schedule ? { ...input.schedule } : null
+    if (schedule?.rrule && !schedule.at) {
+      schedule.at = nextCronTime(schedule.rrule, new Date(), schedule.timezone)
+    }
     const row: Omit<TaskRow, 'id'> = {
       task_id: id,
       title: input.title?.trim() || prompt.slice(0, 40),
@@ -131,7 +136,7 @@ export class SqliteTask extends TaskService {
       kind: normalizeKind(input.kind),
       origin: input.origin ?? 'user',
       trigger: input.trigger ?? 'now',
-      schedule_json: input.schedule ? JSON.stringify(serializeSchedule(input.schedule)) : null,
+      schedule_json: schedule ? JSON.stringify(serializeSchedule(schedule)) : null,
       approval_id: input.approvalId ?? null,
       parent_id: input.parentId ?? null,
       depth: Math.max(0, Number(input.depth ?? 0)),
@@ -177,6 +182,19 @@ export class SqliteTask extends TaskService {
       }))
   }
 
+  async listEvents(limit = 100): Promise<Array<{ id: string; task_id: string; at: Date; kind: string; data: unknown }>> {
+    const rows = await this.ctx.store
+      .collection<TaskEventRow>('qm_task_event')
+      .find({ order: [{ field: 'at', dir: 'desc' }], limit: Math.min(500, Math.max(1, limit)) })
+    return rows.map((row) => ({
+      id: row.id,
+      task_id: row.task_id,
+      at: new Date(row.at),
+      kind: row.kind,
+      data: row.data_json ? JSON.parse(row.data_json) : null,
+    }))
+  }
+
   async get(id: string): Promise<TaskRun | null> {
     const row = await this.collection.get(id)
     return row ? toRun(row) : null
@@ -200,6 +218,17 @@ export class SqliteTask extends TaskService {
       finished_at: null,
     })
   }
+  async decide(id: string, allow: boolean): Promise<TaskRun | null> {
+    const row = await this.collection.get(id)
+    if (!row) return null
+    if (row.status !== 'proposed' && row.status !== 'scheduled' && row.status !== 'needs_approval') {
+      return toRun(row)
+    }
+    return allow
+      ? this.patch(row, { status: 'queued', approval_id: null }, 'decided')
+      : this.patch(row, { status: 'cancelled', finished_at: Date.now(), approval_id: null }, 'decided')
+  }
+
   async enqueue(id: string): Promise<TaskRun | null> {
     const row = await this.collection.get(id)
     if (!row) return null
@@ -530,6 +559,9 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
 
 
 

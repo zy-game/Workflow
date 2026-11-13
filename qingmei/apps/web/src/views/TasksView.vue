@@ -18,6 +18,11 @@ const loading = ref(false)
 const statusFilter = ref('all')
 const originFilter = ref('all')
 const triggerFilter = ref('all')
+const scheduleText = ref('')
+const scheduleAt = ref('')
+const scheduleCron = ref('')
+const scheduleError = ref('')
+const scheduling = ref(false)
 const filteredTasks = computed(() =>
   tasks.value.filter(
     (run) =>
@@ -85,6 +90,54 @@ async function dispatchDevice() {
     await load()
   } catch (err) {
     deviceError.value = err.message || '派发失败'
+  }
+}
+
+async function decideTask(run, allow) {
+  try {
+    await apiSend(ENDPOINTS.taskDecide, { method: 'POST', body: { id: run.id, allow } })
+    await load()
+  } catch (err) {
+    error.value = err.message || '决策失败'
+  }
+}
+
+async function createScheduled() {
+  scheduleError.value = ''
+  const text = scheduleText.value.trim()
+  if (!text) {
+    scheduleError.value = '写点要提醒的内容'
+    return
+  }
+  const body = {
+    prompt: text,
+    title: text.slice(0, 40),
+    kind: 'reminder',
+    status: 'scheduled',
+    origin: 'schedule',
+    target: { executorId: 'local' },
+  }
+  if (scheduleCron.value.trim()) {
+    body.trigger = 'cron'
+    body.schedule = { rrule: scheduleCron.value.trim() }
+  } else if (scheduleAt.value) {
+    body.trigger = 'at'
+    body.schedule = { at: new Date(scheduleAt.value).toISOString() }
+  } else {
+    scheduleError.value = '选一个时间或写 cron'
+    return
+  }
+  scheduling.value = true
+  try {
+    await apiSend(ENDPOINTS.tasks, { method: 'POST', body })
+    scheduleText.value = ''
+    scheduleAt.value = ''
+    scheduleCron.value = ''
+    await load()
+  } catch (err) {
+    scheduleError.value = err.message || '创建定时任务失败'
+  } finally {
+    scheduling.value = false
   }
 }
 
@@ -183,6 +236,18 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <div class="card schedule-form">
+      <p class="item-title">新建定时任务</p>
+      <div class="portrait-grid">
+        <label class="field">内容 <input v-model="scheduleText" type="text" placeholder="下午三点开会" /></label>
+        <label class="field">时间 <input v-model="scheduleAt" type="datetime-local" /></label>
+        <label class="field">或 cron <input v-model="scheduleCron" type="text" placeholder="0 9 * * 1-5" /></label>
+      </div>
+      <p v-if="scheduleError" class="alert" role="alert">{{ scheduleError }}</p>
+      <button class="btn primary" type="button" :disabled="scheduling" @click="createScheduled">
+        {{ scheduling ? '创建中…' : '创建' }}
+      </button>
+    </div>
     <div class="task-filters">
       <select v-model="statusFilter" class="input">
         <option value="all">全部状态</option>
@@ -240,6 +305,20 @@ onBeforeUnmount(() => {
           </ul>
           <p v-if="run.error" class="item-error">错误：{{ run.error }}</p>
           <p v-else-if="run.result" class="item-note">{{ run.result.length > 300 ? `${run.result.slice(0, 300)}…` : run.result }}</p>
+        </div>
+        <div class="view-actions">
+          <button
+            v-if="run.status === 'proposed' || run.status === 'needs_approval'"
+            class="btn small"
+            type="button"
+            @click="decideTask(run, true)"
+          >批准</button>
+          <button
+            v-if="run.status === 'proposed' || run.status === 'needs_approval' || run.status === 'scheduled'"
+            class="btn small danger"
+            type="button"
+            @click="decideTask(run, false)"
+          >拒绝</button>
         </div>
       </li>
     </ul>
