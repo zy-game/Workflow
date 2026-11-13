@@ -181,13 +181,13 @@ core
 service-channel / service-gateway
 service-persona
 provider-store-sqlite / provider-neuron-memory
-provider-schedule-sqlite / provider-dsh-acp
+qm-task 内置调度器 / provider-dsh-acp
 qm-task / qm-device / qm-approval / qm-audit / qm-identity
 qm-skill / qm-distill / qm-history
 
 provider-store-sqlite / provider-memory-sqlite
 provider-task-sqlite / provider-approval-sqlite
-provider-schedule-sqlite / provider-dsh-acp
+qm-task 内置调度器 / provider-dsh-acp
 provider-llm
 
 channel-web / channel-feishu / channel-qq
