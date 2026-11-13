@@ -44,6 +44,7 @@ export const ENDPOINTS = {
   settings: './api/v1/settings',
   settingsRestart: './api/v1/settings/restart',
   settingsTest: './api/v1/settings/test',
+  agentIdleChat: './api/v1/agent/idle-chat',
   // 账号运维 · 内容层（docs/18 §10）
 }
 

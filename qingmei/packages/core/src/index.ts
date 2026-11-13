@@ -54,7 +54,9 @@ export interface InboundMessage {
   handledBy?: string
   /** 内部事件（心跳/晨间计划/日记）：走完整入站管线，但不发给用户、不落聊天历史 */
   internal?: boolean
-  internalKind?: 'plan' | 'journal' | 'heartbeat'
+  internalKind?: 'plan' | 'journal' | 'heartbeat' | 'chat'
+  /** 测试用：绕过免打扰/限频 */
+  internalForce?: boolean
 }
 
 export interface OutboundEnvelope {
@@ -1547,6 +1549,8 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
+
 
 
 

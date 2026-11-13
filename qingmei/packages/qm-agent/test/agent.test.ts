@@ -456,7 +456,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(FakeDevices)
   await ctx.plugin(FakeTaskService)
   await ctx.plugin(historyPlugin)
-  await ctx.plugin(agent, { persona: PERSONA })
+  await ctx.plugin(agent, { persona: PERSONA, ...(options.agentConfig ?? {}) })
   ctx.channel.register(fakes.adapter)
 
   const chunks: TurnChunk[] = []
@@ -1061,3 +1061,50 @@ test('内部心跳：伪造入站事件走管线，但不发给用户', async ()
   assert.equal(harness.conversations[0], 's_owner')
 })
 
+
+test('主动消息：晨间计划会发到 owner 聊天（免打扰关闭时）', async () => {
+  const h = await boot({
+    withHarness: true,
+    chunks: [],
+    agentConfig: { quietStart: 0, quietEnd: 0, proactiveMaxPerDay: 3 },
+  })
+  const harness = h.ctx.reflect.get('harness', false) as { reply: string; conversations: string[] }
+  harness.reply = '早上好，今天先把笔记归档。'
+  h.ctx.events.emit(EVENTS.inbound, {
+    platformMessageId: 'ritual_plan_proactive',
+    channel: 'web',
+    accountId: 'ritual',
+    conversation: { kind: 'dm', id: 'owner' },
+    sender: { platformUserId: 'ritual', displayName: '青梅' },
+    blocks: [{ type: 'text', text: '【晨间计划】写今天的计划' }],
+    receivedAt: new Date(),
+    internal: true,
+    internalKind: 'plan',
+  })
+  await waitFor(() => h.state.sent.length > 0, '主动消息')
+  const text = (h.state.sent[0].blocks[0] as { text?: string }).text ?? ''
+  assert.match(text, /早上好/)
+})
+
+test('主动消息：空闲聊天也会发到 owner 聊天（免打扰关闭时）', async () => {
+  const h = await boot({
+    withHarness: true,
+    chunks: [],
+    agentConfig: { quietStart: 0, quietEnd: 0, proactiveMaxPerDay: 3 },
+  })
+  const harness = h.ctx.reflect.get('harness', false) as { reply: string; conversations: string[] }
+  harness.reply = '在忙吗？刚看到窗外下雨了。'
+  h.ctx.events.emit(EVENTS.inbound, {
+    platformMessageId: 'idle_proactive',
+    channel: 'web',
+    accountId: 'idle',
+    conversation: { kind: 'dm', id: 'owner' },
+    sender: { platformUserId: 'idle', displayName: '青梅' },
+    blocks: [{ type: 'text', text: '【主动聊天】主动说一句' }],
+    receivedAt: new Date(),
+    internal: true,
+    internalKind: 'chat',
+  })
+  await waitFor(() => h.state.sent.length > 0, '主动聊天消息')
+  assert.match((h.state.sent[0].blocks[0] as { text?: string }).text ?? '', /在忙吗/)
+})

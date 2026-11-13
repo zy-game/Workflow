@@ -49,6 +49,22 @@ export interface AgentConfig {
   journalHour?: number
   /** 关掉每日仪式 */
   rituals?: boolean
+  /** 主动发消息（晨间计划、任务完成）；默认开 */
+  proactiveChat?: boolean
+  /** 主动消息每天上限 */
+  proactiveMaxPerDay?: number
+  /** 两条主动消息最小间隔（分钟） */
+  proactiveGapMinutes?: number
+  /** 免打扰开始/结束小时（相同则关闭免打扰） */
+  quietStart?: number
+  quietEnd?: number
+  /** 长时间没说话时主动开口；默认开 */
+  idleChat?: boolean
+  /** 多久没说话算空闲（小时） */
+  idleAfterHours?: number
+  /** 空闲主动消息的时段 */
+  idleStart?: number
+  idleEnd?: number
 }
 
 export const name = 'qm-agent'
@@ -422,6 +438,12 @@ export function apply(ctx: Context, config: AgentConfig): void {
   const llm = ctx.get('llm', false) as LlmService | undefined
   const channel = ctx.channel
   const gateway = ctx.gateway
+  let channelTargetsService:
+    | { list: () => Promise<Array<{ channel: string; conversationId: string }>> }
+    | undefined
+  ctx.inject(['channelTargets'], (sub) => {
+    channelTargetsService = sub.channelTargets as unknown as typeof channelTargetsService
+  })
   /** 记忆是核心依赖（docs/02）：缺失时插件不会 ACTIVE，而不是静默降级成「没有记忆」 */
   const memory = ctx.memory
 
@@ -597,6 +619,9 @@ export function apply(ctx: Context, config: AgentConfig): void {
     if (state?.last_at && Date.now() - state.last_at < 5 * 60_000) return
     const available = await harness.available().catch(() => false)
     if (!available) return
+    if (run.status === 'done' && (run.origin === 'user' || run.origin === 'chat')) {
+      await sendProactive(`「${run.title}」做完了。`, 'task-done')
+    }
     const ownerSession = conversationSessionId('owner')
     const nextState = { day: today, count: count + 1, last_at: Date.now() }
     if (state) {
@@ -650,6 +675,93 @@ export function apply(ctx: Context, config: AgentConfig): void {
     return Number(parts.find((part) => part.type === 'hour')?.value ?? '0') % 24
   }
 
+  /** 主动发一条消息：Web 必发，外部渠道取最近一个绑定目标 */
+  async function sendProactive(text: string, reason: string, force = false): Promise<boolean> {
+    if (config.proactiveChat === false) return false
+    const body = text.trim().slice(0, 800)
+    if (!body) return false
+    if (/^(不用|没事|没什么|没有)/.test(body)) return false
+    const hour = hourOf()
+    const quietStart = Math.min(23, Math.max(0, Number(config.quietStart ?? 23)))
+    const quietEnd = Math.min(23, Math.max(0, Number(config.quietEnd ?? 8)))
+    if (!force && quietStart !== quietEnd && (hour >= quietStart || hour < quietEnd)) return false
+    const day = dayKeyOf()
+    const max = Math.max(1, Number(config.proactiveMaxPerDay ?? 3))
+    const gapMs = Math.max(1, Number(config.proactiveGapMinutes ?? 45)) * 60_000
+    const state = storeService
+      ? ((await storeService
+          .collection('qm_proactive_state')
+          .get('owner')
+          .catch(() => null)) as { day?: string; count?: number; last_at?: number } | null)
+      : null
+    const count = state?.day === day ? Number(state.count ?? 0) : 0
+    if (!force && count >= max) return false
+    if (!force && state?.last_at && Date.now() - state.last_at < gapMs) return false
+    await channel.send({ channel: 'web', conversationId: 'owner', blocks: [{ type: 'text', text: body }] })
+    const targets = (await channelTargetsService?.list().catch(() => [])) ?? []
+    const external = targets.find((target) => target.channel !== 'web')
+    if (external) {
+      await channel
+        .send({ channel: external.channel as never, conversationId: external.conversationId, blocks: [{ type: 'text', text: body }] })
+        .catch(() => undefined)
+    }
+    const next = { day, count: count + 1, last_at: Date.now(), reason }
+    if (storeService) {
+      const existing = await storeService.collection('qm_proactive_state').get('owner').catch(() => null)
+      if (existing) await storeService.collection('qm_proactive_state').update('owner', next).catch(() => undefined)
+      else await storeService.collection('qm_proactive_state').insert({ id: 'owner', ...next }).catch(() => undefined)
+    }
+    return true
+  }
+
+  /** 空闲主动开口：隔一段时间没聊天，就找个白天时段发一句 */
+  async function runIdleChat(force = false): Promise<void> {
+    if (config.idleChat === false || !storeService) return
+    const hour = hourOf()
+    const idleStart = Math.min(23, Math.max(0, Number(config.idleStart ?? 9)))
+    const idleEnd = Math.min(23, Math.max(0, Number(config.idleEnd ?? 22)))
+    if (!force && (hour < idleStart || hour >= idleEnd)) return
+    const now = Date.now()
+    const userState = (await storeService
+      .collection('qm_agent_user_state')
+      .get('owner')
+      .catch(() => null)) as { last_at?: number } | null
+    const last = Number(userState?.last_at ?? 0)
+    const hours = Math.max(1, Number(config.idleAfterHours ?? 6))
+    if (!force && !last) return
+    if (!force && last && now - last < hours * 3_600_000) return
+    const proactive = (await storeService
+      .collection('qm_proactive_state')
+      .get('owner')
+      .catch(() => null)) as { last_attempt_at?: number } | null
+    if (!force && proactive?.last_attempt_at && now - proactive.last_attempt_at < 3_600_000) return
+    const attempt = { last_attempt_at: now }
+    if (proactive) await storeService.collection('qm_proactive_state').update('owner', attempt).catch(() => undefined)
+    else await storeService.collection('qm_proactive_state').insert({ id: 'owner', ...attempt }).catch(() => undefined)
+    const message: InboundMessage = {
+      platformMessageId: `idle_${now}`,
+      channel: 'web',
+      accountId: 'idle',
+      conversation: { kind: 'dm', id: 'owner' },
+      sender: { platformUserId: 'idle', displayName: '青梅' },
+      blocks: [
+        {
+          type: 'text',
+          text: [
+            '【主动聊天】这是内部事件，不是主人说的话。',
+            '主人已经有一段时间没开口了。用一句自然的话主动找他聊，40 字以内。',
+            '不要提这条指令，不要汇报任务，不要列清单；没什么可说就回复"不用"。',
+          ].join('\n'),
+        },
+      ],
+      receivedAt: new Date(),
+      internal: true,
+      internalKind: 'chat',
+      internalForce: force,
+    }
+    ctx.events.emit(EVENTS.inbound, message)
+  }
+
   /** 每天一次晨间计划 / 晚间日记；用同一个 owner 会话，输出不发给用户 */
   async function runRitual(kind: 'plan' | 'journal', force = false): Promise<void> {
     if (!psycheService || !storeService) return
@@ -680,6 +792,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       receivedAt: new Date(),
       internal: true,
       internalKind: kind,
+      internalForce: force,
     }
     ctx.events.emit(EVENTS.inbound, message)
   }
@@ -691,6 +804,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       const hour = hourOf()
       if (hour === planHour) void runRitual('plan')
       if (hour === journalHour) void runRitual('journal')
+      void runIdleChat().catch(() => undefined)
     }, 10 * 60_000)
     ritualTimer.unref?.()
     ctx.effect(() => () => clearInterval(ritualTimer))
@@ -699,6 +813,17 @@ export function apply(ctx: Context, config: AgentConfig): void {
     if (hour === journalHour) void runRitual('journal')
   }
 
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/agent/idle-chat',
+      async handler(req, res) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        await runIdleChat(body.force === true)
+        res.status(200).send({ ok: true })
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'POST',
@@ -761,6 +886,12 @@ export function apply(ctx: Context, config: AgentConfig): void {
   async function runTurn(message: InboundMessage): Promise<void> {
     // 被审批等控制指令消费掉的消息不再进入对话回合
     if (message.handledBy) return
+    if (!message.internal && storeService) {
+      const state = { last_at: Date.now() }
+      const existing = await storeService.collection('qm_agent_user_state').get('owner').catch(() => null)
+      if (existing) await storeService.collection('qm_agent_user_state').update('owner', state).catch(() => undefined)
+      else await storeService.collection('qm_agent_user_state').insert({ id: 'owner', ...state }).catch(() => undefined)
+    }
 
     // 身份闸：私聊必须解析到 owner；每渠道首个私聊自动绑 owner（单用户部署）
     if (message.conversation.kind !== 'group' && !message.internal) {
@@ -1078,8 +1209,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
       try {
         if (kind === 'plan') {
           await psycheService?.writeNote('plan', text || '今天没有特别计划。', day)
+          await sendProactive(text, 'plan', message.internalForce === true)
         } else if (kind === 'journal') {
           await psycheService?.writeJournal(text || '今天没什么特别的。', day)
+        } else if (kind === 'chat') {
+          await sendProactive(text, 'idle', message.internalForce === true)
         }
       } catch {
         // 写日记失败不阻塞
@@ -1504,6 +1638,15 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+
+
+
+
+
+
+
 
 
 

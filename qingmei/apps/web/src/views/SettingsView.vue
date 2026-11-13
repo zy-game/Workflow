@@ -71,6 +71,16 @@ async function testConnection(kind) {
   }
 }
 
+async function testIdleChat() {
+  notifyMsg.value = '正在让她主动说一句…'
+  try {
+    await apiSend(ENDPOINTS.agentIdleChat, { method: 'POST', body: { force: true } })
+    notifyMsg.value = '已触发主动聊天，去对话页看看。'
+  } catch (err) {
+    notifyMsg.value = err.message || '触发失败'
+  }
+}
+
 async function testOfflineNotice() {
   try {
     const body = await apiSend(ENDPOINTS.deviceOfflineTest, { method: 'POST', body: {} })
@@ -219,6 +229,7 @@ onMounted(load)
         </button>
         <button class="btn ghost" type="button" @click="testConnection('llm')">测试模型</button>
         <button class="btn ghost" type="button" @click="testConnection('embedding')">测试 Embedding</button>
+        <button class="btn ghost" type="button" @click="testIdleChat">让她主动说一句</button>
         <button class="btn ghost" type="button" @click="testOfflineNotice">发送测试通知</button>
         <button class="btn ghost" type="button" @click="restartService">重启服务</button>
       </div>
