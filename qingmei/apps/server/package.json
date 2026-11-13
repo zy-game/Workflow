@@ -33,8 +33,6 @@
     "@qingmei/qm-distill": "workspace:*",
     "@qingmei/qm-evolve": "workspace:*",
     "@qingmei/qm-cost": "workspace:*",
-    "@qingmei/qm-planner": "workspace:*",
     "@qingmei/provider-embedding-http": "workspace:*"
   }
 }
-

@@ -358,6 +358,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
         collection: (name: string) => {
           get: (id: string) => Promise<unknown>
           insert: (value: unknown) => Promise<unknown>
+          update: (id: string, patch: unknown) => Promise<void>
           delete: (id: string) => Promise<boolean>
         }
       }
@@ -440,6 +441,67 @@ export function apply(ctx: Context, config: AgentConfig): void {
         // 审批通过但规划任务没建起来：下一轮对话可见
       }
     })()
+  })
+
+  /**
+   * 任务结束后的一次内部思考：复用同一个 owner 会话，让人格自己判断要不要下一步。
+   * 规则只做限额：每天最多 3 次、间隔 5 分钟、内部自建任务不再触发。
+   */
+  async function maybeThinkNext(run: TaskRun): Promise<void> {
+    if (!harness || !storeService) return
+    const originRow = (await storeService
+      .collection('qm_task_origin')
+      .get(run.id)
+      .catch(() => null)) as { origin?: string } | null
+    if (originRow?.origin === 'internal') return
+    const state = (await storeService
+      .collection('qm_agent_internal_state')
+      .get('owner')
+      .catch(() => null)) as { day?: string; count?: number; last_at?: number } | null
+    const today = new Date().toDateString()
+    const count = state?.day === today ? Number(state.count ?? 0) : 0
+    if (count >= 3) return
+    if (state?.last_at && Date.now() - state.last_at < 5 * 60_000) return
+    const available = await harness.available().catch(() => false)
+    if (!available) return
+    const ownerSession = conversationSessionId('owner')
+    const nextState = { day: today, count: count + 1, last_at: Date.now() }
+    if (state) {
+      await storeService.collection('qm_agent_internal_state').update('owner', nextState).catch(() => undefined)
+    } else {
+      await storeService
+        .collection('qm_agent_internal_state')
+        .insert({ id: 'owner', ...nextState })
+        .catch(() => undefined)
+    }
+
+    let raw = ''
+    try {
+      for await (const event of harness.run({
+        conversationId: ownerSession,
+        text: [
+          '【内部事件】不要把这条当成主人说的话，也不要回复主人。',
+          `任务「${run.title}」刚结束：${run.status}。`,
+          `结果：${String(run.result ?? run.error ?? '').slice(0, 600) || '无'}`,
+          '根据你的人格和刚才的对话，判断要不要有下一步（建任务/提醒/申请规划）。',
+          '需要就只输出行动块；不需要就回复"不用"。',
+        ].join('\n'),
+      })) {
+        if (event.type === 'text') raw += event.text
+      }
+    } catch {
+      return
+    }
+    await executeActions(raw, {
+      channel: 'web',
+      conversationId: 'owner',
+      sessionId: ownerSession,
+      origin: 'internal',
+    })
+  }
+
+  ctx.events.on(EVENTS.taskFinished, (run: TaskRun) => {
+    void maybeThinkNext(run).catch(() => undefined)
   })
 
   /** 每个 sessionId 一条排队链，链上的回合按到达顺序执行 */
@@ -720,7 +782,12 @@ export function apply(ctx: Context, config: AgentConfig): void {
           }
         }
         reply += filter.finish()
-        const actionFailures = await executeActions(rawReply, message, sessionId)
+        const actionFailures = await executeActions(rawReply, {
+          channel: message.channel,
+          conversationId: message.conversation.id,
+          sessionId,
+          origin: 'chat',
+        })
         if (actionFailures.length > 0) reply += `\n\n（${actionFailures.join('；')}）`
         if (!reply.trim()) reply = '好，我这就去办。'
       } else {
@@ -733,7 +800,12 @@ export function apply(ctx: Context, config: AgentConfig): void {
         const rawReply = await streamReply(sessionId, messages, controller.signal)
         const parsed = extractActions(rawReply)
         reply = parsed.visible || (parsed.actions.length > 0 ? '好，我这就去办。' : '')
-        const actionFailures = await executeActions(rawReply, message, sessionId)
+        const actionFailures = await executeActions(rawReply, {
+          channel: message.channel,
+          conversationId: message.conversation.id,
+          sessionId,
+          origin: 'chat',
+        })
         if (actionFailures.length > 0) reply += `\n\n（${actionFailures.join('；')}）`
         steps = 1
       }
@@ -914,7 +986,10 @@ export function apply(ctx: Context, config: AgentConfig): void {
   }
 
   /** 执行模型给出的行动块：明确任务直接派，模糊愿望走审批 */
-  async function executeActions(raw: string, message: InboundMessage, sessionId: string): Promise<string[]> {
+  async function executeActions(
+    raw: string,
+    target: { channel: ChannelId; conversationId: string; sessionId: string; origin: 'chat' | 'internal' },
+  ): Promise<string[]> {
     const { actions } = extractActions(raw)
     const failures: string[] = []
     for (const action of actions) {
@@ -926,22 +1001,26 @@ export function apply(ctx: Context, config: AgentConfig): void {
         try {
           const hint = `${action.project ?? ''} ${action.title ?? ''} ${action.prompt ?? ''}`
           const matches = await resolveWorkspaces(hint)
-          const target =
+          const taskTarget =
             matches.length === 1
               ? { executorId: `device:${matches[0]!.deviceId}`, workspaceId: matches[0]!.workspaceId, cwd: matches[0]!.path }
               : { executorId: 'local' }
           const title = (action.title ?? action.prompt ?? '').slice(0, 60)
-          const run = await taskService.create({ prompt: action.prompt ?? title, title, target })
-          pendingResults.set(run.id, { channel: message.channel, conversationId: message.conversation.id, title })
+          const run = await taskService.create({ prompt: action.prompt ?? title, title, target: taskTarget })
+          pendingResults.set(run.id, { channel: target.channel, conversationId: target.conversationId, title })
           void storeService
             ?.collection('qm_pending_result')
             .insert({
               id: run.id,
-              channel: message.channel,
-              conversation_id: message.conversation.id,
+              channel: target.channel,
+              conversation_id: target.conversationId,
               title,
               at: Date.now(),
             })
+            .catch(() => undefined)
+          void storeService
+            ?.collection('qm_task_origin')
+            .insert({ id: run.id, origin: target.origin, at: Date.now() })
             .catch(() => undefined)
         } catch (error) {
           failures.push(`建任务失败：${messageOf(error)}`)
@@ -965,7 +1044,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
               id: request.id,
               action: action.action ?? 'qm.plan',
               prompt: action.prompt ?? '',
-              session_id: sessionId,
+              session_id: target.sessionId,
               at: Date.now(),
             })
             .catch(() => undefined)
@@ -1106,6 +1185,8 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
 
 
 

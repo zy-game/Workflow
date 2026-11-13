@@ -32,7 +32,7 @@ process.env.QM_EMBEDDING_KEY ||= 'test-key'
 
 test('仓库自带的 qingmei.yml：二十二项插件，端口与数据库路径来自配置', () => {
   const entries = readPluginList(DEFAULT_CONFIG)
-  assert.equal(entries.length, 26)
+  assert.equal(entries.length, 25)
   assert.deepEqual(
     entries.map((entry) => entry.name),
     [
@@ -60,7 +60,6 @@ test('仓库自带的 qingmei.yml：二十二项插件，端口与数据库路�
       '@qingmei/qm-review',
       '@qingmei/channel-feishu',
       '@qingmei/channel-qq',
-      '@qingmei/qm-planner',
       '@qingmei/host-gateway',
     ],
   )
@@ -150,6 +149,7 @@ test('清单里的 ${NAME} 做字符串插值，缺失替换为空串', async ()
     delete process.env.QM_TEST_HOST
   }
 })
+
 
 
 

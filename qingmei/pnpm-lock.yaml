@@ -112,9 +112,6 @@ importers:
       '@qingmei/qm-identity':
         specifier: workspace:*
         version: link:../../packages/qm-identity
-      '@qingmei/qm-planner':
-        specifier: workspace:*
-        version: link:../../packages/qm-planner
       '@qingmei/qm-review':
         specifier: workspace:*
         version: link:../../packages/qm-review
@@ -457,22 +454,6 @@ importers:
         version: link:../provider-store-sqlite
 
   packages/qm-identity:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../provider-store-sqlite
-      '@qingmei/service-gateway':
-        specifier: workspace:*
-        version: link:../service-gateway
-
-  packages/qm-planner:
     dependencies:
       '@qingmei/core':
         specifier: workspace:*

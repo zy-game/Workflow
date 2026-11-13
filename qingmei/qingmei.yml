@@ -121,12 +121,6 @@
 - name: '@qingmei/channel-qq'
 
 # 自规划循环：默认关，避免本地开发时反复调模型
-- name: '@qingmei/qm-planner'
-  config:
-    enabled: false
-    maxSelfTasksPerDay: 3
-    maxDepth: 1
-    cooldownMinutes: 30
 
 - name: '@qingmei/host-gateway'
   config:

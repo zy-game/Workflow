@@ -135,6 +135,7 @@ function collectionOf<T extends Row>(
 // ────────────────────────────────────────────── 假服务
 
 interface FakeOptions {
+  withHarness?: boolean
   /** 模型逐片吐出的文本 */
   chunks: string[]
   /** 相邻两片之间的停顿，用来观察并发 */
@@ -386,6 +387,19 @@ class FakeTaskService extends Service {
   }
 }
 
+class FakeHarness extends Service {
+  reply = ''
+  readonly conversations: string[] = []
+  constructor(ctx: Context) { super(ctx, 'harness') }
+  async available() { return true }
+  async *run(req: { conversationId?: string }) {
+    this.conversations.push(String(req.conversationId ?? ''))
+    if (this.reply) yield { type: 'text', text: this.reply }
+    yield { type: 'done' }
+  }
+  async close() {}
+}
+
 class FakeApproval extends Service {
   readonly created: any[] = []
   constructor(ctx: Context) { super(ctx, 'approval') }
@@ -427,6 +441,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(fakes.FakeIdentity)
   await ctx.plugin(FakeCost)
   await ctx.plugin(FakeApproval)
+  if (options.withHarness) await ctx.plugin(FakeHarness)
   await ctx.plugin(FakeDevices)
   await ctx.plugin(FakeTaskService)
   await ctx.plugin(historyPlugin)
@@ -918,4 +933,24 @@ test('明确动作：审查项目进度直接派任务，不再多问一句', as
   assert.equal(created[0].target.executorId, 'device:dev-1')
   const text = (h.state.sent.at(-1)?.blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
   assert.match(text, /已派/)
+})
+
+test('任务结束：用同一个 owner 会话做一次内部思考，行动块直接建任务', async () => {
+  const h = await boot({ withHarness: true })
+  const harness = h.ctx.reflect.get('harness', false) as {
+    reply: string
+    conversations: string[]
+  }
+  harness.reply = '<qm-action>{"kind":"task.create","title":"跟进失败","prompt":"看看刚才失败的原因"}</qm-action>'
+  h.ctx.events.emit(EVENTS.taskFinished, {
+    id: 'run_failed',
+    status: 'failed',
+    title: '检查三国',
+    error: 'timeout',
+    result: null,
+  } as never)
+  await waitFor(() => (h.ctx.reflect.get('task', false) as unknown as { created: any[] }).created.length === 1, '内部任务')
+  const created = (h.ctx.reflect.get('task', false) as unknown as { created: any[] }).created
+  assert.equal(created[0].title, '跟进失败')
+  assert.deepEqual(harness.conversations, ['s_owner'])
 })
