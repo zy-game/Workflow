@@ -52,6 +52,9 @@
 - name: '@qingmei/qm-portrait'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
+- name: '@qingmei/qm-psyche'
+  config:
+    moodHalfLifeHours: 6
 - name: '@qingmei/qm-agent'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
@@ -144,6 +147,7 @@
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
+
 
 
 

@@ -4,6 +4,7 @@ import { ENDPOINTS } from '../lib/endpoints.js'
 import { apiJson, apiSend } from '../lib/api.js'
 
 const items = ref([])
+const psyche = ref(null)
 const error = ref('')
 const loading = ref(false)
 const saving = ref(false)
@@ -15,8 +16,12 @@ const groupForm = reactive({ id: '', name: '', blocked: '', note: '', requireApp
 async function load() {
   loading.value = true
   try {
-    const body = await apiJson(ENDPOINTS.portraits)
+    const [body, mind] = await Promise.all([
+      apiJson(ENDPOINTS.portraits),
+      apiJson(ENDPOINTS.psyche).catch(() => null),
+    ])
     items.value = Array.isArray(body?.items) ? body.items : []
+    psyche.value = mind
     const self = items.value.find((item) => item.kind === 'self')
     if (self) {
       selfForm.persona = self.persona || ''
@@ -113,6 +118,29 @@ onMounted(load)
         <textarea v-model="personForm.traits" rows="3" placeholder="作息、偏好、边界"></textarea>
       </label>
       <button class="btn primary" type="button" :disabled="saving" @click="savePerson">保存主人画像</button>
+    </article>
+
+    <article v-if="psyche" class="card portrait-card">
+      <h3>心灵状态</h3>
+      <p class="item-title">{{ psyche.mood?.label }} · 愉悦 {{ Number(psyche.mood?.valence ?? 0).toFixed(2) }}</p>
+      <p class="item-meta">{{ psyche.mood?.reason || '还没有明显情绪' }}</p>
+      <p class="item-meta">
+        关系：{{ psyche.relation?.stage }} · 信任 {{ psyche.relation?.trust }}/100 ·
+        共同经历 {{ psyche.relation?.sharedEvents?.length ?? 0 }} 件
+      </p>
+      <ul class="list">
+        <li v-for="event in (psyche.relation?.sharedEvents ?? []).slice(-3)" :key="event.text" class="item">
+          <p class="item-meta">{{ event.text }}</p>
+        </li>
+      </ul>
+      <h4>最近的日记</h4>
+      <ul class="list">
+        <li v-for="journal in (psyche.journals ?? []).slice(0, 3)" :key="journal.day" class="item">
+          <p class="item-title">{{ journal.day }}</p>
+          <p class="item-meta">{{ journal.text }}</p>
+        </li>
+      </ul>
+      <p v-if="(psyche.journals ?? []).length === 0" class="item-meta">还没有日记。</p>
     </article>
 
     <article class="card portrait-card">

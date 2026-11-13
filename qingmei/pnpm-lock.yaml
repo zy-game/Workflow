@@ -112,6 +112,9 @@ importers:
       '@qingmei/qm-portrait':
         specifier: workspace:*
         version: link:../../packages/qm-portrait
+      '@qingmei/qm-psyche':
+        specifier: workspace:*
+        version: link:../../packages/qm-psyche
       '@qingmei/qm-review':
         specifier: workspace:*
         version: link:../../packages/qm-review
@@ -457,6 +460,22 @@ importers:
         version: link:../service-gateway
 
   packages/qm-portrait:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-psyche:
     dependencies:
       '@qingmei/core':
         specifier: workspace:*

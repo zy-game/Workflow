@@ -1,3 +1,11 @@
+### 拟人化 1/4：心情 + 关系 + 日记（2026-11-13）
+
+- 新插件 `qm-psyche`：`qm_mood`（愉悦/唤醒/标签/原因/半衰期回落）、`qm_relation`（信任/阶段/共同经历/边界/习惯）、`qm_journal`（按天第一人称日记）；
+- 用户消息 → 情绪微调（正/负词）+ 信任 +1；任务完成 → 信任 +2 并记共同经历，失败 → 心情略降；
+- qm-agent 注入 `【心情】【关系】【今天的日记】【表达】`，语气随状态变化；
+- `GET /api/v1/psyche`、`POST /api/v1/psyche/mood`、`POST /api/v1/psyche/journal`；画像页新增「心灵状态」；
+- 生产验证：发「谢谢你，今天辛苦了」后 valence 0→0.12、trust 0→1。
+
 ### 清理：删掉不再需要的代码与视图（2026-11-13）
 
 - 删除 Web 旧视图：SchedulesView、AutonomyView、AuditView、IncidentsView、ReviewView、ConversationsView；router 只保留 对话/工作台/画像/记忆/用量/设置；

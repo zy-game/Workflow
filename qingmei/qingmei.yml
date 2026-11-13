@@ -49,6 +49,9 @@
 - name: '@qingmei/qm-portrait'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短。'
+- name: '@qingmei/qm-psyche'
+  config:
+    moodHalfLifeHours: 6
 - name: '@qingmei/qm-agent'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短。'
@@ -128,6 +131,7 @@
     port: 7410
     token: 'dev-token'
     webRoot: './apps/web/dist'
+
 
 
 

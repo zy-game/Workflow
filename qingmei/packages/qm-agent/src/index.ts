@@ -388,6 +388,15 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ctx.inject(['portrait'], (sub) => {
     portraitService = (sub as unknown as { portrait: NonNullable<typeof portraitService> }).portrait
   })
+  let psycheService:
+    | {
+        context: () => Promise<string>
+        onUserMessage: (text: string) => Promise<void>
+      }
+    | undefined
+  ctx.inject(['psyche'], (sub) => {
+    psycheService = (sub as unknown as { psyche: NonNullable<typeof psycheService> }).psyche
+  })
 
   /** 待确认的“派任务到工作区”：按会话保存一次，避免猜测 */
   const pendingDispatch = new Map<
@@ -610,6 +619,9 @@ export function apply(ctx: Context, config: AgentConfig): void {
     }
     const sessionId = sessionIdOf(message)
     const userText = textOf(message.blocks)
+    if (userText && message.conversation.kind !== 'group') {
+      void psycheService?.onUserMessage(userText).catch(() => undefined)
+    }
     const traceId = uid('turn')
     const startedAt = Date.now()
     // 轮到这条消息了：先报 turn/start，qm-history 按这个顺序写用户消息
@@ -788,11 +800,13 @@ export function apply(ctx: Context, config: AgentConfig): void {
         : null
     const effectivePersona = selfPortrait?.persona?.trim() || persona
     const portraitTraits = personPortrait?.traits?.length ? `画像：${personPortrait.traits.join('、')}` : ''
+    const psycheText = audience === 'owner' ? (await psycheService?.context().catch(() => '')) ?? '' : ''
     const portraitGroupNote = groupPortrait?.rules?.note ? `群画像：${groupPortrait.rules.note}` : ''
 
     const memoryBlock = [
       profileText ? `【关于主人】\n${profileText}` : '',
       portraitTraits,
+      psycheText,
       portraitGroupNote,
       activityText ? `【最近 7 天】\n${activityText}` : '',
       summaryText ? `【会话摘要】\n${summaryText}` : '',
@@ -1273,6 +1287,7 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
 
 
 

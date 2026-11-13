@@ -32,6 +32,7 @@ export const ENDPOINTS = {
   skillsHistory: './api/v1/skills/history',
   skillsRollback: './api/v1/skills/rollback',
   portraits: './api/v1/portraits',
+  psyche: './api/v1/psyche',
   memoryGraph: './api/v1/memory/graph',
   taskEvents: './api/v1/tasks/events',
   taskEventsAll: './api/v1/tasks/events/all',
@@ -47,6 +48,7 @@ export function resolveEndpoint(path) {
     typeof window !== 'undefined' ? String(window.__QM_SERVER_URL || '').replace(/\/+$/, '') : ''
   return base ? base + path.slice(1) : path
 }
+
 
 
 
