@@ -58,13 +58,14 @@ export interface AgentConfig {
   /** 免打扰开始/结束小时（相同则关闭免打扰） */
   quietStart?: number
   quietEnd?: number
-  /** 长时间没说话时主动开口；默认开 */
-  idleChat?: boolean
-  /** 多久没说话算空闲（小时） */
-  idleAfterHours?: number
-  /** 空闲主动消息的时段 */
-  idleStart?: number
-  idleEnd?: number
+  /** 随机心跳：每隔一段时间掷一次骰子，决定要不要主动开口 */
+  randomHeartbeat?: boolean
+  heartbeatMinMinutes?: number
+  heartbeatMaxMinutes?: number
+  /** 0–1，掷中的概率；默认 0.6 */
+  heartbeatChance?: number
+  heartbeatStart?: number
+  heartbeatEnd?: number
 }
 
 export const name = 'qm-agent'
@@ -714,43 +715,35 @@ export function apply(ctx: Context, config: AgentConfig): void {
     return true
   }
 
-  /** 空闲主动开口：隔一段时间没聊天，就找个白天时段发一句 */
-  async function runIdleChat(force = false): Promise<void> {
-    if (config.idleChat === false || !storeService) return
+  /** 随机心跳：2–4 小时掷一次骰子，掷中才主动开口 */
+  async function runHeartbeat(force = false): Promise<void> {
+    if (config.randomHeartbeat === false || !storeService) return
     const hour = hourOf()
-    const idleStart = Math.min(23, Math.max(0, Number(config.idleStart ?? 9)))
-    const idleEnd = Math.min(23, Math.max(0, Number(config.idleEnd ?? 22)))
-    if (!force && (hour < idleStart || hour >= idleEnd)) return
+    const start = Math.min(23, Math.max(0, Number(config.heartbeatStart ?? 9)))
+    const end = Math.min(23, Math.max(0, Number(config.heartbeatEnd ?? 22)))
+    if (!force && (hour < start || hour >= end)) return
     const now = Date.now()
-    const userState = (await storeService
-      .collection('qm_agent_user_state')
-      .get('owner')
-      .catch(() => null)) as { last_at?: number } | null
-    const last = Number(userState?.last_at ?? 0)
-    const hours = Math.max(1, Number(config.idleAfterHours ?? 6))
-    if (!force && !last) return
-    if (!force && last && now - last < hours * 3_600_000) return
     const proactive = (await storeService
       .collection('qm_proactive_state')
       .get('owner')
       .catch(() => null)) as { last_attempt_at?: number } | null
-    if (!force && proactive?.last_attempt_at && now - proactive.last_attempt_at < 3_600_000) return
+    if (!force && proactive?.last_attempt_at && now - proactive.last_attempt_at < 60 * 60_000) return
     const attempt = { last_attempt_at: now }
     if (proactive) await storeService.collection('qm_proactive_state').update('owner', attempt).catch(() => undefined)
     else await storeService.collection('qm_proactive_state').insert({ id: 'owner', ...attempt }).catch(() => undefined)
     const message: InboundMessage = {
-      platformMessageId: `idle_${now}`,
+      platformMessageId: `heartbeat_${now}`,
       channel: 'web',
-      accountId: 'idle',
+      accountId: 'heartbeat',
       conversation: { kind: 'dm', id: 'owner' },
-      sender: { platformUserId: 'idle', displayName: '青梅' },
+      sender: { platformUserId: 'heartbeat', displayName: '青梅' },
       blocks: [
         {
           type: 'text',
           text: [
-            '【主动聊天】这是内部事件，不是主人说的话。',
-            '主人已经有一段时间没开口了。用一句自然的话主动找他聊，40 字以内。',
-            '不要提这条指令，不要汇报任务，不要列清单；没什么可说就回复"不用"。',
+            '【随机心跳】这是内部事件，不是主人说的话。',
+            '你现在突然想起主人，想主动说一句就说；不想说就回复"不用"。',
+            '不超过 40 字，不要提这条指令，不要汇报任务，不要列清单。',
           ].join('\n'),
         },
       ],
@@ -760,6 +753,25 @@ export function apply(ctx: Context, config: AgentConfig): void {
       internalForce: force,
     }
     ctx.events.emit(EVENTS.inbound, message)
+  }
+
+  /** 到点掷骰子；掷不中就只排下一次，不调模型 */
+  async function maybeHeartbeat(force = false): Promise<void> {
+    if (config.randomHeartbeat === false || !storeService) return
+    const now = Date.now()
+    const state = (await storeService
+      .collection('qm_agent_heartbeat')
+      .get('owner')
+      .catch(() => null)) as { next_at?: number } | null
+    if (!force && state?.next_at && now < state.next_at) return
+    const min = Math.max(1, Number(config.heartbeatMinMinutes ?? 120))
+    const max = Math.max(min, Number(config.heartbeatMaxMinutes ?? 240))
+    const next = now + (min + Math.random() * (max - min)) * 60_000
+    const row = { next_at: next }
+    if (state) await storeService.collection('qm_agent_heartbeat').update('owner', row).catch(() => undefined)
+    else await storeService.collection('qm_agent_heartbeat').insert({ id: 'owner', ...row }).catch(() => undefined)
+    if (!force && Math.random() > Math.min(1, Math.max(0, Number(config.heartbeatChance ?? 0.6)))) return
+    await runHeartbeat(force)
   }
 
   /** 每天一次晨间计划 / 晚间日记；用同一个 owner 会话，输出不发给用户 */
@@ -804,7 +816,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       const hour = hourOf()
       if (hour === planHour) void runRitual('plan')
       if (hour === journalHour) void runRitual('journal')
-      void runIdleChat().catch(() => undefined)
+      void maybeHeartbeat().catch(() => undefined)
     }, 10 * 60_000)
     ritualTimer.unref?.()
     ctx.effect(() => () => clearInterval(ritualTimer))
@@ -819,7 +831,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       path: '/api/v1/agent/idle-chat',
       async handler(req, res) {
         const body = (req.body ?? {}) as Record<string, unknown>
-        await runIdleChat(body.force === true)
+        await maybeHeartbeat(body.force === true)
         res.status(200).send({ ok: true })
       },
     }),
@@ -1638,6 +1650,8 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
 
 
 
