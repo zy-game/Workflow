@@ -40,6 +40,8 @@ export const ENDPOINTS = {
   taskDecide: './api/v1/tasks/decide',
   cost: './api/v1/cost',
   costRefresh: './api/v1/cost/refresh',
+  settings: './api/v1/settings',
+  settingsRestart: './api/v1/settings/restart',
   // 账号运维 · 内容层（docs/18 §10）
 }
 

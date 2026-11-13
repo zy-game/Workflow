@@ -9,6 +9,7 @@ import { request } from './lib/api.js'
 import { checkAndroidUpdate } from './lib/updater.js'
 import { session, hasAuth, loadToken, readUrlToken, saveToken, setStatus } from './lib/session.js'
 import { closeEvents, connect } from './lib/sse.js'
+import { on as onBus } from './lib/bus.js'
 
 const route = useRoute()
 const loginOpen = ref(false)
@@ -18,6 +19,8 @@ const drawerTrigger = ref(null)
 const navRef = ref(null)
 const currentTitle = computed(() => route.meta?.title || '控制台')
 let narrowViewport = null
+const offlineNotice = ref('')
+let offOffline = null
 
 function closeDrawer(restoreFocus = false) {
   if (!drawerOpen.value) return
@@ -138,6 +141,12 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   narrowViewport = window.matchMedia('(max-width: 720px)')
   narrowViewport.addEventListener('change', handleViewportChange)
+  offOffline = onBus('device-offline', (payload) => {
+    offlineNotice.value = payload?.message ?? '执行设备离线，任务在排队。'
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification('青梅', { body: offlineNotice.value })
+    }
+  })
   void bootAuth()
   void checkUpdate()
 })
@@ -147,12 +156,17 @@ onBeforeUnmount(() => {
   window.removeEventListener('online', handleOnline)
   window.removeEventListener('keydown', handleKeydown)
   narrowViewport?.removeEventListener('change', handleViewportChange)
+  offOffline?.()
   closeEvents()
 })
 </script>
 
 <template>
   <div class="shell" :class="{ 'drawer-open': drawerOpen }">
+    <div v-if="offlineNotice" class="notice-banner" role="status">
+      {{ offlineNotice }}
+      <button class="btn small ghost" type="button" @click="offlineNotice = ''">知道了</button>
+    </div>
     <header class="topbar">
       <button
         ref="drawerTrigger"

@@ -1193,3 +1193,20 @@ select.input:focus {
   border-radius: 4px;
 }
 
+
+.notice-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #7a4b12;
+  color: #fff;
+  font-size: 13px;
+}
+

@@ -322,3 +322,11 @@ test('设备 claim 复用 qm-task 的优先级调度', async () => {
     await h.dispose()
   }
 })
+test('离线通知判定：在线/无排队不发，超过阈值且不在冷却期才发', () => {
+  const base = { online: false, queued: 2, now: 10_000_000, firstAt: 9_000_000, lastAt: 0, minutes: 5, cooldownMs: 3_600_000 }
+  assert.equal(devicePlugin.shouldNotifyOffline({ ...base, online: true }), false)
+  assert.equal(devicePlugin.shouldNotifyOffline({ ...base, queued: 0 }), false)
+  assert.equal(devicePlugin.shouldNotifyOffline({ ...base, firstAt: base.now - 60_000 }), false)
+  assert.equal(devicePlugin.shouldNotifyOffline(base), true)
+  assert.equal(devicePlugin.shouldNotifyOffline({ ...base, lastAt: base.now - 60_000 }), false)
+})

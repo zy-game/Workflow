@@ -7,6 +7,7 @@
 import { Service, type Context } from 'cordis'
 
 export { nextCronTime, parseCron, systemTimeZone, type CronSpec } from './cron.ts'
+export { encryptSecret, decryptSecret } from './secrets.ts'
 
 // ────────────────────────────────────────────── 基础类型
 
@@ -1546,6 +1547,7 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 
 
 

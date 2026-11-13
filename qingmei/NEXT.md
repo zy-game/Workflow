@@ -1,3 +1,12 @@
+### 自用/家人可用：设置接管 key、离线通知、记忆评估、手机与桌面升级（2026-11-13）
+
+- 新增 `qm-settings`：设置页管理 QM_LLM_* / QM_DSH_API_KEY / QM_MCP_TOKEN / QM_EMBEDDING_* / QM_FEISHU_* / QM_QQ_*；密文落库、掩码展示、保存写回 env，启动时用库覆盖 env（`settings-bootstrap.ts`）；QM_TOKEN/管理员口令仍留在 env；
+- 设备离线通知：有 `device:*` 排队任务且无在线设备超过 5 分钟，发布 `device-offline` 事件给桌宠/Web，并回落到 owner 的 QQ/飞书；1 小时冷却；
+- 记忆：真实评估扩到 50 题（43 题有标注），召回 limit 8→16，词面排序加字段权重/停用词/新近度；命中率 31/43（72%）→ 36/43（84%）；gate 新增 `memory:real:50 --min=0.8`；
+- 手机/平板：Web 加 PWA manifest + service worker + 图标，可添加到主屏；Android 0.1.14（versionCode 15）APK 已上传更新源；
+- 桌面：0.1.10 安装包已发布（设置、离线通知、PWA、记忆改进）；
+- gate 457+ 绿；生产 healthz 200，manifest/sw 200，Android/桌面 latest.json 可访问。
+
 ### 减法：去掉情绪模拟，心跳走入站管线（2026-11-13）
 
 - 删除 `qm_mood` 状态机与心情衰减、关系 trust/stage/rituals/boundaries 评分；`qm_relation` 只保留 `events`（一起完成/失败的事），旧 `shared_events` 自动迁移；

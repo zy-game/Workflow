@@ -8,6 +8,7 @@
  * 输出每题命中情况与总体命中率；没有 embedding key 时按词面召回跑。
  */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from 'cordis'
@@ -17,9 +18,13 @@ import * as memoryPlugin from '../packages/provider-neuron-memory/src/index.ts'
 import * as embeddingPlugin from '../packages/provider-embedding-http/src/index.ts'
 
 const debug = process.argv.includes('--debug')
-const fixture = JSON.parse(
-  readFileSync(new URL('../packages/provider-neuron-memory/test/fixtures/real-eval.json', import.meta.url), 'utf8'),
-)
+const minArg = process.argv.find((arg) => arg.startsWith('--min='))
+const minRate = minArg ? Number(minArg.slice('--min='.length)) : 0
+const fixtureArg = process.argv.find((arg) => arg.startsWith('--fixture='))
+const fixturePath = fixtureArg
+  ? path.resolve(fixtureArg.slice('--fixture='.length))
+  : new URL('../packages/provider-neuron-memory/test/fixtures/real-eval.json', import.meta.url)
+const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'))
 const dir = mkdtempSync(join(tmpdir(), 'qm-real-eval-'))
 const ctx = new Context()
 const storeFiber = ctx.plugin(storePlugin, { path: join(dir, 'eval.db') })
@@ -34,7 +39,7 @@ if (withEmbedding) {
     model: process.env.QM_EMBEDDING_MODEL ?? 'embedding-3',
   })
 }
-const memoryFiber = ctx.plugin(memoryPlugin, { limit: 8 })
+const memoryFiber = ctx.plugin(memoryPlugin, { limit: 16 })
 await memoryFiber
 
 try {
@@ -55,7 +60,7 @@ try {
 
   const scored = []
   for (const item of fixture.questions) {
-    const result = await ctx.memory.recall({ text: item.question, limit: 8 })
+    const result = await ctx.memory.recall({ text: item.question, limit: 16 })
     const text = result.text
     const hit = item.expected.length === 0 ? null : item.expected.some((needle) => text.includes(needle))
     scored.push({ question: item.question, expected: item.expected, hit })
@@ -71,11 +76,18 @@ try {
   for (const item of judged) console.log(`${item.hit ? '✔' : '✘'} ${item.question}`)
   const rate = judged.length === 0 ? 0 : hits / judged.length
   console.log(`\n[real-eval] ${hits}/${judged.length}（${Math.round(rate * 100)}%）embedding=${withEmbedding ? 'on' : 'off'}`)
-  if (judged.length > 0 && rate < 0.5) process.exitCode = 1
+  if (judged.length > 0 && rate < Math.max(0.5, minRate)) process.exitCode = 1
 } finally {
   await memoryFiber.dispose()
   await historyFiber.dispose()
   await storeFiber.dispose()
   rmSync(dir, { recursive: true, force: true })
 }
+
+
+
+
+
+
+
 

@@ -115,6 +115,9 @@ importers:
       '@qingmei/qm-review':
         specifier: workspace:*
         version: link:../../packages/qm-review
+      '@qingmei/qm-settings':
+        specifier: workspace:*
+        version: link:../../packages/qm-settings
       '@qingmei/qm-skill':
         specifier: workspace:*
         version: link:../../packages/qm-skill
@@ -487,6 +490,22 @@ importers:
       '@qingmei/service-channel':
         specifier: workspace:*
         version: link:../service-channel
+      '@qingmei/service-gateway':
+        specifier: workspace:*
+        version: link:../service-gateway
+
+  packages/qm-settings:
+    dependencies:
+      '@qingmei/core':
+        specifier: workspace:*
+        version: link:../core
+      cordis:
+        specifier: 4.0.0-rc.12
+        version: 4.0.0-rc.12
+    devDependencies:
+      '@qingmei/provider-store-sqlite':
+        specifier: workspace:*
+        version: link:../provider-store-sqlite
       '@qingmei/service-gateway':
         specifier: workspace:*
         version: link:../service-gateway

@@ -31,6 +31,7 @@ const steps = [
   { name: 'group-tags', args: ['scripts/eval-group-tags.mjs'] },
   { name: 'memory:time', args: ['scripts/eval-memory-time.mjs'] },
   { name: 'memory:real', args: ['scripts/eval-memory-real.mjs'] },
+  { name: 'memory:real:50', args: ['scripts/eval-real-questions.mjs', '--fixture=packages/provider-neuron-memory/test/fixtures/real-eval-50.json', '--min=0.8'] },
   { name: 'tests', args: ['--test', '--test-concurrency=1'] },
 ]
 if (withSmoke) steps.push({ name: 'smoke', args: ['scripts/smoke.mjs'] })
@@ -49,6 +50,7 @@ for (const step of steps) {
 
 if (!withSmoke) process.stdout.write('\n[gate] smoke skipped (use --with-smoke)\n')
 process.exit(failed ? 1 : 0)
+
 
 
 

@@ -52,6 +52,7 @@
     persona: '你叫青梅，是一个务实的个人助理。回答简短。'
 - name: '@qingmei/qm-psyche'
   config: {}
+- name: '@qingmei/qm-settings'
 - name: '@qingmei/qm-agent'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短。'
@@ -91,7 +92,9 @@
 
 # 审批队列的 HTTP 面：GET /api/v1/approvals、POST /api/v1/approvals/decide
 - name: '@qingmei/qm-device'
-  config: {}
+  config:
+    offlineMinutes: 5
+    offlineCooldownMinutes: 60
 
 
 - name: '@qingmei/qm-approval'
@@ -128,6 +131,8 @@
     port: 7410
     token: 'dev-token'
     webRoot: './apps/web/dist'
+
+
 
 
 

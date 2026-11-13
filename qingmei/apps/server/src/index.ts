@@ -14,6 +14,7 @@ import type { Fiber } from 'cordis'
 import { getServerInfo } from '@qingmei/host-gateway'
 import type { ServerInfo } from '@qingmei/host-gateway'
 import { ensureSafeConfig } from './config-safety.ts'
+import { applyStoredSettings } from './settings-bootstrap.ts'
 
 /** 仓库根目录（apps/server/src → ../../..） */
 export const REPO_ROOT = path.resolve(import.meta.dirname, '../../..')
@@ -104,6 +105,7 @@ export function readPluginList(configPath: string = DEFAULT_CONFIG): PluginEntry
     throw new Error(`插件清单 ${resolved} 的顶层必须是数组，每个元素形如 { name, config }`)
   }
 
+  applyStoredSettings(document as Array<{ name: string; config?: Record<string, unknown> }>)
   return document.map((item, index) => normalizeEntry(item, index, resolved))
 }
 
@@ -420,3 +422,5 @@ if (isEntrypoint(import.meta.url)) {
     },
   )
 }
+
+

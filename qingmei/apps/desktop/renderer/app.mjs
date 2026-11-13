@@ -341,6 +341,18 @@ function connect() {
       if (!isOnline()) setConnection('offline')
     }, 15_000)
   })
+  source.addEventListener('device-offline', (event) => {
+    const payload = safeParse(event.data)
+    const message = String(payload?.message ?? '执行设备离线，任务在排队。')
+    pushBubble(message, 'system')
+    try {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        new Notification('青梅', { body: message })
+      }
+    } catch {
+      // 系统通知失败不影响桌宠
+    }
+  })
   for (const type of ['assistant', 'approval-requested', 'task-finished']) {
     source.addEventListener(type, (event) => {
       const bubble = bubbleForEvent({ event: type, data: event.data })

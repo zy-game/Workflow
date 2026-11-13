@@ -104,7 +104,7 @@ export function connect() {
   for (const type of ['approval-requested', 'approval-decided']) {
     next.addEventListener(type, (event) => routeEvent(type, parseEventData(event.data)))
   }
-  for (const type of ['autonomy-tick']) {
+  for (const type of ['autonomy-tick', 'device-offline']) {
     next.addEventListener(type, (event) => routeEvent(type, parseEventData(event.data)))
   }
 

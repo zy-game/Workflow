@@ -27,7 +27,7 @@
 
 - name: '@qingmei/provider-neuron-memory'
   config:
-    limit: 8
+    limit: 16
     minConfidence: 0.6
     # 概念合并/分裂默认只提案；生产显式开启「每次沉淀最多自动应用一条」
     autoApplyConcepts: true
@@ -55,6 +55,7 @@
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
 - name: '@qingmei/qm-psyche'
   config: {}
+- name: '@qingmei/qm-settings'
 - name: '@qingmei/qm-agent'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
@@ -103,7 +104,9 @@
 
 # 设备注册、claim/progress/finish、记忆回灌
 - name: '@qingmei/qm-device'
-  config: {}
+  config:
+    offlineMinutes: 5
+    offlineCooldownMinutes: 60
 
 # 审批队列的 HTTP 面与渠道推送（飞书卡片 / QQ 键盘）
 - name: '@qingmei/qm-approval'
@@ -145,6 +148,9 @@
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
+
+
+
 
 
 

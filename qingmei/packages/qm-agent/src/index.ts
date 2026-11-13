@@ -866,6 +866,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
           text: userText,
           audience,
           sessionId,
+          limit: 16,
           ...(message.deviceId ? { device: message.deviceId } : {}),
           ...(range ? { since: range.since, until: range.until } : {}),
         })
@@ -1503,6 +1504,7 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
 
 
 

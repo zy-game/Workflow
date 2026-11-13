@@ -28,6 +28,27 @@ export interface DeviceConfig {
   staleMs?: number
   /** 单设备保留的任务数，默认 200 */
   keepTasks?: number
+  /** 有排队任务但没有在线设备时，多久后提醒（分钟） */
+  offlineMinutes?: number
+  /** 同类提醒冷却（分钟） */
+  offlineCooldownMinutes?: number
+  /** 关掉离线提醒 */
+  offlineNotify?: boolean
+}
+
+export function shouldNotifyOffline(input: {
+  online: boolean
+  queued: number
+  now: number
+  firstAt: number
+  lastAt: number
+  minutes: number
+  cooldownMs: number
+}): boolean {
+  if (input.online || input.queued <= 0) return false
+  if (input.now - input.firstAt < input.minutes * 60_000) return false
+  if (input.lastAt && input.now - input.lastAt < input.cooldownMs) return false
+  return true
 }
 
 export const name = 'qm-device'
@@ -658,9 +679,79 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       },
     }),
   )
+
+  let channelService: { send: (input: { channel: never; conversationId: string; blocks: unknown[] }) => Promise<unknown> } | undefined
+  let targetService: { list: () => Promise<Array<{ channel: string; conversationId: string }>> } | undefined
+  ctx.inject(['channel'], (sub) => {
+    channelService = sub.channel as unknown as typeof channelService
+  })
+  ctx.inject(['channelTargets'], (sub) => {
+    targetService = sub.channelTargets as unknown as typeof targetService
+  })
+  const notices = store.collection<{ id: string; first_at: number; last_at: number }>('qm_device_notice')
+  const offlineMinutes = Math.max(1, Number(config.offlineMinutes ?? 5))
+  const cooldownMs = Math.max(1, Number(config.offlineCooldownMinutes ?? 60)) * 60_000
+  let offlineStopped = false
+  ctx.effect(() => () => {
+    offlineStopped = true
+  })
+
+  async function checkOffline(): Promise<void> {
+    if (offlineStopped || config.offlineNotify === false) return
+    const now = Date.now()
+    const rows = await devices.find({}).catch(() => [])
+    const online = rows.some((row) => now - row.last_seen <= (config.staleMs ?? 90_000))
+    const runs = await taskService?.list(300).catch(() => []) ?? []
+    const queued = runs.filter((run) => run.status === 'queued' && run.target.executorId.startsWith('device:'))
+    const state = (await notices.get('offline').catch(() => null)) as { first_at?: number; last_at?: number } | null
+    if (online || queued.length === 0) {
+      if (state) await notices.delete('offline').catch(() => undefined)
+      return
+    }
+    const firstAt = state?.first_at ?? now
+    if (now - firstAt < offlineMinutes * 60_000) {
+      if (!state) await notices.insert({ id: 'offline', first_at: firstAt, last_at: 0 }).catch(() => undefined)
+      return
+    }
+    if (
+      !shouldNotifyOffline({
+        online,
+        queued: queued.length,
+        now,
+        firstAt,
+        lastAt: state?.last_at ?? 0,
+        minutes: offlineMinutes,
+        cooldownMs,
+      })
+    ) return
+    const message = `青梅连不上执行设备：${queued.length} 个任务在排队，请在电脑上打开 DSH / companion。`
+    gateway.publish({
+      type: 'device-offline',
+      data: { at: now, queued: queued.length, minutes: offlineMinutes, message },
+    })
+    const targets = (await targetService?.list().catch(() => [])) ?? []
+    for (const target of targets) {
+      if (target.channel === 'web') continue
+      await channelService
+        ?.send({ channel: target.channel as never, conversationId: target.conversationId, blocks: [{ type: 'text', text: message }] })
+        .catch(() => undefined)
+    }
+    if (state) await notices.update('offline', { first_at: firstAt, last_at: now }).catch(() => undefined)
+    else await notices.insert({ id: 'offline', first_at: firstAt, last_at: now }).catch(() => undefined)
+  }
+
+  const offlineTimer = setInterval(() => {
+    void checkOffline().catch(() => undefined)
+  }, 60_000)
+  offlineTimer.unref?.()
+  ctx.effect(() => () => clearInterval(offlineTimer))
+  void checkOffline().catch(() => undefined)
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
 
 
 
