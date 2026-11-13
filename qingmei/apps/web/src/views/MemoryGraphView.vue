@@ -230,7 +230,7 @@ function draw() {
   for (const node of sortedNodes) {
     const p = projected.get(node.id)
     if (!p) continue
-    const radius = Math.min(8, (2 + Math.sqrt(node.degree + 1) * 0.8) * p.scale)
+    const radius = Math.min(12, (3 + Math.sqrt(node.degree + 1) * 1.2) * p.scale)
     const highlight = node.id === selected.value
     
     if (radius < 0.5) continue
@@ -301,26 +301,33 @@ function draw() {
     ctx.stroke()
     
     // ===== 标签 =====
-    if (radius > 1 && highlight) {
-      const fontSize = Math.max(9, 10 * Math.min(1.2, p.scale))
-      const text = String(node.name).slice(0, 12)
-      
-      ctx.font = `500 ${fontSize}px system-ui, sans-serif`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      
-      const textY = p.y - radius - 12
-      
-      // 文字背景
-      const metrics = ctx.measureText(text)
-      const bgPadding = 3
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)'
-      ctx.fillRect(p.x - metrics.width / 2 - bgPadding, textY - fontSize * 0.5 - 1, metrics.width + bgPadding * 2, fontSize + 2)
-      
-      // 文字
-      ctx.fillStyle = 'rgba(255, 200, 100, 0.9)'
-      ctx.fillText(text, p.x, textY)
+    // 所有节点都显示标签
+    const labelAlpha = Math.max(0.4, Math.min(1, p.scale * 1.5))
+    const fontSize = Math.max(10, 11 * Math.min(1.3, p.scale))
+    
+    // 普通节点：显示前4个字符
+    // 聚焦节点：显示完整名称（最多12字符）
+    const text = highlight ? String(node.name).slice(0, 12) : String(node.name).slice(0, 4)
+    
+    ctx.font = `500 ${fontSize}px system-ui, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    
+    const textY = p.y - radius - 14
+    
+    // 文字背景
+    const metrics = ctx.measureText(text)
+    const bgPadding = 4
+    ctx.fillStyle = highlight ? 'rgba(0, 0, 0, 0.6)' : `rgba(0, 0, 0, ${0.4 * labelAlpha})`
+    ctx.fillRect(p.x - metrics.width / 2 - bgPadding, textY - fontSize * 0.5 - 1, metrics.width + bgPadding * 2, fontSize + 2)
+    
+    // 文字
+    if (highlight) {
+      ctx.fillStyle = 'rgba(255, 200, 100, 0.98)'
+    } else {
+      ctx.fillStyle = `rgba(180, 210, 255, ${labelAlpha * 0.9})`
     }
+    ctx.fillText(text, p.x, textY)
   }
   return projected
 }
@@ -474,7 +481,17 @@ const layerStats = computed(() => {
         ></canvas>
         <aside v-if="showPanel" class="graph-panel">
           <p class="item-meta">节点 {{ nodes.length }} · 关系 {{ edges.length }}</p>
-          <p v-if="selected" class="item-title">聚焦：{{ selected }}</p>
+          
+          <!-- 层级统计 -->
+          <div v-if="layerStats.length > 0" class="layer-stats">
+            <p class="item-meta" style="margin-top: 8px; margin-bottom: 6px;">层级分布</p>
+            <div v-for="stat in layerStats" :key="stat.kind" class="layer-stat-item">
+              <span class="layer-kind">{{ stat.kind }}</span>
+              <span class="layer-count">{{ stat.count }}</span>
+            </div>
+          </div>
+          
+          <p v-if="selected" class="item-title" style="margin-top: 12px;">聚焦：{{ selected }}</p>
           <ul class="list">
             <li v-for="(fact, index) in facts.slice(0, 14)" :key="index" class="item">
               <p class="item-meta">{{ fact.subject }} · {{ fact.predicate }}</p>

@@ -15,7 +15,6 @@
     "@qingmei/provider-store-sqlite": "workspace:*",
     "@qingmei/qm-agent": "workspace:*",
     "@qingmei/qm-history": "workspace:*",
-    "@qingmei/provider-schedule-sqlite": "workspace:*",
     "@qingmei/qm-task": "workspace:*",
     "@qingmei/qm-approval": "workspace:*",
     "@qingmei/qm-identity": "workspace:*",

@@ -1,3 +1,11 @@
+### 清理：删掉不再需要的代码与视图（2026-11-13）
+
+- 删除 Web 旧视图：SchedulesView、AutonomyView、AuditView、IncidentsView、ReviewView、ConversationsView；router 只保留 对话/工作台/画像/记忆/用量/设置；
+- 删除 `apps/web` 里对应的旧 ENDPOINTS（schedules/autonomy*/conversation*/incident*/review*/audit）；
+- 删除 `packages/provider-schedule-sqlite` 整个包及 server 依赖（日程已并入 qm-task 调度器）；
+- 删除过时文档 `docs/19-本机Harness接入.md`，并修掉 00/23 里的引用与插件表；
+- gate 448 绿；生产 healthz 200，`/api/v1/schedules` 仍由任务兼容层返回，bundle 中不再包含 SchedulesView。
+
 ### 任务合并收口：决策 / 调度 / 事件 / 单工作台（2026-11-13）
 
 - `provider-schedule-sqlite` 从生产/开发配置移除：调度器改由 `qm-task` 扫描 scheduled 任务；旧 qm_schedule 行启动时一次性迁移为任务（按 prompt 去重）；

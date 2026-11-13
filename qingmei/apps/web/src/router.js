@@ -1,15 +1,8 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import ChatView from './views/ChatView.vue'
-import TasksView from './views/TasksView.vue'
-import SchedulesView from './views/SchedulesView.vue'
 import MemoriesView from './views/MemoryGraphView.vue'
 import WorkbenchView from './views/WorkbenchView.vue'
 import PortraitView from './views/PortraitView.vue'
-import AutonomyView from './views/AutonomyView.vue'
-import ConversationsView from './views/ConversationsView.vue'
-import ReviewView from './views/ReviewView.vue'
-import IncidentsView from './views/IncidentsView.vue'
-import AuditView from './views/AuditView.vue'
 import CostView from './views/CostView.vue'
 import SettingsView from './views/SettingsView.vue'
 
@@ -45,6 +38,7 @@ const router = createRouter({
 })
 
 export default router
+
 
 
 

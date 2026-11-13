@@ -18,14 +18,8 @@ async function readSource(name: string): Promise<string> {
 
 test('ENDPOINTS 覆盖核心面板', () => {
   const expected = {
-    schedules: './api/v1/schedules',
     tasks: './api/v1/tasks',
     approvals: './api/v1/approvals',
-    autonomy: './api/v1/autonomy',
-    conversations: './api/v1/conversations',
-    incidents: './api/v1/incidents',
-    review: './api/v1/review',
-    audit: './api/v1/audit',
     persona: './api/v1/persona',
     cost: './api/v1/cost',
     portraits: './api/v1/portraits',

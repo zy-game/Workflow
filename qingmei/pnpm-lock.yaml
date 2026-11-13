@@ -76,9 +76,6 @@ importers:
       '@qingmei/provider-neuron-memory':
         specifier: workspace:*
         version: link:../../packages/provider-neuron-memory
-      '@qingmei/provider-schedule-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/provider-schedule-sqlite
       '@qingmei/provider-store-sqlite':
         specifier: workspace:*
         version: link:../../packages/provider-store-sqlite
@@ -277,19 +274,6 @@ importers:
       '@qingmei/qm-history':
         specifier: workspace:*
         version: link:../qm-history
-
-  packages/provider-schedule-sqlite:
-    dependencies:
-      '@qingmei/core':
-        specifier: workspace:*
-        version: link:../core
-      cordis:
-        specifier: 4.0.0-rc.12
-        version: 4.0.0-rc.12
-    devDependencies:
-      '@qingmei/provider-store-sqlite':
-        specifier: workspace:*
-        version: link:../provider-store-sqlite
 
   packages/provider-store-sqlite:
     dependencies:
