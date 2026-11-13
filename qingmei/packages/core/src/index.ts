@@ -953,7 +953,7 @@ export type TaskStatus =
   | 'failed'
   | 'cancelled'
 
-export type TaskKind = 'task' | 'inventory' | 'suggestion' | 'review'
+export type TaskKind = 'task' | 'inventory' | 'suggestion' | 'review' | 'reminder'
 export type TaskOrigin = 'user' | 'chat' | 'internal' | 'schedule' | 'autonomy' | 'review' | 'system'
 export type TaskTrigger = 'now' | 'at' | 'cron' | 'event' | 'manual'
 export interface TaskSchedule {
@@ -1175,6 +1175,10 @@ export abstract class TaskService extends Service {
   abstract get(id: string): Promise<TaskRun | null>
   abstract list(limit?: number): Promise<TaskRun[]>
   /** queued|needs_approval → running */
+  /** scheduled/proposed → queued；不支持时返回 null */
+  async enqueue(_id: string): Promise<TaskRun | null> {
+    return null
+  }
   abstract start(id: string, patch?: { sessionId?: string }): Promise<TaskRun | null>
   /** 重启后把中断的 run 放回队列（不清空原始 prompt/产物） */
   abstract resume(id: string): Promise<TaskRun | null>
@@ -1524,6 +1528,7 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
 
 
 

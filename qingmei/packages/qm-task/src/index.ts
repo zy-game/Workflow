@@ -358,6 +358,17 @@ export class TaskRunner extends TaskRunnerService {
   private async execute(run: TaskRun): Promise<void> {
     if (this.stopped) return
     const { task, timeoutMs } = this.deps
+    if (run.kind === 'reminder') {
+      await task.start(run.id)
+      const channel = this.ctx.get('channel', false) as { send: (input: unknown) => Promise<{ ok: boolean }> } | undefined
+      if (channel) {
+        await channel
+          .send({ channel: 'web', conversationId: 'owner', blocks: [{ type: 'text', text: run.prompt }] })
+          .catch(() => undefined)
+      }
+      await task.finish(run.id, { status: 'done', result: run.prompt })
+      return
+    }
     const harness = this.harness()
     if (!harness) {
       await task.finish(run.id, { status: 'failed', error: '没有可用的 harness' })
@@ -712,4 +723,5 @@ function messageOf(error: unknown): string {
 }
 
 export const defaultExport = { name, inject, apply }
+
 

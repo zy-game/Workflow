@@ -57,7 +57,7 @@ class FakeTask extends TaskService {
       id: `run_` + (this.runs.length + 1),
       title: input.title ?? '任务',
       prompt: input.prompt,
-      status: 'queued',
+      status: input.status ?? 'queued',
       retryOf: input.retryOf ?? null,
       ...(input.target ? { target: input.target } : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
@@ -954,7 +954,8 @@ test('自省：A1 只发建议，不真的建任务', async () => {
     assert.equal(trace.chosen?.id, 'reflection.thought')
     assert.equal(trace.chosen?.action, 'task.create')
     assert.equal(trace.execution?.status, 'suggested')
-    assert.equal(h.task.runs.length, 1, 'A1 不应创建新任务')
+    assert.equal(h.task.runs.filter((run) => run.status === 'queued').length, 0, 'A1 不应创建可执行任务')
+    assert.equal(h.task.runs.filter((run) => run.status === 'proposed').length, 1, 'A1 的建议落成 proposed 任务')
     assert.ok(h.channel.sent.some((item) => JSON.stringify(item).includes('补救')), '应发出建议')
   } finally {
     await h.dispose()
@@ -997,6 +998,8 @@ test('自省：静默时段不打扰', async () => {
     await h.dispose()
   }
 })
+
+
 
 
 

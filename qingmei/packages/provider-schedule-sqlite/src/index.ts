@@ -18,6 +18,7 @@ import {
   type Row,
   type Scheduled,
   type ScheduleInput,
+  type TaskService,
   type SchedulePatch,
   type StoreService,
 } from '@qingmei/core'
@@ -49,6 +50,8 @@ interface ScheduleRow extends Row {
   paused_at?: number | null
   fired_at: number | null
   created_at: number
+  /** 绑定到任务账本：日程=带触发时间的任务 */
+  task_id?: string | null
 }
 
 export class SqliteSchedule extends ScheduleService {
@@ -123,7 +126,32 @@ export class SqliteSchedule extends ScheduleService {
       created_at: now,
     }
     const inserted = await this.collection.insert(row)
-    return toScheduled(inserted)
+    const taskId = await this.createReminderTask(inserted)
+    if (taskId) await this.collection.update(inserted.id, { task_id: taskId })
+    return toScheduled({ ...inserted, task_id: taskId })
+  }
+
+  /** 日程 = 带 trigger 的任务：创建一条 scheduled 的 reminder 任务 */
+  private async createReminderTask(row: ScheduleRow): Promise<string | undefined> {
+    const tasks = this.ctx.get('task', false) as TaskService | undefined
+    if (!tasks) return undefined
+    const trigger = row.cron ? 'cron' : 'at'
+    const schedule = row.cron
+      ? { rrule: row.cron, ...(row.timezone ? { timezone: row.timezone } : {}) }
+      : { at: new Date(row.next_at) }
+    const task = await tasks
+      .create({
+        prompt: row.text,
+        title: row.text.slice(0, 40),
+        kind: 'reminder',
+        status: 'scheduled',
+        origin: 'schedule',
+        trigger,
+        schedule,
+        target: { executorId: 'local' },
+      })
+      .catch(() => null)
+    return task?.id
   }
 
   async list(): Promise<Scheduled[]> {
@@ -218,6 +246,20 @@ export class SqliteSchedule extends ScheduleService {
   }
 
   /** 扫一遍到期记录。公开是为了让测试按需推进，不依赖真实计时器。 */
+  private migrated = false
+
+  /** 旧日程没有 task_id：启动后补建任务，保证「日程就是任务」对老数据也成立 */
+  private async migrateLegacy(): Promise<void> {
+    if (this.migrated) return
+    this.migrated = true
+    const rows = await this.collection.find({})
+    for (const row of rows) {
+      if (row.task_id || row.fired_at !== null) continue
+      const taskId = await this.createReminderTask(row)
+      if (taskId) await this.collection.update(row.id, { task_id: taskId })
+    }
+  }
+
   async tick(): Promise<void> {
     if (this.ticking) return
     this.ticking = true
@@ -225,6 +267,7 @@ export class SqliteSchedule extends ScheduleService {
       const now = Date.now()
       // 只取最早的一批：按 next_at 升序 + limit，超出的留给下一个 tick（1 秒后）。
       // 之前是全表 find()，日程越多越慢，且与「到点提醒」这个场景完全不成比例。
+      await this.migrateLegacy()
       const rows = await this.collection.find({ order: [{ field: 'next_at', dir: 'asc' }], limit: TICK_BATCH })
       for (const row of rows) {
         if (row.next_at > now) break
@@ -253,9 +296,18 @@ export class SqliteSchedule extends ScheduleService {
 
     const cron = row.cron ?? null
     const everyMs = row.every_ms && row.every_ms > 0 ? row.every_ms : null
+    const tasks = this.ctx.get('task', false) as TaskService | undefined
+    const bound = Boolean(row.task_id && tasks)
 
-    // 一次性：发过就退休
+    // 一次性：任务入队后退休；老数据没有 task_id 时保持原来的投递
     if (cron === null && everyMs === null) {
+      if (bound) {
+        const enqueued = await tasks!.enqueue(row.task_id!).catch(() => null)
+        if (enqueued) {
+          await this.collection.update(row.id, { fired_at: now })
+          return
+        }
+      }
       this.ctx.events.emit(EVENTS.scheduleDue, toScheduled(row))
       await this.collection.update(row.id, { fired_at: now })
       return
@@ -265,17 +317,55 @@ export class SqliteSchedule extends ScheduleService {
       const timezone = row.timezone ?? undefined
       const next = nextCronTime(cron, new Date(now), timezone).getTime()
       if (this.shouldSkipMissed(row, now)) {
+        if (bound) {
+          await tasks!.finish(row.task_id!, { status: 'cancelled' }).catch(() => null)
+          const taskId = await this.createReminderTask({ ...row, next_at: next, task_id: null })
+          await this.collection.update(row.id, {
+            next_at: next,
+            ...(taskId ? { task_id: taskId } : { task_id: null }),
+          })
+          return
+        }
         await this.collection.update(row.id, { next_at: next })
         return
+      }
+      if (bound) {
+        const enqueued = await tasks!.enqueue(row.task_id!).catch(() => null)
+        if (enqueued) {
+          const taskId = await this.createReminderTask({ ...row, next_at: next, task_id: null })
+          await this.collection.update(row.id, {
+            next_at: next,
+            ...(taskId ? { task_id: taskId } : { task_id: null }),
+          })
+          return
+        }
       }
       this.ctx.events.emit(EVENTS.scheduleDue, toScheduled(row))
       await this.collection.update(row.id, { next_at: next })
       return
     }
 
+    if (everyMs !== null) {
+      const next = now + everyMs
+      if (bound) {
+        const enqueued = await tasks!.enqueue(row.task_id!).catch(() => null)
+        if (enqueued) {
+          const taskId = await this.createReminderTask({ ...row, next_at: next, task_id: null })
+          await this.collection.update(row.id, {
+            next_at: next,
+            ...(taskId ? { task_id: taskId } : { task_id: null }),
+          })
+          return
+        }
+      }
+      this.ctx.events.emit(EVENTS.scheduleDue, toScheduled(row))
+      // 固定间隔按「从现在起算」重排：停机再久也只补发一次
+      await this.collection.update(row.id, { next_at: next })
+      return
+    }
+
     this.ctx.events.emit(EVENTS.scheduleDue, toScheduled(row))
-    // 固定间隔按「从现在起算」重排：停机再久也只补发一次
-    await this.collection.update(row.id, { next_at: now + everyMs! })
+    await this.collection.update(row.id, { fired_at: now })
   }
 
   /**
@@ -350,4 +440,7 @@ export function apply(ctx: Context, config: ScheduleConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
 

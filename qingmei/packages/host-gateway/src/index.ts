@@ -543,7 +543,33 @@ async function routeRequest(
       sendJson(res, 200, { facts: result.facts, text: result.text })
       return
     }
-    if (pathname === '/api/v1/schedules' && method === 'GET') {
+    if (pathname === '/api/v1/schedules' && method === 'POST') {
+      const schedule = deps.resources.schedule
+      if (!schedule) {
+        sendJson(res, 503, { ok: false, error: 'no schedule service' })
+        return
+      }
+      const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, unknown>
+      try {
+        const item = await schedule.create({
+          text: typeof body.text === 'string' ? body.text : '',
+          ...(typeof body.at === 'string' ? { at: new Date(body.at) } : {}),
+          ...(typeof body.everyMs === 'number' ? { everyMs: body.everyMs } : {}),
+          ...(typeof body.cron === 'string' ? { cron: body.cron } : {}),
+          ...(typeof body.timezone === 'string' ? { timezone: body.timezone } : {}),
+          ...(typeof body.channel === 'string' ? { channel: body.channel as never } : {}),
+          ...(typeof body.conversationId === 'string' ? { conversationId: body.conversationId } : {}),
+          ...(body.missedPolicy === 'skip' || body.missedPolicy === 'fire-once'
+            ? { missedPolicy: body.missedPolicy }
+            : {}),
+        })
+        sendJson(res, 200, { ok: true, item })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        sendJson(res, error instanceof InvalidScheduleError ? 400 : 500, { ok: false, error: message })
+      }
+      return
+    }    if (pathname === '/api/v1/schedules' && method === 'GET') {
       const schedule = deps.resources.schedule
       if (!schedule) {
         sendJson(res, 503, { ok: false, error: 'no schedule service' })
@@ -1123,3 +1149,4 @@ export const name = 'host-gateway'
 export const inject = ['gateway']
 
 export default { name, inject, apply }
+

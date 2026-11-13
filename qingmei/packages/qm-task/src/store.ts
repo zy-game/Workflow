@@ -200,6 +200,13 @@ export class SqliteTask extends TaskService {
       finished_at: null,
     })
   }
+  async enqueue(id: string): Promise<TaskRun | null> {
+    const row = await this.collection.get(id)
+    if (!row) return null
+    if (row.status !== 'scheduled' && row.status !== 'proposed') return toRun(row)
+    return this.patch(row, { status: 'queued' }, 'enqueued')
+  }
+
   async start(id: string, patch: { sessionId?: string } = {}): Promise<TaskRun | null> {
     const row = await this.collection.get(id)
     if (!row || row.finished_at !== null) return null
@@ -350,7 +357,7 @@ function parseUsage(raw: string | null): TaskUsage | null {
 }
 
 function normalizeKind(value: unknown): TaskKind {
-  return value === 'inventory' || value === 'suggestion' || value === 'review' ? value : 'task'
+  return value === 'inventory' || value === 'suggestion' || value === 'review' || value === 'reminder' ? value : 'task'
 }
 
 function serializeSchedule(schedule: TaskSchedule): Record<string, unknown> {
@@ -523,6 +530,7 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
 
 
 

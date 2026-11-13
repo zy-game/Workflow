@@ -252,6 +252,16 @@ export function apply(ctx: Context, config: ReviewConfig = {}): void {
     if (existing) await reviews.update(existing.id, row)
     else await reviews.insert(row)
     await computeEffects(month, row.id)
+    if (taskService) {
+      const title = `复盘 ${month}`
+      const existingTask = (await taskService.list(200).catch(() => [])).find((item) => item.title === title)
+      if (!existingTask) {
+        const task = await taskService
+          .create({ title, prompt: `生成 ${month} 复盘报告`, kind: 'review', origin: 'review', target: { executorId: 'local' } })
+          .catch(() => null)
+        if (task) await taskService.finish(task.id, { status: 'done', result: markdown.slice(0, 2000) }).catch(() => null)
+      }
+    }
 
     const seeded = (await cards.find({})).filter((card) => card.review_id === row.id)
     if (seeded.length === 0) {
@@ -626,6 +636,8 @@ const MAX_TIMEOUT = 2_147_000_000
 }
 
 export const defaultExport = { name, inject, apply }
+
+
 
 
 

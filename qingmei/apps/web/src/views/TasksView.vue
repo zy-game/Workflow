@@ -15,6 +15,17 @@ const devicePrompt = ref('')
 const deviceError = ref('')
 const error = ref('')
 const loading = ref(false)
+const statusFilter = ref('all')
+const originFilter = ref('all')
+const triggerFilter = ref('all')
+const filteredTasks = computed(() =>
+  tasks.value.filter(
+    (run) =>
+      (statusFilter.value === 'all' || run.status === statusFilter.value) &&
+      (originFilter.value === 'all' || run.origin === originFilter.value) &&
+      (triggerFilter.value === 'all' || run.trigger === triggerFilter.value),
+  ),
+)
 const selectedDevice = computed(() => devices.value.find((device) => device.id === deviceId.value))
 const workspaces = computed(() => selectedDevice.value?.workspaces ?? [])
 let unsubscribers = []
@@ -172,17 +183,47 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <p v-if="!loading && tasks.length === 0" class="empty">
-      还没有任务。在对话里说「用 DSH 把测试跑一遍」，或者直接 POST /api/v1/tasks。
+    <div class="task-filters">
+      <select v-model="statusFilter" class="input">
+        <option value="all">全部状态</option>
+        <option value="proposed">建议</option>
+        <option value="scheduled">待触发</option>
+        <option value="queued">排队</option>
+        <option value="running">进行中</option>
+        <option value="needs_approval">待确认</option>
+        <option value="done">完成</option>
+        <option value="failed">失败</option>
+      </select>
+      <select v-model="originFilter" class="input">
+        <option value="all">全部来源</option>
+        <option value="user">用户</option>
+        <option value="chat">聊天</option>
+        <option value="internal">内部</option>
+        <option value="schedule">日程</option>
+        <option value="autonomy">主动</option>
+        <option value="review">复盘</option>
+      </select>
+      <select v-model="triggerFilter" class="input">
+        <option value="all">全部触发</option>
+        <option value="now">立即</option>
+        <option value="at">定时</option>
+        <option value="cron">周期</option>
+        <option value="event">事件</option>
+      </select>
+    </div>
+    <p v-if="!loading && filteredTasks.length === 0" class="empty">
+      没有符合条件的任务。
     </p>
 
     <ul class="list">
-      <li v-for="run in tasks" :key="run.id" class="item" :class="`is-${run.status}`">
+      <li v-for="run in filteredTasks" :key="run.id" class="item" :class="`is-${run.status}`">
         <div class="item-main">
           <p class="item-title">{{ run.title || '（未命名任务）' }}</p>
           <p class="item-meta">
             <span class="badge" :class="`badge-${run.status}`">{{ TASK_STATUS_TEXT[run.status] ?? run.status }}</span>
             {{ formatWhen(run.createdAt, null) }}
+            <span v-if="run.origin"> · {{ run.origin }}</span>
+            <span v-if="run.trigger && run.trigger !== 'now'"> · {{ run.trigger }}</span>
             <span v-if="run.project"> · {{ run.project }}</span>
             <span v-if="Number.isFinite(run.priority) && run.priority !== 5"> · P{{ run.priority }}</span>
             <span v-if="run.dependsOn?.length"> · 等 {{ run.dependsOn.length }} 个前置</span>

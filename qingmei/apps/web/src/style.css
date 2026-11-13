@@ -1125,3 +1125,7 @@ select.input:focus {
 .field input, .field textarea { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(150,170,200,0.25); background: rgba(15,20,32,0.7); color: inherit; }
 .toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 @media (max-width: 900px) { .graph-layout { grid-template-columns: 1fr; } .graph-canvas { height: 320px; } }
+
+.task-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.task-filters .input { max-width: 180px; }
+

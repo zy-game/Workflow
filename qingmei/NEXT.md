@@ -1,3 +1,12 @@
+### 任务模型收口：日程/主动/审计/复盘并入（2026-11-13）
+
+- 日程 = 带 trigger 的任务：创建日程时同步创建 `scheduled reminder` 任务，到点由调度器 `enqueue`，旧日程启动时自动补建任务；验证：POST /schedules 后任务列表出现 `scheduled reminder schedule at 日程任务验证`；
+- 主动建议 = `proposed suggestion` 任务：autonomy 发出 `notify.self` 时落一条 proposed 任务，A1 仍不建可执行任务（测试已调整）；
+- 失败任务挂故障：`qm_incident.task_id` 记录失败任务 id，故障与任务共用账本；
+- 复盘 = `kind=review` 任务：生成月报时落一条 done 任务，结果为报告摘要；验证：任务列表出现 `done review review 复盘 2026-11`；
+- 任务事件流：`GET /api/v1/tasks/events?id=` 可查 created/updated 等事件（生产已验证）；
+- 工作台任务页加状态/来源/触发筛选；导航仍是 对话/工作台/画像/记忆/用量/设置。
+
 ### 统一任务模型 / 工作台 / 图谱 / 画像（2026-11-13）
 
 - Task 模型扩展：kind（task/suggestion/review/inventory）、status（新增 proposed/scheduled）、origin、trigger、schedule、approvalId、parentId、depth；`qm_task_event` 记录创建与状态变更；新增 `GET /api/v1/tasks/events`；

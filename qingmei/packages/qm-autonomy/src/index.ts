@@ -363,6 +363,7 @@ class AutonomyRunner extends AutonomyService {
       }
       // 级别不够：至少把「建议」发出去，让人有机会点头
       const sent = await this.notify(`💡 ${chosen.title}\n${chosen.reason}`)
+      if (sent.ok) void this.recordSuggestion(chosen)
       return sent.ok
         ? { status: 'suggested', action: 'notify.self', detail: `需要 ${spec.minLevel}，当前 ${mode}：已按建议发出`, at }
         : { status: 'failed', action: 'notify.self', detail: `建议发送失败：${sent.error ?? '未知原因'}`, at }
@@ -370,6 +371,7 @@ class AutonomyRunner extends AutonomyService {
 
     if (chosen.action === 'notify.self') {
       const sent = await this.notify(`💡 ${chosen.title}\n${chosen.reason}`)
+      if (sent.ok) void this.recordSuggestion(chosen)
       return sent.ok
         ? { status: 'executed', action: 'notify.self', detail: '已发到主人私聊', at }
         : { status: 'failed', action: 'notify.self', detail: `发送失败：${sent.error ?? '未知原因'}`, at }
@@ -453,6 +455,19 @@ class AutonomyRunner extends AutonomyService {
       }
       return { sent: ok ? items.length : 0, ok }
     })
+  }
+
+  /** 主动建议也进任务账本：proposed 状态，工作台可见 */
+  private async recordSuggestion(chosen: { title: string; reason: string }): Promise<void> {
+    await this.task
+      .create({
+        title: chosen.title.slice(0, 60),
+        prompt: `${chosen.title}\n${chosen.reason}`.slice(0, 500),
+        kind: 'suggestion',
+        status: 'proposed',
+        origin: 'autonomy',
+      })
+      .catch(() => undefined)
   }
 
   private async notify(text: string, kind: 'work' | 'casual' | 'digest' = 'casual'): Promise<{ ok: boolean; error?: string }> {
@@ -1078,6 +1093,8 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
 
 
 

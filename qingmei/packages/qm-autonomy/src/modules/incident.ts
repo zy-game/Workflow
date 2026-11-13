@@ -63,6 +63,7 @@ interface IncidentRow extends Row {
   message: string
   context_json: string
   run_id?: string | null
+  task_id?: string | null
   count: number
   day: string
   proposals_today: number
@@ -78,6 +79,8 @@ export interface Incident {
   message: string
   context: Record<string, unknown>
   runId?: string | null
+  /** 失败任务 id（故障挂在任务上） */
+  taskId?: string | null
   count: number
   proposalsToday: number
   firstAt: Date
@@ -185,6 +188,7 @@ export function apply(ctx: Context, config: IncidentConfig = {}): void {
         message,
         context_json: JSON.stringify(context),
         run_id: runId,
+        task_id: kind === 'task' ? (typeof context.runId === 'string' ? context.runId : null) : null,
         count: 1,
         day,
         proposals_today: canPropose && runId === null ? 1 : 0,
@@ -459,6 +463,7 @@ function toIncident(row: IncidentRow): Incident {
     message: row.message,
     context: parseJson<Record<string, unknown>>(row.context_json, {}),
     runId: row.run_id ?? null,
+    taskId: row.task_id ?? null,
     count: row.count,
     proposalsToday: row.proposals_today,
     firstAt: new Date(row.first_at),
@@ -482,3 +487,4 @@ function parseJson<T>(raw: string, fallback: T): T {
 }
 
 export const defaultExport = { name, inject, apply }
+
