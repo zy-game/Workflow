@@ -1,3 +1,12 @@
+### 统一任务模型 / 工作台 / 图谱 / 画像（2026-11-13）
+
+- Task 模型扩展：kind（task/suggestion/review/inventory）、status（新增 proposed/scheduled）、origin、trigger、schedule、approvalId、parentId、depth；`qm_task_event` 记录创建与状态变更；新增 `GET /api/v1/tasks/events`；
+- Web 导航收敛为 对话 / 工作台 / 画像 / 记忆 / 用量 / 设置；工作台把任务、定时、建议、记录、失败、复盘收进一个页面（旧路由重定向）；
+- 记忆图谱：`GET /api/v1/memory/graph`（全局或 focus+depth），前端力导向画布，点节点看事实，保留列表切换；图谱会过滤路径/引号等噪声节点；
+- 画像：新插件 `qm-portrait`（self/person/group），self 默认从 persona 迁移；qm-agent 注入 self 人格、主人画像特质、群规则；群里命中禁提词不再直接发，转 `group.send` 审批，批准后才发；
+- 生产验证：`/api/v1/portraits` 返回默认 self；`/api/v1/memory/graph` 返回节点/边/事实；gate 460 绿。
+- 待续：日程/主动/审计/故障/复盘的后端写入仍走旧插件，下一步把它们写进任务账本与 task_event。
+
 ### 单脑 + 意图行动（2026-11-13）
 
 - **`qm-planner` 插件已删除**：规划并入 `qm-agent`，任务结束后用同一个 `s_owner` 会话做一次内部思考（每天最多 3 次、间隔 5 分钟、内部自建任务不递归），人格自己决定要不要下一步；

@@ -378,6 +378,115 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
       },
     }),
   )
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'GET',
+      path: '/api/v1/memory/graph',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const focus = String(req.query.focus ?? '').trim()
+        const depth = Math.min(3, Math.max(1, Number(req.query.depth ?? 2) || 2))
+        const limit = Math.min(500, Math.max(20, Number(req.query.limit ?? 200) || 200))
+        const entities = (await store.collection('qm_entity').find({})) as unknown as Array<{
+          id: string
+          name: string
+          kind: string
+          aliases_json?: string
+          valid_to?: number | null
+        }>
+        const edges = (await store.collection('qm_edge').find({})) as unknown as Array<{
+          from_name: string
+          to_name: string
+          predicate: string
+          kind: string
+          weight: number
+          last_seen: number
+          valid_to?: number | null
+        }>
+        const usable = (name: string): boolean =>
+          name.length >= 2 &&
+          name.length <= 20 &&
+          !/[\\\\/「」]/.test(name) &&
+          !/^\\d+$/.test(name)
+        const liveEdges = edges.filter((edge) => !edge.valid_to)
+        const liveEntities = entities.filter((entity) => !entity.valid_to && usable(entity.name))
+        const byName = new Map(liveEntities.map((entity) => [entity.name, entity]))
+        let selected = liveEdges
+        let nodeNames = new Set<string>()
+        if (focus && byName.has(focus)) {
+          nodeNames.add(focus)
+          let frontier = new Set([focus])
+          for (let step = 0; step < depth; step += 1) {
+            const next = new Set<string>()
+            for (const edge of liveEdges) {
+              if (frontier.has(edge.from_name) && !nodeNames.has(edge.to_name)) next.add(edge.to_name)
+              if (frontier.has(edge.to_name) && !nodeNames.has(edge.from_name)) next.add(edge.from_name)
+            }
+            for (const name of next) nodeNames.add(name)
+            frontier = next
+            if (next.size === 0) break
+          }
+          selected = liveEdges.filter((edge) => nodeNames.has(edge.from_name) || nodeNames.has(edge.to_name))
+        } else {
+          selected = [...liveEdges].sort((a, b) => b.weight - a.weight || b.last_seen - a.last_seen).slice(0, limit)
+          for (const edge of selected) {
+            nodeNames.add(edge.from_name)
+            nodeNames.add(edge.to_name)
+          }
+        }
+        const degree = new Map<string, number>()
+        for (const edge of selected) {
+          degree.set(edge.from_name, (degree.get(edge.from_name) ?? 0) + 1)
+          degree.set(edge.to_name, (degree.get(edge.to_name) ?? 0) + 1)
+        }
+        const nodes = [...nodeNames]
+          .filter((name) => byName.has(name))
+          .map((name) => {
+            const entity = byName.get(name)
+            let aliases: string[] = []
+            try {
+              const parsed = JSON.parse(entity?.aliases_json ?? '[]')
+              if (Array.isArray(parsed)) aliases = parsed.filter((item): item is string => typeof item === 'string')
+            } catch {
+              aliases = []
+            }
+            return {
+              id: name,
+              name,
+              kind: entity?.kind ?? 'topic',
+              aliases,
+              degree: degree.get(name) ?? 0,
+            }
+          })
+          .sort((a, b) => b.degree - a.degree)
+          .slice(0, limit)
+        const kept = new Set(nodes.map((node) => node.id))
+        const graphEdges = selected
+          .filter((edge) => kept.has(edge.from_name) && kept.has(edge.to_name))
+          .slice(0, limit * 2)
+          .map((edge) => ({
+            from: edge.from_name,
+            to: edge.to_name,
+            predicate: edge.predicate,
+            kind: edge.kind,
+            weight: edge.weight,
+            lastSeen: edge.last_seen,
+          }))
+        const facts = focus
+          ? ((await store.collection('qm_mem_fact').find({})) as unknown as Array<{
+              subject: string
+              predicate: string
+              object: string
+              valid_to?: number | null
+            }>)
+              .filter((fact) => !fact.valid_to && (fact.subject === focus || fact.object === focus))
+              .slice(0, 50)
+              .map((fact) => ({ subject: fact.subject, predicate: fact.predicate, object: fact.object }))
+          : []
+        res.status(200).send({ ok: true, focus: focus || null, nodes, edges: graphEdges, facts })
+      },
+    }),
+  )
   ctx.effect(() =>
     gateway.route({
       method: 'POST',
@@ -505,6 +614,10 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
+
 
 
 

@@ -52,6 +52,10 @@
   config:
     path: personas/qingmei.json
 
+# 画像：青梅自己 / 主人 / 群（人格、偏好、群规则都从这里来）
+- name: '@qingmei/qm-portrait'
+  config:
+    persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'
 - name: '@qingmei/qm-agent'
   config:
     persona: '你叫青梅，是一个务实的个人助理。回答简短、直接，不寒暄。'

@@ -18,7 +18,11 @@ import {
   type StoreService,
   type TaskArtifact,
   type TaskContract,
+  type TaskKind,
+  type TaskOrigin,
   type TaskProgress,
+  type TaskSchedule,
+  type TaskTrigger,
   type TaskRun,
   type TaskStatus,
   type TaskTarget,
@@ -43,14 +47,27 @@ const DEFAULT_LIST_LIMIT = 20
 const MAX_LIST_LIMIT = 100
 const RUNNING: TaskStatus[] = ['queued', 'running', 'needs_approval']
 
+interface TaskEventRow extends Row {
+  task_id: string
+  at: number
+  kind: string
+  data_json: string | null
+}
+
 interface TaskRow extends Row {
   task_id: string
   title: string
   prompt: string
   /** 老数据没有这一列 */
   project?: string | null
-  /** task = 正常任务；inventory = 只读盘点 */
+  /** task/suggestion/review/inventory */
   kind?: string | null
+  origin?: string | null
+  trigger?: string | null
+  schedule_json?: string | null
+  approval_id?: string | null
+  parent_id?: string | null
+  depth?: number | null
   /** 0-9，老数据没有这一列 */
   priority?: number
   depends_on_json?: string | null
@@ -111,14 +128,20 @@ export class SqliteTask extends TaskService {
       title: input.title?.trim() || prompt.slice(0, 40),
       prompt,
       project: input.project?.trim() || null,
-      kind: input.kind === 'inventory' ? 'inventory' : 'task',
+      kind: normalizeKind(input.kind),
+      origin: input.origin ?? 'user',
+      trigger: input.trigger ?? 'now',
+      schedule_json: input.schedule ? JSON.stringify(serializeSchedule(input.schedule)) : null,
+      approval_id: input.approvalId ?? null,
+      parent_id: input.parentId ?? null,
+      depth: Math.max(0, Number(input.depth ?? 0)),
       priority: clampPriority(input.priority),
       depends_on_json: JSON.stringify(normalizeDependsOn(input.dependsOn)),
       retry_of: input.retryOf ?? null,
       contract_json: input.contract ? JSON.stringify(serializeContract(input.contract)) : null,
       target_json: JSON.stringify(target),
       session_id: input.sessionId ?? null,
-      status: 'queued',
+      status: input.status ?? 'queued',
       progress_json: null,
       progress_events_json: null,
       artifacts_json: null,
@@ -130,7 +153,28 @@ export class SqliteTask extends TaskService {
       finished_at: null,
     }
     const inserted = await this.collection.insert({ ...row, id })
+    await this.recordEvent(id, 'created', { kind: row.kind, origin: row.origin, trigger: row.trigger })
     return toRun(inserted)
+  }
+
+  /** 任务事件流：状态机、审批、进度都追加在这里，审计不再单独一套 */
+  private async recordEvent(taskId: string, kind: string, data?: unknown): Promise<void> {
+    await this.ctx.store
+      .collection<TaskEventRow>('qm_task_event')
+      .insert({ id: uid('tev'), task_id: taskId, at: Date.now(), kind, data_json: data ? JSON.stringify(data) : null })
+      .catch(() => undefined)
+  }
+
+  async events(taskId: string): Promise<Array<{ id: string; at: Date; kind: string; data: unknown }>> {
+    const rows = await this.ctx.store.collection<TaskEventRow>('qm_task_event').find({ where: { task_id: taskId } })
+    return rows
+      .sort((a, b) => a.at - b.at)
+      .map((row) => ({
+        id: row.id,
+        at: new Date(row.at),
+        kind: row.kind,
+        data: row.data_json ? JSON.parse(row.data_json) : null,
+      }))
   }
 
   async get(id: string): Promise<TaskRun | null> {
@@ -259,6 +303,10 @@ export class SqliteTask extends TaskService {
 
   private async patch(row: TaskRow, changes: Partial<TaskRow>, event?: string): Promise<TaskRun | null> {
     await this.collection.update(row.id, changes)
+    await this.recordEvent(row.id, event ?? 'updated', {
+      ...(changes.status ? { status: changes.status } : {}),
+      ...(changes.error ? { error: String(changes.error).slice(0, 300) } : {}),
+    })
     const updated = await this.collection.get(row.id)
     if (!updated) return null
     const run = toRun(updated)
@@ -301,13 +349,45 @@ function parseUsage(raw: string | null): TaskUsage | null {
   }
 }
 
+function normalizeKind(value: unknown): TaskKind {
+  return value === 'inventory' || value === 'suggestion' || value === 'review' ? value : 'task'
+}
+
+function serializeSchedule(schedule: TaskSchedule): Record<string, unknown> {
+  return {
+    ...(schedule.at ? { at: schedule.at.toISOString() } : {}),
+    ...(schedule.rrule ? { rrule: schedule.rrule } : {}),
+    ...(schedule.timezone ? { timezone: schedule.timezone } : {}),
+  }
+}
+
+function parseSchedule(raw: string | null | undefined): TaskSchedule | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return {
+      ...(typeof parsed.at === 'string' ? { at: new Date(parsed.at) } : {}),
+      ...(typeof parsed.rrule === 'string' ? { rrule: parsed.rrule } : {}),
+      ...(typeof parsed.timezone === 'string' ? { timezone: parsed.timezone } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
 function toRun(row: TaskRow): TaskRun {
   return {
     id: row.id,
     title: row.title,
     prompt: row.prompt,
     project: row.project?.trim() || null,
-    kind: row.kind === 'inventory' ? 'inventory' : 'task',
+    kind: normalizeKind(row.kind),
+    origin: (row.origin as TaskOrigin | null) ?? 'user',
+    trigger: (row.trigger as TaskTrigger | null) ?? (row.schedule_json ? 'at' : 'now'),
+    schedule: parseSchedule(row.schedule_json),
+    approvalId: row.approval_id ?? null,
+    parentId: row.parent_id ?? null,
+    depth: Math.max(0, Number(row.depth ?? 0)),
     priority: clampPriority(row.priority),
     dependsOn: parseDependsOn(row.depends_on_json),
     retryOf: row.retry_of ?? null,
@@ -443,4 +523,11 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
+
+
+
+
 

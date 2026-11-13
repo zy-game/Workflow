@@ -943,7 +943,26 @@ export abstract class ThreadService extends Service {
 }
 // ────────────────────────────────────────────── 任务账本
 
-export type TaskStatus = 'queued' | 'running' | 'needs_approval' | 'done' | 'failed' | 'cancelled'
+export type TaskStatus =
+  | 'proposed'
+  | 'scheduled'
+  | 'queued'
+  | 'running'
+  | 'needs_approval'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+
+export type TaskKind = 'task' | 'inventory' | 'suggestion' | 'review'
+export type TaskOrigin = 'user' | 'chat' | 'internal' | 'schedule' | 'autonomy' | 'review' | 'system'
+export type TaskTrigger = 'now' | 'at' | 'cron' | 'event' | 'manual'
+export interface TaskSchedule {
+  /** at 触发：一次性时刻 */
+  at?: Date
+  /** cron 触发：RRULE/CRON 字符串，由调度器解释 */
+  rrule?: string
+  timezone?: string
+}
 
 export interface TaskProgress {
   phase: string
@@ -1009,7 +1028,19 @@ export interface TaskRun {
   prompt: string
   /** 归属项目；老数据没有这一列，读取为 null */
   project: string | null
-  kind: 'task' | 'inventory'
+  kind: TaskKind
+  /** 谁发起的：用户/聊天/内部/日程/主动/复盘 */
+  origin: TaskOrigin
+  /** 怎么触发：立即/定时/cron/事件 */
+  trigger: TaskTrigger
+  /** 定时触发的参数 */
+  schedule: TaskSchedule | null
+  /** 等待中的审批 id */
+  approvalId: string | null
+  /** 父任务（内部思考/复盘子项） */
+  parentId: string | null
+  /** 派生深度，0 = 用户任务 */
+  depth: number
   /** 0-9，越大越先跑；缺省 5 */
   priority: number
   /** 前置 run id；未完成时排队等待，前置失败则本任务失败 */
@@ -1041,7 +1072,13 @@ export interface TaskView {
   title: string
   prompt: string
   project: string | null
-  kind: 'task' | 'inventory'
+  kind: TaskKind
+  origin: TaskOrigin
+  trigger: TaskTrigger
+  schedule: TaskSchedule | null
+  approvalId: string | null
+  parentId: string | null
+  depth: number
   priority: number
   dependsOn: string[]
   contract: TaskContract | null
@@ -1064,6 +1101,12 @@ export function taskViewOf(run: TaskRun): TaskView {
     prompt: run.prompt,
     project: run.project,
     kind: run.kind,
+    origin: run.origin,
+    trigger: run.trigger,
+    schedule: run.schedule,
+    approvalId: run.approvalId,
+    parentId: run.parentId,
+    depth: run.depth,
     priority: run.priority,
     dependsOn: run.dependsOn,
     contract: run.contract,
@@ -1083,7 +1126,17 @@ export interface CreateTaskInput {
   prompt: string
   title?: string
   project?: string
-  kind?: 'task' | 'inventory'
+  kind?: TaskKind
+  /** 谁发起的 */
+  origin?: TaskOrigin
+  /** 触发方式；缺省 now */
+  trigger?: TaskTrigger
+  schedule?: TaskSchedule
+  approvalId?: string
+  parentId?: string
+  depth?: number
+  /** 初始状态：queued（默认）/ proposed（建议）/ scheduled（定时） */
+  status?: 'queued' | 'proposed' | 'scheduled'
   priority?: number
   dependsOn?: string[]
   /** 标记这条是重试出来的（见 TaskRun.retryOf） */
@@ -1471,6 +1524,10 @@ export function listenerCount(ctx: { events?: unknown }, event: string): number 
   if (list === undefined) return 0
   return Array.isArray(list) ? list.length : null
 }
+
+
+
+
 
 
 

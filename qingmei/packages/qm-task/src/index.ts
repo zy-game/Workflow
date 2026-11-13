@@ -601,6 +601,21 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
 
   ctx.effect(() =>
     gateway.route({
+      method: 'GET',
+      path: '/api/v1/tasks/events',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const id = (req.query.id ?? '').trim()
+        if (!id) {
+          res.status(400).send({ ok: false, error: 'id 必填' })
+          return
+        }
+        const events = await (task as unknown as { events?: (id: string) => Promise<unknown[]> }).events?.(id)
+        res.status(200).send({ ok: true, items: events ?? [] })
+      },
+    }),
+  )
+  ctx.effect(() =>
+    gateway.route({
       method: 'POST',
       path: '/api/v1/tasks/resume',
       async handler(req: GatewayRequest, res: GatewayResponse) {
@@ -697,3 +712,4 @@ function messageOf(error: unknown): string {
 }
 
 export const defaultExport = { name, inject, apply }
+

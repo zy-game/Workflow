@@ -28,6 +28,8 @@ test('ENDPOINTS 覆盖核心面板', () => {
     audit: './api/v1/audit',
     persona: './api/v1/persona',
     cost: './api/v1/cost',
+    portraits: './api/v1/portraits',
+    memoryGraph: './api/v1/memory/graph',
     costRefresh: './api/v1/cost/refresh',
   }
   for (const [key, value] of Object.entries(expected)) {
@@ -45,18 +47,13 @@ test('记忆页订阅候选/画像接口：采纳、恢复、撤回、画像', a
   }
 })
 
-test('导航与路由表一致：11 个面板都能落到视图文件', async () => {
+test('导航与路由表一致：6 个面板都能落到视图文件', async () => {
   const router = await readSource('router.js')
   const nav = [
     ['/', 'ChatView.vue'],
-    ['/tasks', 'TasksView.vue'],
-    ['/schedules', 'SchedulesView.vue'],
-    ['/memories', 'MemoriesView.vue'],
-    ['/autonomy', 'AutonomyView.vue'],
-    ['/conversations', 'ConversationsView.vue'],
-    ['/review', 'ReviewView.vue'],
-    ['/incidents', 'IncidentsView.vue'],
-    ['/audit', 'AuditView.vue'],
+    ['/workbench', 'WorkbenchView.vue'],
+    ['/portraits', 'PortraitView.vue'],
+    ['/memories', 'MemoryGraphView.vue'],
     ['/cost', 'CostView.vue'],
     ['/settings', 'SettingsView.vue'],
   ]
@@ -122,3 +119,4 @@ test('用量面板订阅成本接口：余额、今日花费与 embedding 用量
     assert.ok(view.includes(label), `用量页应有「${label}」`)
   }
 })
+

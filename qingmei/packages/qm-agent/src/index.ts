@@ -378,6 +378,16 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ctx.inject(['approval'], (sub) => {
     approvalService = (sub as unknown as { approval: NonNullable<typeof approvalService> }).approval
   })
+  let portraitService:
+    | {
+        self: () => Promise<{ persona: string } | null>
+        person: () => Promise<{ traits: string[] } | null>
+        group: (id: string) => Promise<{ name: string; rules: { blocked?: string[]; requireApproval?: boolean; note?: string } } | null>
+      }
+    | undefined
+  ctx.inject(['portrait'], (sub) => {
+    portraitService = (sub as unknown as { portrait: NonNullable<typeof portraitService> }).portrait
+  })
 
   /** 待确认的“派任务到工作区”：按会话保存一次，避免猜测 */
   const pendingDispatch = new Map<
@@ -414,6 +424,26 @@ export function apply(ctx: Context, config: AgentConfig): void {
 
   ctx.events.on(EVENTS.approvalDecided, (request: ApprovalRequest) => {
     void (async () => {
+      const groupPending = storeService
+        ? ((await storeService.collection('qm_group_pending').get(request.id).catch(() => null)) as {
+            channel?: string
+            conversation_id?: string
+            text?: string
+          } | null)
+        : null
+      if (groupPending) {
+        void storeService?.collection('qm_group_pending').delete(request.id).catch(() => undefined)
+        if (request.status === 'allowed' && groupPending.text) {
+          await channel
+            .send({
+              channel: String(groupPending.channel ?? 'web') as ChannelId,
+              conversationId: String(groupPending.conversation_id ?? ''),
+              blocks: [{ type: 'text', text: groupPending.text }],
+            })
+            .catch(() => undefined)
+        }
+        return
+      }
       const row = storeService
         ? ((await storeService.collection('qm_agent_approval').get(request.id).catch(() => null)) as {
             prompt?: string
@@ -588,6 +618,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
     const problems: string[] = []
     const controller = new AbortController()
     let reply = ''
+    let suppressGroupSend = false
     let steps = 0
     let tokensIn = 0
     let tokensOut = 0
@@ -735,8 +766,20 @@ export function apply(ctx: Context, config: AgentConfig): void {
       }
     }
 
+    const selfPortrait = await portraitService?.self().catch(() => null)
+    const personPortrait = await portraitService?.person().catch(() => null)
+    const groupPortrait =
+      message.conversation.kind === 'group'
+        ? await portraitService?.group(message.conversation.id).catch(() => null)
+        : null
+    const effectivePersona = selfPortrait?.persona?.trim() || persona
+    const portraitTraits = personPortrait?.traits?.length ? `画像：${personPortrait.traits.join('、')}` : ''
+    const portraitGroupNote = groupPortrait?.rules?.note ? `群画像：${groupPortrait.rules.note}` : ''
+
     const memoryBlock = [
       profileText ? `【关于主人】\n${profileText}` : '',
+      portraitTraits,
+      portraitGroupNote,
       activityText ? `【最近 7 天】\n${activityText}` : '',
       summaryText ? `【会话摘要】\n${summaryText}` : '',
       threadText ? `【跨端进展】\n${threadText}` : '',
@@ -762,7 +805,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
         for await (const event of harness.run({
           conversationId: sessionId,
           // DSH 自己维护会话历史；把召回结果作为前缀附在这一轮输入上
-          text: memoryBlock ? `${memoryBlock}\n\n${userText}` : userText,
+          text: [effectivePersona, memoryBlock, userText].filter(Boolean).join('\n\n'),
           signal: controller.signal,
         })) {
           if (event.type === 'text') {
@@ -792,7 +835,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
         if (!reply.trim()) reply = '好，我这就去办。'
       } else {
         const messages: ChatMessage[] = [
-          { role: 'system', content: memoryBlock ? `${persona}\n\n${memoryBlock}` : persona },
+          { role: 'system', content: memoryBlock ? `${effectivePersona}\n\n${memoryBlock}` : effectivePersona },
           ...(await loadHistory(sessionId, message.platformMessageId)),
           { role: 'user', content: userText },
         ]
@@ -842,7 +885,36 @@ export function apply(ctx: Context, config: AgentConfig): void {
       }
     }
 
-    try {
+    // 群画像：命中禁提词就不发群，转成审批；批准后才把原文发出去
+    const blockedWords = groupPortrait?.rules?.blocked ?? []
+    if (blockedWords.length > 0 && blockedWords.some((word) => word && reply.includes(word))) {
+      if (approvalService) {
+        try {
+          const request = await approvalService.create({
+            action: 'group.send',
+            prompt: `群「${groupPortrait?.name ?? message.conversation.id}」的回复可能包含敏感内容，批准发送？\n\n${reply.slice(0, 500)}`,
+            requester: 'owner',
+          })
+          await storeService
+            ?.collection('qm_group_pending')
+            .insert({
+              id: request.id,
+              channel: message.channel,
+              conversation_id: message.conversation.id,
+              text: reply,
+              at: Date.now(),
+            })
+            .catch(() => undefined)
+          suppressGroupSend = true
+        } catch {
+          reply = '这个在群里不方便说，私聊我。'
+        }
+      } else {
+        reply = '这个在群里不方便说，私聊我。'
+      }
+    }
+
+    if (!suppressGroupSend) try {
       const result = await channel.send({
         channel: message.channel,
         conversationId: message.conversation.id,
@@ -1185,6 +1257,10 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+
+
 
 
 

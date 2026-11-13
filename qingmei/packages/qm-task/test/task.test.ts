@@ -645,3 +645,38 @@ test('token 预算：超过合同上限立即中止并记 failed', async () => {
     await h.dispose()
   }
 })
+
+test('统一任务模型：建议/定时任务带 origin/trigger/schedule，事件流可查', async () => {
+  const h = await setup({ chunks: ['ok'] })
+  try {
+    const suggestion = await h.task.create({
+      prompt: '要不要安排一次复盘',
+      kind: 'suggestion',
+      status: 'proposed',
+      origin: 'autonomy',
+      trigger: 'now',
+    })
+    assert.equal(suggestion.kind, 'suggestion')
+    assert.equal(suggestion.status, 'proposed')
+    assert.equal(suggestion.origin, 'autonomy')
+
+    const at = new Date(Date.now() + 3_600_000)
+    const scheduled = await h.task.create({
+      prompt: '提醒开会',
+      status: 'scheduled',
+      origin: 'schedule',
+      trigger: 'at',
+      schedule: { at },
+    })
+    assert.equal(scheduled.trigger, 'at')
+    assert.ok(scheduled.schedule?.at)
+
+    const events = await (h.task as unknown as { events: (id: string) => Promise<Array<{ kind: string }>> }).events(
+      suggestion.id,
+    )
+    assert.ok(events.some((event) => event.kind === 'created'))
+    assert.equal(events[0]?.kind, 'created')
+  } finally {
+    await h.dispose()
+  }
+})
