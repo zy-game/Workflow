@@ -564,6 +564,39 @@ export function apply(ctx: Context, config: TaskConfig = {}): void {
       }
     }
   }
+  // 一次性迁移：旧 qm_schedule 行 → scheduled 任务（幂等标记）
+  void (async () => {
+    const store = ctx.store
+    const marker = await store.collection<{ id: string; at: number }>('qm_migration').get('schedule-to-task').catch(() => null)
+    if (marker) return
+    const rows = (await store.collection('qm_schedule').find({}).catch(() => [])) as unknown as Array<{
+      id: string
+      text: string
+      next_at: number
+      cron?: string | null
+      timezone?: string | null
+      fired_at?: number | null
+    }>
+    const existingTasks = await task.list(200).catch(() => [])
+    for (const row of rows) {
+      if (row.fired_at) continue
+      if (existingTasks.some((item) => item.prompt === row.text && item.origin === 'schedule')) continue
+      await task
+        .create({
+          prompt: row.text,
+          title: row.text.slice(0, 40),
+          kind: 'reminder',
+          origin: 'schedule',
+          trigger: row.cron ? 'cron' : 'at',
+          schedule: { at: new Date(row.next_at), ...(row.cron ? { rrule: row.cron } : {}), ...(row.timezone ? { timezone: row.timezone } : {}) },
+          status: 'scheduled',
+          target: { executorId: 'local' },
+        })
+        .catch(() => null)
+    }
+    await store.collection<{ id: string; at: number }>('qm_migration').insert({ id: 'schedule-to-task', at: Date.now() }).catch(() => undefined)
+  })()
+
   if (config.scheduler !== false) {
     const schedulerTimer = setInterval(() => void schedulerTick(), schedulerMs)
     schedulerTimer.unref?.()
@@ -835,6 +868,9 @@ function messageOf(error: unknown): string {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
+
 
 
 

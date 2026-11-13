@@ -52,17 +52,39 @@ async function load() {
 function seedPositions() {
   positions = new Map()
   const count = Math.max(1, nodes.value.length)
-  nodes.value.forEach((node, index) => {
-    const phi = Math.acos(1 - (2 * (index + 0.5)) / count)
-    const theta = Math.PI * (1 + Math.sqrt(5)) * index
-    const radius = 180 + (index % 5) * 18
-    positions.set(node.id, {
-      x: Math.sin(phi) * Math.cos(theta) * radius,
-      y: Math.cos(phi) * radius,
-      z: Math.sin(phi) * Math.sin(theta) * radius,
-      vx: 0,
-      vy: 0,
-      vz: 0,
+  
+  // 按 kind 分组节点
+  const layers = new Map()
+  for (const node of nodes.value) {
+    const kind = node.kind || 'topic'
+    if (!layers.has(kind)) layers.set(kind, [])
+    layers.get(kind).push(node)
+  }
+  
+  // 为每个 kind 分配 y 轴层级（垂直分层）
+  const kindList = Array.from(layers.keys()).sort()
+  const layerHeight = 280
+  const baseY = -((kindList.length - 1) * layerHeight) / 2
+  
+  kindList.forEach((kind, layerIndex) => {
+    const nodesInLayer = layers.get(kind)
+    const layerY = baseY + layerIndex * layerHeight
+    const layerRadius = 200 + nodesInLayer.length * 2
+    
+    nodesInLayer.forEach((node, indexInLayer) => {
+      // 在当前层的水平圆盘上均匀分布
+      const angle = (indexInLayer / nodesInLayer.length) * Math.PI * 2
+      const radiusOffset = (indexInLayer % 3) * 30
+      const r = layerRadius + radiusOffset
+      
+      positions.set(node.id, {
+        x: Math.cos(angle) * r,
+        y: layerY + (Math.random() - 0.5) * 40, // 轻微垂直抖动
+        z: Math.sin(angle) * r,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+      })
     })
   })
 }
@@ -163,31 +185,18 @@ function draw() {
     if (!a || !b) continue
     
     // 深度越远越透明
-    const depthFactor = 1 - Math.max(a.depth, b.depth) / 2000
-    const alpha = Math.max(0.04, Math.min(0.35, depthFactor * 0.3))
+    const depthFactor = Math.max(a.depth, b.depth) / 2000
+    const alpha = Math.max(0.02, Math.min(0.08, 0.05 - depthFactor * 0.02))
     
-    // 两端距离越远，连线越粗
-    const dx = b.x - a.x
-    const dy = b.y - a.y
-    const dist = Math.hypot(dx, dy)
-    const widthFactor = Math.max(0.8, Math.min(2, dist / 100))
-    
-    // 渐变连线
-    const gradient = ctx.createLinearGradient(a.x, a.y, b.x, b.y)
-    gradient.addColorStop(0, `rgba(100, 160, 255, ${alpha * 0.5})`)
-    gradient.addColorStop(0.5, `rgba(100, 200, 255, ${alpha})`)
-    gradient.addColorStop(1, `rgba(120, 180, 255, ${alpha * 0.6})`)
-    
-    ctx.strokeStyle = gradient
-    ctx.lineWidth = 1.2 * widthFactor
+    // 连线非常淡
+    ctx.strokeStyle = `rgba(100, 150, 255, ${alpha})`
+    ctx.lineWidth = 0.8
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.globalAlpha = 0.9
     ctx.beginPath()
     ctx.moveTo(a.x, a.y)
     ctx.lineTo(b.x, b.y)
     ctx.stroke()
-    ctx.globalAlpha = 1
   }
   // 召回信号：命中节点画扩散环，像电信号经过
   const now = Date.now()
@@ -221,108 +230,95 @@ function draw() {
   for (const node of sortedNodes) {
     const p = projected.get(node.id)
     if (!p) continue
-    const radius = Math.min(36, (7 + Math.sqrt(node.degree + 1) * 3.5) * p.scale)
+    const radius = Math.min(8, (2 + Math.sqrt(node.degree + 1) * 0.8) * p.scale)
     const highlight = node.id === selected.value
     
-    if (radius < 2) continue
+    if (radius < 0.5) continue
     
-    // ===== 球体渲染 =====
-    // 1. 远景：暗阴影圈（球底）
-    const shadowGrad = ctx.createRadialGradient(p.x, p.y, radius * 0.7, p.x, p.y, radius * 1.1)
-    shadowGrad.addColorStop(0, 'rgba(0, 0, 0, 0)')
-    shadowGrad.addColorStop(0.8, highlight ? `rgba(100, 50, 0, 0.2)` : `rgba(0, 30, 80, 0.25)`)
-    shadowGrad.addColorStop(1, highlight ? `rgba(100, 50, 0, 0)` : `rgba(0, 30, 80, 0)`)
+    // ===== 星点效果 =====
     
-    ctx.fillStyle = shadowGrad
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, radius * 1.15, 0, Math.PI * 2)
-    ctx.fill()
-    
-    // 2. 主球体：浓烈的径向渐变（从中心亮到边缘暗）
-    const sphereGrad = ctx.createRadialGradient(
-      p.x - radius * 0.35,  // 高光中心（左上）
-      p.y - radius * 0.35,
-      radius * 0.1,         // 高光起点半径
-      p.x,
-      p.y,
-      radius
-    )
-    
+    // 1. 外圈光晕（远）
+    const haloGrad1 = ctx.createRadialGradient(p.x, p.y, radius * 0.5, p.x, p.y, radius * 6)
     if (highlight) {
-      // 聚焦节点：橙色球体
-      sphereGrad.addColorStop(0, '#fff8e6')        // 亮点：接近白色
-      sphereGrad.addColorStop(0.25, '#ffd966')     // 高光区：亮橙
-      sphereGrad.addColorStop(0.5, '#ffb347')      // 主色：中橙
-      sphereGrad.addColorStop(0.75, '#ff9500')     // 暗部：深橙
-      sphereGrad.addColorStop(1, '#cc6600')        // 最暗边缘
+      haloGrad1.addColorStop(0, 'rgba(255, 180, 50, 0.4)')
+      haloGrad1.addColorStop(0.3, 'rgba(255, 150, 50, 0.15)')
+      haloGrad1.addColorStop(1, 'rgba(255, 100, 0, 0)')
     } else {
-      // 普通节点：蓝色球体
-      sphereGrad.addColorStop(0, '#e6f2ff')        // 亮点：接近白色
-      sphereGrad.addColorStop(0.25, '#99d4ff')     // 高光区：亮蓝
-      sphereGrad.addColorStop(0.5, '#6ba4ff')      // 主色：中蓝
-      sphereGrad.addColorStop(0.75, '#3366ff')     // 暗部：深蓝
-      sphereGrad.addColorStop(1, '#003399')        // 最暗边缘
+      haloGrad1.addColorStop(0, 'rgba(100, 200, 255, 0.25)')
+      haloGrad1.addColorStop(0.4, 'rgba(100, 150, 255, 0.08)')
+      haloGrad1.addColorStop(1, 'rgba(100, 180, 255, 0)')
     }
+    ctx.fillStyle = haloGrad1
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, radius * 6, 0, Math.PI * 2)
+    ctx.fill()
     
-    ctx.fillStyle = sphereGrad
+    // 2. 中层光晕（近）
+    const haloGrad2 = ctx.createRadialGradient(p.x, p.y, radius * 0.3, p.x, p.y, radius * 2.5)
+    if (highlight) {
+      haloGrad2.addColorStop(0, 'rgba(255, 200, 100, 0.6)')
+      haloGrad2.addColorStop(1, 'rgba(255, 150, 50, 0)')
+    } else {
+      haloGrad2.addColorStop(0, 'rgba(150, 220, 255, 0.5)')
+      haloGrad2.addColorStop(1, 'rgba(100, 180, 255, 0)')
+    }
+    ctx.fillStyle = haloGrad2
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, radius * 2.5, 0, Math.PI * 2)
+    ctx.fill()
+    
+    // 3. 核心亮点（星点本身）
+    const coreGrad = ctx.createRadialGradient(p.x - radius * 0.2, p.y - radius * 0.2, 0, p.x, p.y, radius)
+    if (highlight) {
+      coreGrad.addColorStop(0, '#fff9e6')
+      coreGrad.addColorStop(0.5, '#ffb347')
+      coreGrad.addColorStop(1, '#ff8c00')
+    } else {
+      coreGrad.addColorStop(0, '#ffffff')
+      coreGrad.addColorStop(0.6, '#99d4ff')
+      coreGrad.addColorStop(1, '#4da6ff')
+    }
+    ctx.fillStyle = coreGrad
     ctx.beginPath()
     ctx.arc(p.x, p.y, radius, 0, Math.PI * 2)
     ctx.fill()
     
-    // 3. 高光层：亮白色小圆，模拟反光
-    const highlightSize = radius * 0.35
-    const highlightGrad = ctx.createRadialGradient(
-      p.x - radius * 0.3,
-      p.y - radius * 0.3,
-      0,
-      p.x - radius * 0.3,
-      p.y - radius * 0.3,
-      highlightSize
-    )
-    highlightGrad.addColorStop(0, highlight ? 'rgba(255, 255, 200, 0.9)' : 'rgba(255, 255, 255, 0.85)')
-    highlightGrad.addColorStop(1, highlight ? 'rgba(255, 200, 100, 0.2)' : 'rgba(200, 230, 255, 0.1)')
+    // 4. 十字光芒（星芒效果）
+    const glareSize = radius * 1.5
+    ctx.strokeStyle = highlight ? 'rgba(255, 200, 50, 0.4)' : 'rgba(150, 220, 255, 0.3)'
+    ctx.lineWidth = 0.5
+    ctx.lineCap = 'round'
     
-    ctx.fillStyle = highlightGrad
+    // 横竖两条线
     ctx.beginPath()
-    ctx.arc(p.x - radius * 0.3, p.y - radius * 0.3, highlightSize, 0, Math.PI * 2)
-    ctx.fill()
-    
-    // 4. 球体外圈：细框线，增加立体感
-    ctx.strokeStyle = highlight ? 'rgba(200, 100, 0, 0.6)' : 'rgba(50, 100, 200, 0.5)'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2)
+    ctx.moveTo(p.x - glareSize, p.y)
+    ctx.lineTo(p.x + glareSize, p.y)
     ctx.stroke()
     
-    // 5. 下沉阴影：球底部暗线
-    ctx.strokeStyle = highlight ? `rgba(150, 50, 0, 0.4)` : `rgba(0, 40, 100, 0.35)`
-    ctx.lineWidth = 2
     ctx.beginPath()
-    ctx.arc(p.x, p.y + radius * 0.6, radius * 0.8, Math.PI * 0.3, Math.PI * 0.7)
+    ctx.moveTo(p.x, p.y - glareSize)
+    ctx.lineTo(p.x, p.y + glareSize)
     ctx.stroke()
     
     // ===== 标签 =====
-    if (radius > 6) {
-      const fontSize = Math.max(9, 11 * Math.min(1.6, p.scale))
+    if (radius > 1 && highlight) {
+      const fontSize = Math.max(9, 10 * Math.min(1.2, p.scale))
       const text = String(node.name).slice(0, 12)
       
-      ctx.font = `600 ${fontSize}px system-ui, sans-serif`
+      ctx.font = `500 ${fontSize}px system-ui, sans-serif`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       
-      // 文字放在球体下方
-      const textY = p.y + radius + 12
+      const textY = p.y - radius - 12
       
       // 文字背景
-      if (radius > 8) {
-        const metrics = ctx.measureText(text)
-        const bgPadding = 4
-        ctx.fillStyle = highlight ? 'rgba(255, 179, 71, 0.12)' : 'rgba(100, 140, 200, 0.06)'
-        ctx.fillRect(p.x - metrics.width / 2 - bgPadding, textY - fontSize * 0.5 - 1, metrics.width + bgPadding * 2, fontSize + 2)
-      }
+      const metrics = ctx.measureText(text)
+      const bgPadding = 3
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)'
+      ctx.fillRect(p.x - metrics.width / 2 - bgPadding, textY - fontSize * 0.5 - 1, metrics.width + bgPadding * 2, fontSize + 2)
       
       // 文字
-      ctx.fillStyle = highlight ? 'rgba(255, 100, 0, 0.95)' : 'rgba(150, 200, 255, 0.9)'
+      ctx.fillStyle = 'rgba(255, 200, 100, 0.9)'
       ctx.fillText(text, p.x, textY)
     }
   }
@@ -426,6 +422,17 @@ onBeforeUnmount(() => {
 const subtitle = computed(() =>
   mode.value === 'graph' ? '拖动旋转、滚轮缩放、点节点看它的事实。' : '列表视图保留原有的事实检索。',
 )
+
+const layerStats = computed(() => {
+  const stats = new Map()
+  for (const node of nodes.value) {
+    const kind = node.kind || 'topic'
+    stats.set(kind, (stats.get(kind) || 0) + 1)
+  }
+  return Array.from(stats.entries())
+    .map(([kind, count]) => ({ kind, count }))
+    .sort((a, b) => b.count - a.count)
+})
 </script>
 
 <template>

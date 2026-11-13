@@ -38,11 +38,7 @@
 
 # 任务账本：把任务派给 harness 并记录 run
 
-# 日程账本：at / everyMs / cron；到点由 provider 直接投递
-- name: '@qingmei/provider-schedule-sqlite'
-  config:
-    tickMs: 1000
-    defaultTimezone: 'Asia/Shanghai'
+# 日程已并入任务：qm-task 内置调度器扫描 scheduled 任务
 
 # ── 业务
 - name: '@qingmei/service-persona'
@@ -132,6 +128,7 @@
     port: 7410
     token: 'dev-token'
     webRoot: './apps/web/dist'
+
 
 
 

@@ -41,11 +41,7 @@
     env:
       QM_DSH_API_KEY: { $env: 'QM_DSH_API_KEY' }
 
-# 日程账本：at / everyMs / cron；到点由 provider 直接投递
-- name: '@qingmei/provider-schedule-sqlite'
-  config:
-    tickMs: 1000
-    defaultTimezone: 'Asia/Shanghai'
+# 日程已并入任务：qm-task 内置调度器扫描 scheduled 任务；/api/v1/schedules 保留兼容
 
 # ── 业务
 - name: '@qingmei/service-persona'
@@ -148,6 +144,7 @@
     adminPassword: { $env: 'QM_ADMIN_PASSWORD' }
     # 外壳模式（current -> releases/<id>）：跟随 release，回滚时前后端一起回退
     webRoot: '/opt/qingmei/current/apps/web/dist'
+
 
 
 

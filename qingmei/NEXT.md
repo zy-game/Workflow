@@ -1,5 +1,7 @@
 ### 任务合并收口：决策 / 调度 / 事件 / 单工作台（2026-11-13）
 
+- `provider-schedule-sqlite` 从生产/开发配置移除：调度器改由 `qm-task` 扫描 scheduled 任务；旧 qm_schedule 行启动时一次性迁移为任务（按 prompt 去重）；
+- `/api/v1/schedules` 保留兼容：schedule 服务不存在时，GET/POST/DELETE 转发到任务（GET 用 taskAsSchedule 映射，DELETE 等同拒绝）；
 - `POST /api/v1/tasks/decide`：proposed/needs_approval/scheduled → queued（批准）或 cancelled（拒绝）；Web 任务项加批准/拒绝；
 - 内置调度器搬进 `qm-task`：扫描 scheduled 任务，到点 enqueue 并 dispatch；cron 用 nextCronTime 排下一轮；`POST /tasks` 现在透传 kind/origin/trigger/schedule/status；
 - 工作台收敛：只保留「全部任务」和「记录」两个 tab；记录读 `task_event`（新增 `GET /api/v1/tasks/events/all`），不再依赖审计/建议/故障/复盘旧视图；

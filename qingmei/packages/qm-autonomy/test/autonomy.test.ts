@@ -61,6 +61,8 @@ class FakeTask extends TaskService {
       retryOf: input.retryOf ?? null,
       ...(input.target ? { target: input.target } : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
+      ...(input.schedule ? { schedule: input.schedule } : {}),
+      ...(input.trigger ? { trigger: input.trigger } : {}),
     })
     this.runs.push(run)
     return run
@@ -259,7 +261,7 @@ async function setup(config: Record<string, unknown> = {}) {
 
 test('插件形态与契约一致：name / inject', () => {
   assert.equal(autonomyPlugin.name, 'qm-autonomy')
-  assert.deepEqual(autonomyPlugin.inject, ['store', 'approval', 'task', 'schedule', 'gateway', 'channel', 'taskRunner'])
+  assert.deepEqual(autonomyPlugin.inject, ['store', 'approval', 'task', 'gateway', 'channel', 'taskRunner'])
 })
 
 test('tick：有待确认的审批 → 选它，预算 +1，账本留痕', async () => {
@@ -304,7 +306,13 @@ test('tick：同一规则在冷却期内不再重复建议', async () => {
 test('tick：预算用完就不再建议，并说明原因', async () => {
   const h = await setup({ dailyBudget: 1, cooldownMinutes: 0 })
   try {
-    h.schedule.schedules = [scheduled()]
+    await h.task.create({
+      title: '开会',
+      prompt: '开会',
+      status: 'scheduled',
+      trigger: 'at',
+      schedule: { at: new Date(Date.now() + 10 * 60_000) },
+    })
     const first = await h.autonomy.tick('tick')
     assert.equal(first.chosen?.id, 'schedule.upcoming')
     assert.equal(first.budget.used, 1)
@@ -323,7 +331,13 @@ test('tick：预算用完就不再建议，并说明原因', async () => {
 test('tick：dailyBudget=0 表示不限量，同一天可以继续发建议', async () => {
   const h = await setup({ dailyBudget: 0, cooldownMinutes: 0 })
   try {
-    h.schedule.schedules = [scheduled()]
+    await h.task.create({
+      title: '开会',
+      prompt: '开会',
+      status: 'scheduled',
+      trigger: 'at',
+      schedule: { at: new Date(Date.now() + 10 * 60_000) },
+    })
     const first = await h.autonomy.tick('tick')
     assert.equal(first.chosen?.id, 'schedule.upcoming')
     const second = await h.autonomy.tick('tick')
@@ -373,7 +387,13 @@ test('tick：失败任务给 task.retry 建议；日程给 notify', async () => 
 
     h.task.runs = []
     h.approval.pending = []
-    h.schedule.schedules = [scheduled({ text: '开会' })]
+    await h.task.create({
+      title: '开会',
+      prompt: '开会',
+      status: 'scheduled',
+      trigger: 'at',
+      schedule: { at: new Date(Date.now() + 10 * 60_000) },
+    })
     await h.autonomy.tick('tick')
     const scheduleTrace = (await h.autonomy.list())[0]!
     assert.equal(scheduleTrace.chosen?.id, 'schedule.upcoming')
@@ -998,6 +1018,10 @@ test('自省：静默时段不打扰', async () => {
     await h.dispose()
   }
 })
+
+
+
+
 
 
 

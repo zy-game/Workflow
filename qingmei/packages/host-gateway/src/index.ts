@@ -29,6 +29,8 @@ import {
   type Row,
   type SchedulePatch,
   type ScheduleService,
+  type TaskRun,
+  type TaskService,
   type StoreService,
 } from '@qingmei/core'
 import type { GatewayHub } from '@qingmei/service-gateway'
@@ -84,6 +86,7 @@ interface ResourceServices {
   memory?: MemoryService
   memoryQueue?: MemoryQueueService
   schedule?: ScheduleService
+  task?: TaskService
   channel?: ChannelService
   history?: HistoryService
 }
@@ -189,6 +192,7 @@ export const apply = (ctx: Context, config: Config = {}): Promise<void> => {
   ctx.inject(['memory'], (sub) => { resources.memory = sub.memory })
   ctx.inject(['memoryQueue'], (sub) => { resources.memoryQueue = sub.memoryQueue })
   ctx.inject(['schedule'], (sub) => { resources.schedule = sub.schedule })
+  ctx.inject(['task'], (sub) => { resources.task = sub.task })
   ctx.inject(['channel'], (sub) => { resources.channel = sub.channel })
   const deps: HandlerDeps = { resources, ctx, gateway, options, clients, startedAt }
   const server = createServer((req, res) => {
@@ -546,7 +550,30 @@ async function routeRequest(
     if (pathname === '/api/v1/schedules' && method === 'POST') {
       const schedule = deps.resources.schedule
       if (!schedule) {
-        sendJson(res, 503, { ok: false, error: 'no schedule service' })
+        const task = deps.resources.task
+        if (!task) {
+          sendJson(res, 503, { ok: false, error: 'no schedule service' })
+          return
+        }
+        const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, unknown>
+        const text = typeof body.text === 'string' ? body.text.trim() : ''
+        if (!text) {
+          sendJson(res, 400, { ok: false, error: '提醒内容不能为空' })
+          return
+        }
+        const at = typeof body.at === 'string' ? new Date(body.at) : undefined
+        const cron = typeof body.cron === 'string' && body.cron.trim() ? body.cron.trim() : undefined
+        const item = await task.create({
+          prompt: text,
+          title: text.slice(0, 40),
+          kind: 'reminder',
+          origin: 'schedule',
+          trigger: cron ? 'cron' : 'at',
+          schedule: { ...(at ? { at } : {}), ...(cron ? { rrule: cron } : {}) },
+          status: 'scheduled',
+          target: { executorId: 'local' },
+        })
+        sendJson(res, 200, { ok: true, item: taskAsSchedule(item) })
         return
       }
       const body = (await readJsonBody(req).catch(() => ({}))) as Record<string, unknown>
@@ -572,7 +599,15 @@ async function routeRequest(
     }    if (pathname === '/api/v1/schedules' && method === 'GET') {
       const schedule = deps.resources.schedule
       if (!schedule) {
-        sendJson(res, 503, { ok: false, error: 'no schedule service' })
+        const task = deps.resources.task
+        if (!task) {
+          sendJson(res, 503, { ok: false, error: 'no schedule service' })
+          return
+        }
+        const runs = (await task.list(200)).filter(
+          (run) => run.origin === 'schedule' || run.trigger === 'at' || run.trigger === 'cron',
+        )
+        sendJson(res, 200, { ok: true, items: runs.map(taskAsSchedule) })
         return
       }
       // Scheduled 里的 Date 直接由 JSON.stringify 序列化成 ISO 字符串
@@ -582,7 +617,18 @@ async function routeRequest(
     if (pathname.startsWith('/api/v1/schedules/') && method === 'DELETE') {
       const schedule = deps.resources.schedule
       if (!schedule) {
-        sendJson(res, 503, { ok: false, error: 'no schedule service' })
+        const task = deps.resources.task
+        const id = scheduleIdOf(pathname)
+        if (!task || !id) {
+          sendJson(res, 503, { ok: false, error: 'no schedule service' })
+          return
+        }
+        const run = await task.decide(id, false)
+        if (!run) {
+          sendJson(res, 404, { ok: false, error: '没有找到这条提醒' })
+          return
+        }
+        sendJson(res, 200, { ok: true, cancelled: true })
         return
       }
       const id = scheduleIdOf(pathname)
@@ -931,6 +977,22 @@ function parseLimit(raw: string | null): number {
 }
 
 /** 从 /api/v1/schedules/<id> 取 id；空串或非法百分号编码返回 null */
+function taskAsSchedule(run: TaskRun): Record<string, unknown> {
+  return {
+    id: run.id,
+    text: run.prompt,
+    channel: 'web',
+    conversationId: 'owner',
+    nextAt: run.schedule?.at ?? null,
+    everyMs: null,
+    cron: run.schedule?.rrule ?? null,
+    timezone: run.schedule?.timezone ?? null,
+    missedPolicy: 'fire-once',
+    pausedAt: null,
+    firedAt: null,
+  }
+}
+
 function scheduleIdOf(pathname: string): string | null {
   const raw = pathname.slice('/api/v1/schedules/'.length)
   if (raw === '') return null
@@ -1149,4 +1211,5 @@ export const name = 'host-gateway'
 export const inject = ['gateway']
 
 export default { name, inject, apply }
+
 

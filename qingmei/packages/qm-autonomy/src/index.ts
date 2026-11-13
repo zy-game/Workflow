@@ -30,8 +30,6 @@ import {
   type ChannelTargetService,
   type GatewayService,
   type Row,
-  type ScheduleService,
-  type Scheduled,
   type StoreService,
   type TaskService,
   type TaskRunnerService,
@@ -92,7 +90,7 @@ export interface NotifyRoute {
 }
 
 export const name = 'qm-autonomy'
-export const inject = ['store', 'approval', 'task', 'schedule', 'gateway', 'channel', 'taskRunner']
+export const inject = ['store', 'approval', 'task', 'gateway', 'channel', 'taskRunner']
 
 const TRACE = 'qm_autonomy_trace'
 const STATE = 'qm_autonomy_state'
@@ -152,7 +150,6 @@ class AutonomyRunner extends AutonomyService {
   private readonly states
   private readonly approval: ApprovalService
   private readonly task: TaskService
-  private readonly schedule: ScheduleService
   private readonly gateway: GatewayService
   private readonly channel: ChannelService
   private readonly taskRunner: TaskRunnerService
@@ -166,7 +163,6 @@ class AutonomyRunner extends AutonomyService {
     const store = ctx.store
     this.approval = ctx.approval
     this.task = ctx.task
-    this.schedule = ctx.schedule
     this.gateway = ctx.gateway
     this.channel = ctx.channel
     this.taskRunner = ctx.taskRunner
@@ -499,15 +495,22 @@ class AutonomyRunner extends AutonomyService {
     return this.getState()
   }
 
+  /** 即将到点的定时任务：日程已经并入任务账本，不再读 qm_schedule */
+  private async scheduledUpcoming(now: Date): Promise<Array<{ nextAt: Date; text: string }>> {
+    const runs = await this.task.list(200)
+    const windowMs = this.config.upcomingWindowMinutes * 60_000
+    return runs
+      .filter((run) => run.status === 'scheduled' && run.schedule?.at)
+      .map((run) => ({ nextAt: run.schedule!.at!, text: run.title }))
+      .filter((item) => item.nextAt.getTime() - now.getTime() <= windowMs && item.nextAt.getTime() >= now.getTime())
+      .sort((a, b) => a.nextAt.getTime() - b.nextAt.getTime())
+  }
+
   /** 世界状态：只取决策真正会用到的东西，别把快照做成全库扫描 */
   private async snapshot(now: Date): Promise<AutonomySnapshot> {
     const pending = await this.approval.list('pending')
     const runs = await this.task.list(20)
-    const schedules = await this.schedule.list()
-    const windowMs = this.config.upcomingWindowMinutes * 60_000
-    const upcoming = schedules.filter(
-      (item) => item.pausedAt === null && item.nextAt.getTime() - now.getTime() <= windowMs && item.nextAt.getTime() >= now.getTime(),
-    )
+    const upcoming = await this.scheduledUpcoming(now)
     const dayAgo = now.getTime() - 24 * 3600_000
     return {
       at: now,
@@ -534,11 +537,7 @@ class AutonomyRunner extends AutonomyService {
     }
 
     if (snapshot.upcomingSchedules > 0) {
-      const schedules = await this.schedule.list()
-      const windowMs = this.config.upcomingWindowMinutes * 60_000
-      const upcoming = schedules
-        .filter((item) => item.pausedAt === null && item.nextAt.getTime() - now.getTime() <= windowMs && item.nextAt.getTime() >= now.getTime())
-        .sort((a, b) => a.nextAt.getTime() - b.nextAt.getTime())
+      const upcoming = await this.scheduledUpcoming(now)
       list.push({
         id: 'schedule.upcoming',
         action: 'notify.self',
@@ -546,7 +545,6 @@ class AutonomyRunner extends AutonomyService {
         reason: `最近一条：「${upcoming[0]!.text}」将于 ${upcoming[0]!.nextAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 触发`,
         value: 80,
         risk: 'low',
-        payload: { scheduleId: upcoming[0]!.id },
       })
     }
 
@@ -1093,6 +1091,8 @@ export function apply(ctx: Context, config: AutonomyConfig = {}): void {
 }
 
 export const defaultExport = { name, inject, apply }
+
+
 
 
 
