@@ -400,6 +400,14 @@ class FakeHarness extends Service {
   async close() {}
 }
 
+class FakePsyche extends Service {
+  constructor(ctx: Context) { super(ctx, 'psyche') }
+  async context() { return '' }
+  async journals() { return [{ day: '2026-11-12', text: '昨天整理了笔记。' }] }
+  async relation() { return { events: [{ text: '一起完成：修好登录', kind: 'done' }] } }
+  async writeJournal() { return { day: '2026-11-13', text: 'x' } }
+  async writeNote() { return { day: '2026-11-13', kind: 'plan', text: 'x' } }
+}
 class FakePortrait extends Service {
   groupRules: { blocked?: string[]; note?: string } | null = null
   constructor(ctx: Context) { super(ctx, 'portrait') }
@@ -452,6 +460,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(FakeCost)
   await ctx.plugin(FakeApproval)
   await ctx.plugin(FakePortrait)
+  await ctx.plugin(FakePsyche)
   if (options.withHarness) await ctx.plugin(FakeHarness)
   await ctx.plugin(FakeDevices)
   await ctx.plugin(FakeTaskService)
@@ -1107,4 +1116,23 @@ test('主动消息：空闲聊天也会发到 owner 聊天（免打扰关闭时�
   })
   await waitFor(() => h.state.sent.length > 0, '主动聊天消息')
   assert.match((h.state.sent[0].blocks[0] as { text?: string }).text ?? '', /在忙吗/)
+})
+
+test('隔一阵回来：注入「最近的自己」，不靠文件交接', async () => {
+  const h = await boot({ chunks: ['在。'] })
+  h.ctx.events.emit(EVENTS.inbound, inbound('我回来了'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  const system = h.state.requests[0]!.messages[0]!
+  assert.equal(system.role, 'system')
+  assert.match(system.content, /最近的自己/)
+  assert.match(system.content, /昨天整理了笔记/)
+  assert.match(system.content, /一起完成：修好登录/)
+})
+
+test('心跳配额：每三次插一次自主活动，额度用完就停', () => {
+  assert.equal(agent.heartbeatKindFor(0, 0, 12, 3), 'chat')
+  assert.equal(agent.heartbeatKindFor(2, 0, 12, 3), 'play')
+  assert.equal(agent.heartbeatKindFor(3, 1, 12, 3), 'chat')
+  assert.equal(agent.heartbeatKindFor(12, 0, 12, 3), 'play')
+  assert.equal(agent.heartbeatKindFor(12, 3, 12, 3), null)
 })

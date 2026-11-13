@@ -62,10 +62,20 @@ export interface AgentConfig {
   randomHeartbeat?: boolean
   heartbeatMinMinutes?: number
   heartbeatMaxMinutes?: number
-  /** 0–1，掷中的概率；默认 0.6 */
-  heartbeatChance?: number
+  heartbeatWeekendMinMinutes?: number
+  heartbeatWeekendMaxMinutes?: number
+  heartbeatMaxChat?: number
+  heartbeatMaxPlay?: number
+  /** 当日花费超过这个数就不主动开口（元） */
+  heartbeatBudgetYuan?: number
   heartbeatStart?: number
   heartbeatEnd?: number
+}
+
+export function heartbeatKindFor(chat: number, play: number, maxChat: number, maxPlay: number): 'chat' | 'play' | null {
+  if (play < maxPlay && (chat % 3 === 2 || chat >= maxChat)) return 'play'
+  if (chat < maxChat) return 'chat'
+  return null
 }
 
 export const name = 'qm-agent'
@@ -457,7 +467,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
   let skillService: SkillService | undefined
   let auditService: AuditService | undefined
   let taskService: TaskService | undefined
-  let costService: { summary: () => Promise<{ text: string }> } | undefined
+  let costService: { summary: () => Promise<{ text: string; spentSinceYesterday: number | null }> } | undefined
   let scheduleService: ScheduleService | undefined
   ctx.inject(['harness'], (sub) => { harness = sub.harness })
   ctx.inject(['history'], (sub) => { historyService = sub.history })
@@ -468,7 +478,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ctx.inject(['audit'], (sub) => { auditService = sub.audit })
   ctx.inject(['task'], (sub) => { taskService = sub.task })
   ctx.inject(['schedule'], (sub) => { scheduleService = sub.schedule })
-  ctx.inject(['cost'], (sub) => { costService = (sub as unknown as { cost: { summary: () => Promise<{ text: string }> } }).cost })
+  ctx.inject(['cost'], (sub) => { costService = (sub as unknown as { cost: { summary: () => Promise<{ text: string; spentSinceYesterday: number | null }> } }).cost })
   let storeService:
     | {
         collection: (name: string) => {
@@ -507,6 +517,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
   let psycheService:
     | {
         context: () => Promise<string>
+        journals: (limit?: number) => Promise<Array<{ day: string; text: string }>>
+        relation: () => Promise<{ events: Array<{ text: string; kind: string }> }>
         writeJournal: (text: string, day?: string) => Promise<unknown>
         writeNote: (kind: 'plan' | 'review', text: string, day?: string) => Promise<unknown>
       }
@@ -715,63 +727,105 @@ export function apply(ctx: Context, config: AgentConfig): void {
     return true
   }
 
-  /** 随机心跳：2–4 小时掷一次骰子，掷中才主动开口 */
-  async function runHeartbeat(force = false): Promise<void> {
+  /** 隔一阵回来/新会话：把“最近的自己”取一次，不靠文件交接 */
+  async function buildContinuity(): Promise<string> {
+    if (!psycheService) return ''
+    const [journals, relation] = await Promise.all([
+      psycheService.journals(3).catch(() => []),
+      psycheService.relation().catch(() => ({ events: [] as Array<{ text: string; kind: string }> })),
+    ])
+    const runs = (await taskService?.list(120).catch(() => [])) ?? []
+    const open = runs
+      .filter((run) =>
+        ['proposed', 'queued', 'running', 'needs_approval', 'scheduled'].includes(run.status),
+      )
+      .slice(0, 5)
+    const lines = [
+      journals.length > 0 ? `最近日记：${journals.map((item) => `${item.day} ${item.text.slice(0, 180)}`).join('；')}` : '',
+      relation.events.length > 0
+        ? `最近共同经历：${relation.events.slice(-5).map((item) => item.text).join('；')}`
+        : '',
+      open.length > 0
+        ? `还没闭环：${open.map((run) => `${run.title}（${run.status}）`).join('；')}`
+        : '',
+    ].filter(Boolean)
+    if (lines.length === 0) return ''
+    return `【最近的自己】\n${lines.join('\n').slice(0, 800)}`
+  }
+
+  /** 心跳 v2：工作日 40–46 分钟、周末 43–49 分钟；不设空闲门槛，空输出合法 */
+  async function maybeHeartbeat(force = false): Promise<void> {
     if (config.randomHeartbeat === false || !storeService) return
-    const hour = hourOf()
-    const start = Math.min(23, Math.max(0, Number(config.heartbeatStart ?? 9)))
-    const end = Math.min(23, Math.max(0, Number(config.heartbeatEnd ?? 22)))
+    const now = new Date()
+    const hour = hourOf(now)
+    const start = Math.min(23, Math.max(0, Number(config.heartbeatStart ?? 8)))
+    const end = Math.min(23, Math.max(0, Number(config.heartbeatEnd ?? 23)))
     if (!force && (hour < start || hour >= end)) return
-    const now = Date.now()
-    const proactive = (await storeService
-      .collection('qm_proactive_state')
+    const day = dayKeyOf(now)
+    const weekday = new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, weekday: 'short' }).format(now)
+    const weekend = weekday === 'Sat' || weekday === 'Sun'
+    const min = Math.max(1, Number(weekend ? (config.heartbeatWeekendMinMinutes ?? 43) : (config.heartbeatMinMinutes ?? 40)))
+    const max = Math.max(min, Number(weekend ? (config.heartbeatWeekendMaxMinutes ?? 49) : (config.heartbeatMaxMinutes ?? 46)))
+    const state = (await storeService
+      .collection('qm_agent_heartbeat')
       .get('owner')
-      .catch(() => null)) as { last_attempt_at?: number } | null
-    if (!force && proactive?.last_attempt_at && now - proactive.last_attempt_at < 60 * 60_000) return
-    const attempt = { last_attempt_at: now }
-    if (proactive) await storeService.collection('qm_proactive_state').update('owner', attempt).catch(() => undefined)
-    else await storeService.collection('qm_proactive_state').insert({ id: 'owner', ...attempt }).catch(() => undefined)
+      .catch(() => null)) as { day?: string; chat?: number; play?: number; next_at?: number } | null
+    const chat = state?.day === day ? Number(state.chat ?? 0) : 0
+    const play = state?.day === day ? Number(state.play ?? 0) : 0
+    if (!force && state?.next_at && Date.now() < state.next_at) return
+    const next = Date.now() + (min + Math.random() * (max - min)) * 60_000
+    const row = { day, chat, play, next_at: next }
+    if (state) await storeService.collection('qm_agent_heartbeat').update('owner', row).catch(() => undefined)
+    else await storeService.collection('qm_agent_heartbeat').insert({ id: 'owner', ...row }).catch(() => undefined)
+    if (!force) {
+      const available = await harness?.available().catch(() => false)
+      if (!available) return
+      const summary = await costService?.summary().catch(() => null)
+      const spent = Number(summary?.spentSinceYesterday ?? 0)
+      if (spent >= Math.max(0, Number(config.heartbeatBudgetYuan ?? 5))) return
+    }
+    const maxChat = Math.max(1, Number(config.heartbeatMaxChat ?? 12))
+    const maxPlay = Math.max(0, Number(config.heartbeatMaxPlay ?? 3))
+    const kind = heartbeatKindFor(chat, play, maxChat, maxPlay)
+    if (!kind) return
+    const counts = { day, chat: kind === 'chat' ? chat + 1 : chat, play: kind === 'play' ? play + 1 : play, next_at: next }
+    await storeService.collection('qm_agent_heartbeat').update('owner', counts).catch(() => undefined)
+    const userState = (await storeService
+      .collection('qm_agent_user_state')
+      .get('owner')
+      .catch(() => null)) as { last_at?: number } | null
+    const idleMin = userState?.last_at ? Math.floor((Date.now() - userState.last_at) / 60_000) : 9999
+    const idleTip = idleMin < 30 ? '刚聊过没多久' : idleMin < 180 ? '隔了一阵子没说话' : '挺久没聊了'
+    const hhmm = new Intl.DateTimeFormat('en-GB', {
+      timeZone: TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(now)
+    const prompt =
+      kind === 'chat'
+        ? [
+            `（${hhmm}·系统提示，不是主人说的话。${idleTip}（约 ${idleMin} 分钟）。）`,
+            '想跟他说点什么就说，起的话头得是你自己真想说的，别为了热闹硬找话题；不想说就一个字别输出。',
+          ].join('\n')
+        : [
+            `（${hhmm}·系统提示，不是主人说的话。现在是你的自主时间。）`,
+            '翻翻最近的日记、记忆或任务，整理一件事，或者顺着一个旧话题想下去。',
+            '不用向他汇报，想讲的时候再讲；不想做就一个字别输出。',
+          ].join('\n')
     const message: InboundMessage = {
-      platformMessageId: `heartbeat_${now}`,
+      platformMessageId: `heartbeat_${now.getTime()}`,
       channel: 'web',
       accountId: 'heartbeat',
       conversation: { kind: 'dm', id: 'owner' },
       sender: { platformUserId: 'heartbeat', displayName: '青梅' },
-      blocks: [
-        {
-          type: 'text',
-          text: [
-            '【随机心跳】这是内部事件，不是主人说的话。',
-            '你现在突然想起主人，想主动说一句就说；不想说就回复"不用"。',
-            '不超过 40 字，不要提这条指令，不要汇报任务，不要列清单。',
-          ].join('\n'),
-        },
-      ],
+      blocks: [{ type: 'text', text: prompt }],
       receivedAt: new Date(),
       internal: true,
       internalKind: 'chat',
       internalForce: force,
     }
     ctx.events.emit(EVENTS.inbound, message)
-  }
-
-  /** 到点掷骰子；掷不中就只排下一次，不调模型 */
-  async function maybeHeartbeat(force = false): Promise<void> {
-    if (config.randomHeartbeat === false || !storeService) return
-    const now = Date.now()
-    const state = (await storeService
-      .collection('qm_agent_heartbeat')
-      .get('owner')
-      .catch(() => null)) as { next_at?: number } | null
-    if (!force && state?.next_at && now < state.next_at) return
-    const min = Math.max(1, Number(config.heartbeatMinMinutes ?? 120))
-    const max = Math.max(min, Number(config.heartbeatMaxMinutes ?? 240))
-    const next = now + (min + Math.random() * (max - min)) * 60_000
-    const row = { next_at: next }
-    if (state) await storeService.collection('qm_agent_heartbeat').update('owner', row).catch(() => undefined)
-    else await storeService.collection('qm_agent_heartbeat').insert({ id: 'owner', ...row }).catch(() => undefined)
-    if (!force && Math.random() > Math.min(1, Math.max(0, Number(config.heartbeatChance ?? 0.6)))) return
-    await runHeartbeat(force)
   }
 
   /** 每天一次晨间计划 / 晚间日记；用同一个 owner 会话，输出不发给用户 */
@@ -816,13 +870,21 @@ export function apply(ctx: Context, config: AgentConfig): void {
       const hour = hourOf()
       if (hour === planHour) void runRitual('plan')
       if (hour === journalHour) void runRitual('journal')
-      void maybeHeartbeat().catch(() => undefined)
     }, 10 * 60_000)
     ritualTimer.unref?.()
     ctx.effect(() => () => clearInterval(ritualTimer))
     const hour = hourOf()
     if (hour === planHour) void runRitual('plan')
     if (hour === journalHour) void runRitual('journal')
+  }
+
+  if (config.randomHeartbeat !== false) {
+    const heartbeatTimer = setInterval(() => {
+      void maybeHeartbeat().catch(() => undefined)
+    }, 60_000)
+    heartbeatTimer.unref?.()
+    ctx.effect(() => () => clearInterval(heartbeatTimer))
+    void maybeHeartbeat().catch(() => undefined)
   }
 
   ctx.effect(() =>
@@ -898,9 +960,15 @@ export function apply(ctx: Context, config: AgentConfig): void {
   async function runTurn(message: InboundMessage): Promise<void> {
     // 被审批等控制指令消费掉的消息不再进入对话回合
     if (message.handledBy) return
+    let returning = false
     if (!message.internal && storeService) {
+      const existing = (await storeService
+        .collection('qm_agent_user_state')
+        .get('owner')
+        .catch(() => null)) as { last_at?: number } | null
+      const last = Number(existing?.last_at ?? 0)
+      returning = !last || Date.now() - last > 6 * 3_600_000
       const state = { last_at: Date.now() }
-      const existing = await storeService.collection('qm_agent_user_state').get('owner').catch(() => null)
       if (existing) await storeService.collection('qm_agent_user_state').update('owner', state).catch(() => undefined)
       else await storeService.collection('qm_agent_user_state').insert({ id: 'owner', ...state }).catch(() => undefined)
     }
@@ -1122,12 +1190,14 @@ export function apply(ctx: Context, config: AgentConfig): void {
     const effectivePersona = selfPortrait?.persona?.trim() || persona
     const portraitTraits = personPortrait?.traits?.length ? `画像：${personPortrait.traits.join('、')}` : ''
     const psycheText = audience === 'owner' ? (await psycheService?.context().catch(() => '')) ?? '' : ''
+    const continuityText = returning && audience === 'owner' ? await buildContinuity() : ''
     const portraitGroupNote = groupPortrait?.rules?.note ? `群画像：${groupPortrait.rules.note}` : ''
 
     const memoryBlock = [
       profileText ? `【关于主人】\n${profileText}` : '',
       portraitTraits,
       psycheText,
+      continuityText,
       portraitGroupNote,
       activityText ? `【最近 7 天】\n${activityText}` : '',
       summaryText ? `【会话摘要】\n${summaryText}` : '',
@@ -1650,6 +1720,13 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+
+
+
+
+
 
 
 
