@@ -1,3 +1,11 @@
+### 个人自用打磨：矛盾事实、通知实测、连接测试、备份导出（2026-11-13）
+
+- 记忆矛盾：否定事实（不实/否认/不成立）会退休同主语下冲突的旧事实，`养狗/不养狗`、`杭州出差/否认` 不再同时召回；实体名拒绝 `项目「」` 和路径；50 题评估 37/43（86%）；
+- 通知实测：设置页新增「发送测试通知」，生产调用后 SSE 收到 `device-offline`，且 Feishu/QQ 各发出一条；真实离线仍是 5 分钟阈值 + 1 小时冷却；
+- 设置新增「测试模型 / 测试 Embedding」：生产 LLM 230ms、Embedding 266ms 均 200；
+- 新增 `scripts/export-backup.mjs`：VACUUM INTO 快照 + 配置/persona/更新清单 + RESTORE.md，打 tar.gz 供用户传 COS；不含 `/etc/qingmei/env`，恢复需同样 QM_TOKEN/QM_SETTINGS_KEY；
+- gate 460 绿；healthz 200。
+
 ### 自用/家人可用：设置接管 key、离线通知、记忆评估、手机与桌面升级（2026-11-13）
 
 - 新增 `qm-settings`：设置页管理 QM_LLM_* / QM_DSH_API_KEY / QM_MCP_TOKEN / QM_EMBEDDING_* / QM_FEISHU_* / QM_QQ_*；密文落库、掩码展示、保存写回 env，启动时用库覆盖 env（`settings-bootstrap.ts`）；QM_TOKEN/管理员口令仍留在 env；

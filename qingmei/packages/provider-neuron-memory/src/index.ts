@@ -407,6 +407,13 @@ export class NeuronMemory extends MemoryService {
           continue
         }
         const now = Date.now()
+        // 否定事实：把同一主语下被否定的旧事实一起退休，避免「养狗/不养狗」同时召回
+        if (isNegative(normalized.object, normalized.predicate)) {
+          const all = await this.facts.find({ where: { subject: normalized.subject, valid_to: null } })
+          for (const row of all) {
+            if (conflictsWith(row, normalized)) await this.facts.update(row.id, { valid_to: now })
+          }
+        }
         for (const row of live) await this.facts.update(row.id, { valid_to: now })
         const row = await this.facts.insert({
           subject: normalized.subject,
@@ -1508,6 +1515,20 @@ function normalize(record: MemoryRecord): MemoryRecord | null {
   }
 }
 
+function isNegative(object: string, predicate: string): boolean {
+  return /^(不实|否认|不成立|没有|不是)/.test(object) || /不|没/.test(predicate)
+}
+
+function conflictsWith(row: FactRow, negative: MemoryRecord): boolean {
+  const left = flattenForMatch(`${row.predicate}${row.object}`)
+  const right = flattenForMatch(`${negative.predicate}${negative.object}`)
+  if (!left || !right) return false
+  if (left === right) return true
+  if (negative.predicate.length >= 2 && `${row.predicate}${row.object}`.includes(negative.predicate)) return true
+  if (row.object.length >= 2 && negative.predicate.includes(row.object)) return true
+  return left.includes(right) || right.includes(left)
+}
+
 function visible(row: FactRow, audience: string): boolean {
   if (row.valid_to) return false
   if (row.sensitivity === 'secret') return false
@@ -1709,6 +1730,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
   if (normA === 0 || normB === 0) return 0
   return dot / (Math.sqrt(normA) * Math.sqrt(normB))
 }
+
 
 
 

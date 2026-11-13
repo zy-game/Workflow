@@ -688,6 +688,36 @@ export function apply(ctx: Context, config: DeviceConfig = {}): void {
   ctx.inject(['channelTargets'], (sub) => {
     targetService = sub.channelTargets as unknown as typeof targetService
   })
+
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
+      path: '/api/v1/devices/offline-test',
+      async handler(_req: GatewayRequest, res: GatewayResponse) {
+        const message = '这是一条测试通知：青梅连不上执行设备时，会这样提醒你。'
+        gateway.publish({
+          type: 'device-offline',
+          data: { at: Date.now(), queued: 0, minutes: 0, test: true, message },
+        })
+        const targets = (await targetService?.list().catch(() => [])) ?? []
+        const sent: string[] = []
+        for (const target of targets) {
+          if (target.channel === 'web') continue
+          const ok = await channelService
+            ?.send({
+              channel: target.channel as never,
+              conversationId: target.conversationId,
+              blocks: [{ type: 'text', text: message }],
+            })
+            .then(() => true)
+            .catch(() => false)
+          if (ok) sent.push(target.channel)
+        }
+        res.status(200).send({ ok: true, sent })
+      },
+    }),
+  )
+
   const notices = store.collection<{ id: string; first_at: number; last_at: number }>('qm_device_notice')
   const offlineMinutes = Math.max(1, Number(config.offlineMinutes ?? 5))
   const cooldownMs = Math.max(1, Number(config.offlineCooldownMinutes ?? 60)) * 60_000

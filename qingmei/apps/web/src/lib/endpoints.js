@@ -22,6 +22,7 @@ export const ENDPOINTS = {
   conceptRollbackBatch: './api/v1/memory/concepts/rollback-batch',
   tasks: './api/v1/tasks',
   devices: './api/v1/devices',
+  deviceOfflineTest: './api/v1/devices/offline-test',
   deviceTasks: './api/v1/devices/tasks',
   approvals: './api/v1/approvals',
   approvalDecide: './api/v1/approvals/decide',
@@ -42,6 +43,7 @@ export const ENDPOINTS = {
   costRefresh: './api/v1/cost/refresh',
   settings: './api/v1/settings',
   settingsRestart: './api/v1/settings/restart',
+  settingsTest: './api/v1/settings/test',
   // 账号运维 · 内容层（docs/18 §10）
 }
 

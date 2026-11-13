@@ -14,6 +14,8 @@ const loading = ref(false)
 const settingItems = ref([])
 const secretDrafts = ref({})
 const settingsMsg = ref('')
+const notifyMsg = ref('')
+const testMsg = ref('')
 const savingSettings = ref(false)
 
 async function load() {
@@ -56,6 +58,26 @@ async function saveSettings() {
     settingsMsg.value = err.message || '保存失败'
   } finally {
     savingSettings.value = false
+  }
+}
+
+async function testConnection(kind) {
+  testMsg.value = '测试中…'
+  try {
+    const body = await apiSend(ENDPOINTS.settingsTest, { method: 'POST', body: { kind } })
+    testMsg.value = body?.ok ? '连接正常（' + (body.latencyMs ?? 0) + 'ms）' : '连接失败：' + (body?.error ?? body?.status ?? '未知')
+  } catch (err) {
+    testMsg.value = err.message || '测试失败'
+  }
+}
+
+async function testOfflineNotice() {
+  try {
+    const body = await apiSend(ENDPOINTS.deviceOfflineTest, { method: 'POST', body: {} })
+    const channels = Array.isArray(body?.sent) && body.sent.length ? '（渠道：' + body.sent.join('、') + '）' : ''
+    notifyMsg.value = '已发送测试通知' + channels
+  } catch (err) {
+    notifyMsg.value = err.message || '测试通知发送失败'
   }
 }
 
@@ -195,9 +217,14 @@ onMounted(load)
         <button class="btn" type="button" :disabled="savingSettings" @click="saveSettings">
           {{ savingSettings ? '保存中…' : '保存密钥' }}
         </button>
+        <button class="btn ghost" type="button" @click="testConnection('llm')">测试模型</button>
+        <button class="btn ghost" type="button" @click="testConnection('embedding')">测试 Embedding</button>
+        <button class="btn ghost" type="button" @click="testOfflineNotice">发送测试通知</button>
         <button class="btn ghost" type="button" @click="restartService">重启服务</button>
       </div>
       <p v-if="settingsMsg" class="item-meta">{{ settingsMsg }}</p>
+      <p v-if="notifyMsg" class="item-meta">{{ notifyMsg }}</p>
+      <p v-if="testMsg" class="item-meta">{{ testMsg }}</p>
       <p class="item-meta">密钥输入框留空表示不修改；QM_TOKEN 和管理员口令不在这里改。</p>
     </div>
   </section>

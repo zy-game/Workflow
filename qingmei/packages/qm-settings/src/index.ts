@@ -155,6 +155,63 @@ export function apply(ctx: Context): void {
   ctx.effect(() =>
     gateway.route({
       method: 'POST',
+      path: '/api/v1/settings/test',
+      async handler(req: GatewayRequest, res: GatewayResponse) {
+        const body = (req.body ?? {}) as Record<string, unknown>
+        const kind = body.kind === 'embedding' ? 'embedding' : 'llm'
+        const started = Date.now()
+        try {
+          if (kind === 'llm') {
+            const base = (process.env.QM_LLM_BASE_URL ?? '').replace(/\/+$/, '')
+            const key = process.env.QM_LLM_KEY ?? ''
+            if (!base || !key) {
+              res.status(400).send({ ok: false, error: '模型 Base URL 或 Key 未设置' })
+              return
+            }
+            const response = await fetch(`${base}/models`, {
+              headers: { Authorization: `Bearer ${key}` },
+              signal: AbortSignal.timeout(8000),
+            })
+            res.status(response.ok ? 200 : 400).send({
+              ok: response.ok,
+              status: response.status,
+              latencyMs: Date.now() - started,
+              ...(response.ok ? {} : { error: `HTTP ${response.status}` }),
+            })
+            return
+          }
+          const url = process.env.QM_EMBEDDING_URL ?? ''
+          const key = process.env.QM_EMBEDDING_KEY ?? ''
+          const model = process.env.QM_EMBEDDING_MODEL ?? 'embedding-3'
+          if (!url || !key) {
+            res.status(400).send({ ok: false, error: 'Embedding URL 或 Key 未设置' })
+            return
+          }
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, input: ['ping'] }),
+            signal: AbortSignal.timeout(8000),
+          })
+          res.status(response.ok ? 200 : 400).send({
+            ok: response.ok,
+            status: response.status,
+            latencyMs: Date.now() - started,
+            ...(response.ok ? {} : { error: `HTTP ${response.status}` }),
+          })
+        } catch (error) {
+          res.status(400).send({
+            ok: false,
+            latencyMs: Date.now() - started,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      },
+    }),
+  )
+  ctx.effect(() =>
+    gateway.route({
+      method: 'POST',
       path: '/api/v1/settings/restart',
       async handler(req: GatewayRequest, res: GatewayResponse) {
         const body = (req.body ?? {}) as Record<string, unknown>
@@ -168,5 +225,6 @@ export function apply(ctx: Context): void {
     }),
   )
 }
+
 
 

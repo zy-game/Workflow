@@ -475,3 +475,35 @@ test('实体名清洗：路径、长句、引号、状态短语不进图', () =>
   assert.equal(cleanEntityName('青梅项目'), '青梅项目')
   assert.equal(cleanEntityName('杭州'), '杭州')
 })
+
+test('否定事实让冲突的旧事实失效，不再同时召回养狗/不养狗', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      { kind: 'fact', subject: '主人', predicate: '养', object: '狗', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+      { kind: 'fact', subject: '主人', predicate: '养狗', object: '不实：主人明确否认，主人不养狗', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+    ])
+    const facts = await ctx.memory.listFacts({ limit: 20 })
+    const dog = facts.filter((fact) => fact.subject === '主人' && `${fact.predicate}${fact.object}`.includes('狗'))
+    assert.equal(dog.length, 1, '只保留否定后的版本')
+    assert.match(`${dog[0]!.predicate}${dog[0]!.object}`, /不养狗|不实|否认/)
+  } finally {
+    await dispose()
+  }
+})
+
+test('否定下周行程会退休同主语的旧行程事实', async () => {
+  const { ctx, dispose } = await setup()
+  try {
+    await ctx.memory.ingest([
+      { kind: 'fact', subject: '主人', predicate: '下周三要去', object: '杭州出差', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+      { kind: 'fact', subject: '主人', predicate: '下周去杭州出差', object: '不成立：主人明确否认', confidence: 0.9, sensitivity: 'private', origin: ORIGIN },
+    ])
+    const facts = await ctx.memory.listFacts({ limit: 20 })
+    const travel = facts.filter((fact) => fact.subject === '主人' && `${fact.predicate}${fact.object}`.includes('杭州'))
+    assert.equal(travel.length, 1)
+    assert.match(`${travel[0]!.predicate}${travel[0]!.object}`, /不成立|否认/)
+  } finally {
+    await dispose()
+  }
+})
