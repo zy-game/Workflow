@@ -44,6 +44,8 @@ export interface PlannerConfig {
   researchMinutes?: number
   /** 规划会话的工作目录 */
   cwd?: string
+  /** 复用哪个 DSH 会话：默认就是聊天用的 owner 会话，保证只有一个脑子 */
+  sessionId?: string
 }
 
 const GOALS = 'qm_goal'
@@ -62,6 +64,7 @@ const DEFAULTS = {
   notifyConversation: 'owner',
   researchMinutes: 10,
   cwd: '',
+  sessionId: 's_owner',
 }
 
 export interface Goal {
@@ -279,7 +282,7 @@ class PlannerService extends Service {
     let raw = ''
     try {
       const cwd = this.config.cwd || process.cwd()
-      for await (const event of harness.run({ conversationId: 'planner:owner', text: prompt, cwd })) {
+      for await (const event of harness.run({ conversationId: this.config.sessionId, text: prompt, cwd })) {
         if (event.type === 'text') raw += event.text
         else if (event.type === 'error') return this.record('error', { why: event.message })
       }
@@ -417,7 +420,7 @@ function buildPrompt(input: {
     ? `刚结束的任务：\n- [${input.finished.id}] ${input.finished.status} ${input.finished.title}\n- 结果：${String(input.finished.result ?? input.finished.error ?? '').slice(0, 800)}`
     : '（没有刚结束的任务，这是一次定时规划）'
   return [
-    '你是青梅的规划器。只输出一个 JSON 对象，不要解释、不要 Markdown。',
+    '这是青梅的内部规划回合，不是和主人的聊天。只输出一个 JSON 对象，不要解释、不要 Markdown。',
     '',
     '目标（长期）：',
     goals,
@@ -624,6 +627,7 @@ export function apply(ctx: Context, config: PlannerConfig = {}): void {
     }),
   )
 }
+
 
 
 

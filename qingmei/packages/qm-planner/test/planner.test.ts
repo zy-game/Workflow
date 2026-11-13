@@ -37,14 +37,16 @@ class FakeTask extends Service {
 class FakeHarness extends Service {
   reply = '{"nextTask":null,"reminder":null,"research":null,"skip":"无事"}'
   readonly prompts: string[] = []
+  readonly conversations: string[] = []
   constructor(ctx: Context) {
     super(ctx, 'harness')
   }
   async available() {
     return true
   }
-  async *run(req: { text: string }) {
+  async *run(req: { text: string; conversationId?: string }) {
     this.prompts.push(req.text)
+    this.conversations.push(String(req.conversationId ?? ''))
     yield { type: 'text', text: this.reply }
     yield { type: 'done' }
   }
@@ -285,3 +287,14 @@ test('task-finished 用短冷却：定时冷却 60 分钟不挡任务完成触�
   }
 })
 
+
+test('单脑：规划复用 owner 会话，不再单开 planner 会话', async () => {
+  const h = await boot()
+  try {
+    h.harness.reply = JSON.stringify({ nextTask: null, reminder: null, research: null, skip: '无事' })
+    await h.planner.replan(makeRun('run_single'))
+    assert.deepEqual(h.harness.conversations, ['s_owner'])
+  } finally {
+    await h.dispose()
+  }
+})

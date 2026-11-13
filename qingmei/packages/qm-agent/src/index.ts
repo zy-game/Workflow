@@ -18,6 +18,7 @@ import {
   textOf,
   uid,
   type ChatMessage,
+  type ApprovalRequest,
   type ChannelId,
   type ChannelService,
   type GatewayService,
@@ -227,6 +228,101 @@ interface StoredMessage extends Row {
   created_at: number
 }
 
+export const ACTION_PROTOCOL = [
+  '【行动协议】',
+  '你能在回复末尾输出一个或多个行动块，行动块不会展示给用户：',
+  '<qm-action>{"kind":"task.create","title":"短标题","prompt":"给执行器的一句话任务","project":"可选的项目名"}</qm-action>',
+  '<qm-action>{"kind":"approval.request","action":"qm.plan","prompt":"要不要我帮你规划明天出行计划和路线？","reason":"用户表达了一个愿望但还没决定"}</qm-action>',
+  '判断规则：',
+  '- 用户明确要求做事（如「审查一下三国项目的进度」「把 X 查一下」）：输出 task.create；',
+  '- 用户表达模糊愿望或两难（如「明天想去看演唱会，但又想看电影」）：输出 approval.request，先问一句要不要规划；',
+  '- 普通聊天、问答、情绪表达：不要输出行动块；',
+  '- 行动块只能放在回复最后，不要在正文里解释它。',
+].join('\n')
+
+export interface AgentAction {
+  kind: 'task.create' | 'approval.request'
+  title?: string
+  prompt?: string
+  project?: string
+  action?: string
+  reason?: string
+}
+
+/** 从模型输出里抽出行动块；正文里的块会被移除 */
+export function extractActions(raw: string): { visible: string; actions: AgentAction[] } {
+  const actions: AgentAction[] = []
+  const visible = raw.replace(/<qm-action>([\s\S]*?)<\/qm-action>/g, (_match, body: string) => {
+    try {
+      const value = JSON.parse(body) as AgentAction
+      if (value?.kind === 'task.create' && typeof value.prompt === 'string' && value.prompt.trim()) {
+        actions.push(value)
+      } else if (value?.kind === 'approval.request' && typeof value.prompt === 'string' && value.prompt.trim()) {
+        actions.push(value)
+      }
+    } catch {
+      // 坏块直接丢弃，不影响正文
+    }
+    return ''
+  })
+  return { visible: visible.trim(), actions }
+}
+
+/**
+ * 流式过滤：正文照常吐，遇到 <qm-action> 就吞到 </qm-action>。
+ * 为了不让标记被拆到两个 chunk，尾巴上最多留 12 个字符不吐。
+ */
+function partialMarkerLength(text: string): number {
+  const marker = '<qm-action'
+  for (let length = Math.min(marker.length - 1, text.length); length > 0; length -= 1) {
+    if (text.endsWith(marker.slice(0, length))) return length
+  }
+  return 0
+}
+
+export class ActionFilter {
+  private buffer = ''
+  private suppressed = false
+
+  push(chunk: string): string {
+    this.buffer += chunk
+    let out = ''
+    for (;;) {
+      if (this.suppressed) {
+        const end = this.buffer.indexOf('</qm-action>')
+        if (end < 0) return out
+        this.buffer = this.buffer.slice(end + '</qm-action>'.length)
+        this.suppressed = false
+        continue
+      }
+      const start = this.buffer.indexOf('<qm-action')
+      if (start >= 0) {
+        out += this.buffer.slice(0, start)
+        this.buffer = this.buffer.slice(start)
+        const end = this.buffer.indexOf('</qm-action>')
+        if (end < 0) {
+          this.suppressed = true
+          return out
+        }
+        this.buffer = this.buffer.slice(end + '</qm-action>'.length)
+        continue
+      }
+      const hold = partialMarkerLength(this.buffer)
+      out += this.buffer.slice(0, this.buffer.length - hold)
+      this.buffer = this.buffer.slice(this.buffer.length - hold)
+      return out
+    }
+  }
+
+  finish(): string {
+    const rest = this.suppressed ? '' : this.buffer
+    this.buffer = ''
+    this.suppressed = false
+    const partial = rest.lastIndexOf('<qm-action')
+    return partial >= 0 ? rest.slice(0, partial) : rest
+  }
+}
+
 export function apply(ctx: Context, config: AgentConfig): void {
   const personaService = ctx.get('persona', false) as { current: () => { prompt: string } } | undefined
   const persona = personaService?.current().prompt || requirePersona(config)
@@ -275,6 +371,12 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ctx.inject(['devices'], (sub) => {
     deviceService = (sub as unknown as { devices: NonNullable<typeof deviceService> }).devices
   })
+  let approvalService:
+    | { create: (input: { action: string; prompt: string; requester?: string }) => Promise<{ id: string }> }
+    | undefined
+  ctx.inject(['approval'], (sub) => {
+    approvalService = (sub as unknown as { approval: NonNullable<typeof approvalService> }).approval
+  })
 
   /** 待确认的“派任务到工作区”：按会话保存一次，避免猜测 */
   const pendingDispatch = new Map<
@@ -306,6 +408,37 @@ export function apply(ctx: Context, config: AgentConfig): void {
       await channel
         .send({ channel: target.channel, conversationId: target.conversationId, blocks: [{ type: 'text', text }] })
         .catch(() => undefined)
+    })()
+  })
+
+  ctx.events.on(EVENTS.approvalDecided, (request: ApprovalRequest) => {
+    void (async () => {
+      const row = storeService
+        ? ((await storeService.collection('qm_agent_approval').get(request.id).catch(() => null)) as {
+            prompt?: string
+            session_id?: string
+          } | null)
+        : null
+      if (!row) return
+      void storeService?.collection('qm_agent_approval').delete(request.id).catch(() => undefined)
+      if (request.status !== 'allowed' || !taskService) return
+      const prompt = String(row.prompt ?? '').trim()
+      if (!prompt) return
+      const title = `规划：${prompt}`.slice(0, 60)
+      try {
+        const run = await taskService.create({
+          prompt: `为下面这个请求做一份可执行的计划（含步骤、时间、路线或取舍），给出结论：${prompt}`,
+          title,
+          target: { executorId: 'local' },
+        })
+        pendingResults.set(run.id, { channel: 'web', conversationId: 'owner', title })
+        void storeService
+          ?.collection('qm_pending_result')
+          .insert({ id: run.id, channel: 'web', conversation_id: 'owner', title, at: Date.now() })
+          .catch(() => undefined)
+      } catch {
+        // 审批通过但规划任务没建起来：下一轮对话可见
+      }
     })()
   })
 
@@ -342,11 +475,15 @@ export function apply(ctx: Context, config: AgentConfig): void {
   ): Promise<string> {
     if (!llm) throw new Error('没有可用的 LLM')
     const parts: string[] = []
+    const filter = new ActionFilter()
     for await (const chunk of llm.chat({ messages, signal })) {
       if (chunk.type === 'done') break
       parts.push(chunk.text)
-      publishChunk(sessionId, chunk.text)
+      const visible = filter.push(chunk.text)
+      if (visible) publishChunk(sessionId, visible)
     }
+    const tail = filter.finish()
+    if (tail) publishChunk(sessionId, tail)
     const text = parts.join('')
     if (text.length === 0) throw new Error('模型没有返回任何内容')
     return text
@@ -544,6 +681,7 @@ export function apply(ctx: Context, config: AgentConfig): void {
       memoryText ? `【已知记忆】\n${memoryText}` : '',
       groupNote ? `【本群规则】\n${groupNote}` : '',
       skillsText,
+      audience === 'owner' ? ACTION_PROTOCOL : '',
     ].filter(Boolean).join('\n\n')
 
     try {
@@ -557,6 +695,8 @@ export function apply(ctx: Context, config: AgentConfig): void {
       }
 
       if (mode === 'harness' && harness) {
+        let rawReply = ''
+        const filter = new ActionFilter()
         for await (const event of harness.run({
           conversationId: sessionId,
           // DSH 自己维护会话历史；把召回结果作为前缀附在这一轮输入上
@@ -564,8 +704,12 @@ export function apply(ctx: Context, config: AgentConfig): void {
           signal: controller.signal,
         })) {
           if (event.type === 'text') {
-            reply += event.text
-            publishChunk(sessionId, event.text)
+            rawReply += event.text
+            const visible = filter.push(event.text)
+            if (visible) {
+              reply += visible
+              publishChunk(sessionId, visible)
+            }
           } else if (event.type === 'tool') {
             steps += 1
           } else if (event.type === 'usage') {
@@ -575,10 +719,10 @@ export function apply(ctx: Context, config: AgentConfig): void {
             problems.push(event.message)
           }
         }
-        if (!reply) {
-          problems.push('harness 没有返回文本')
-          reply = `${FALLBACK_PREFIX}${problems[0]}`
-        }
+        reply += filter.finish()
+        const actionFailures = await executeActions(rawReply, message, sessionId)
+        if (actionFailures.length > 0) reply += `\n\n（${actionFailures.join('；')}）`
+        if (!reply.trim()) reply = '好，我这就去办。'
       } else {
         const messages: ChatMessage[] = [
           { role: 'system', content: memoryBlock ? `${persona}\n\n${memoryBlock}` : persona },
@@ -586,7 +730,11 @@ export function apply(ctx: Context, config: AgentConfig): void {
           { role: 'user', content: userText },
         ]
         if (!llm) throw new Error('没有可用的执行器：DSH 不可用且未配置 LLM')
-        reply = await streamReply(sessionId, messages, controller.signal)
+        const rawReply = await streamReply(sessionId, messages, controller.signal)
+        const parsed = extractActions(rawReply)
+        reply = parsed.visible || (parsed.actions.length > 0 ? '好，我这就去办。' : '')
+        const actionFailures = await executeActions(rawReply, message, sessionId)
+        if (actionFailures.length > 0) reply += `\n\n（${actionFailures.join('；')}）`
         steps = 1
       }
     } catch (error) {
@@ -765,6 +913,70 @@ export function apply(ctx: Context, config: AgentConfig): void {
     return matches
   }
 
+  /** 执行模型给出的行动块：明确任务直接派，模糊愿望走审批 */
+  async function executeActions(raw: string, message: InboundMessage, sessionId: string): Promise<string[]> {
+    const { actions } = extractActions(raw)
+    const failures: string[] = []
+    for (const action of actions) {
+      if (action.kind === 'task.create') {
+        if (!taskService) {
+          failures.push('任务服务未就绪')
+          continue
+        }
+        try {
+          const hint = `${action.project ?? ''} ${action.title ?? ''} ${action.prompt ?? ''}`
+          const matches = await resolveWorkspaces(hint)
+          const target =
+            matches.length === 1
+              ? { executorId: `device:${matches[0]!.deviceId}`, workspaceId: matches[0]!.workspaceId, cwd: matches[0]!.path }
+              : { executorId: 'local' }
+          const title = (action.title ?? action.prompt ?? '').slice(0, 60)
+          const run = await taskService.create({ prompt: action.prompt ?? title, title, target })
+          pendingResults.set(run.id, { channel: message.channel, conversationId: message.conversation.id, title })
+          void storeService
+            ?.collection('qm_pending_result')
+            .insert({
+              id: run.id,
+              channel: message.channel,
+              conversation_id: message.conversation.id,
+              title,
+              at: Date.now(),
+            })
+            .catch(() => undefined)
+        } catch (error) {
+          failures.push(`建任务失败：${messageOf(error)}`)
+        }
+        continue
+      }
+      if (action.kind === 'approval.request') {
+        if (!approvalService) {
+          failures.push('审批服务未就绪')
+          continue
+        }
+        try {
+          const request = await approvalService.create({
+            action: action.action ?? 'qm.plan',
+            prompt: action.prompt ?? '',
+            requester: 'owner',
+          })
+          void storeService
+            ?.collection('qm_agent_approval')
+            .insert({
+              id: request.id,
+              action: action.action ?? 'qm.plan',
+              prompt: action.prompt ?? '',
+              session_id: sessionId,
+              at: Date.now(),
+            })
+            .catch(() => undefined)
+        } catch (error) {
+          failures.push(`发审批失败：${messageOf(error)}`)
+        }
+      }
+    }
+    return failures
+  }
+
   /**
    * 项目类问题：先按工作区名解析，唯一命中就问一句确认，确认后在对应设备上派检查任务。
    * 不做项目标签、不猜多个候选；模棱两可就问。
@@ -821,6 +1033,26 @@ export function apply(ctx: Context, config: AgentConfig): void {
       return `「${value}」匹配到多个工作区：\n${list}\n请说得更具体一点（比如直接说目录名）。`
     }
     const match = matches[0]!
+    // 明确的动作（审查/检查/盘点）直接派，不再多问一句；问句仍然先确认
+    if (/(审查|检查|排查|盘点|查一下|看一下|查一查)/.test(value)) {
+      if (!taskService) return '任务服务未就绪，暂时派不出去'
+      const title = `项目检查：${match.title}`
+      try {
+        const run = await taskService.create({
+          prompt: `检查项目「${match.title}」的当前进度与最近 bug。工作区：${match.path}。查看最近的改动、测试或构建状态，给出 3 条结论和风险。`,
+          title,
+          target: { executorId: `device:${match.deviceId}`, workspaceId: match.workspaceId, cwd: match.path },
+        })
+        pendingResults.set(run.id, { channel: message.channel, conversationId: message.conversation.id, title })
+        void storeService
+          ?.collection('qm_pending_result')
+          .insert({ id: run.id, channel: message.channel, conversation_id: message.conversation.id, title, at: Date.now() })
+          .catch(() => undefined)
+        return `已派「${title}」到 ${match.path}，完成后我把结论发给你。`
+      } catch (error) {
+        return `派任务失败：${messageOf(error)}`
+      }
+    }
     pendingDispatch.set(sessionId, {
       deviceId: match.deviceId,
       workspaceId: match.workspaceId,
@@ -874,6 +1106,10 @@ function messageOf(error: unknown): string {
 
 /** 兼容 `import Agent from '@qingmei/qm-agent'` 的组合根写法 */
 export default { name, apply, inject }
+
+
+
+
 
 
 

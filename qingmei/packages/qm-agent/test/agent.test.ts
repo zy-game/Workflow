@@ -386,6 +386,16 @@ class FakeTaskService extends Service {
   }
 }
 
+class FakeApproval extends Service {
+  readonly created: any[] = []
+  constructor(ctx: Context) { super(ctx, 'approval') }
+  async create(input: any) {
+    const request = { id: 'ap_' + String(this.created.length + 1), ...input, status: 'pending' }
+    this.created.push(request)
+    return request
+  }
+}
+
 class FakeCost extends Service {
   constructor(ctx: Context) {
     super(ctx, 'cost')
@@ -416,6 +426,7 @@ async function boot(options: FakeOptions = { chunks: ['好的。'] }): Promise<H
   await ctx.plugin(fakes.FakeProfile)
   await ctx.plugin(fakes.FakeIdentity)
   await ctx.plugin(FakeCost)
+  await ctx.plugin(FakeApproval)
   await ctx.plugin(FakeDevices)
   await ctx.plugin(FakeTaskService)
   await ctx.plugin(historyPlugin)
@@ -522,12 +533,12 @@ test('一次 inbound：chunk 事件、turn/end、store 两条消息、渠道回�
     userText: '在吗',
   })
 
-  // 交给模型的上下文：system + 当前 user（无历史）
+  // 交给模型的上下文：system（人格 + 行动协议）+ 当前 user（无历史）
   assert.equal(h.state.requests.length, 1)
-  assert.deepEqual(h.state.requests[0].messages, [
-    { role: 'system', content: PERSONA },
-    { role: 'user', content: '在吗' },
-  ])
+  const [systemMessage, ...restMessages] = h.state.requests[0].messages
+  assert.match(String(systemMessage?.content), new RegExp(PERSONA))
+  assert.match(String(systemMessage?.content), /【行动协议】/)
+  assert.deepEqual(restMessages, [{ role: 'user', content: '在吗' }])
 
   // 落库：user 与 assistant 各一条，带齐 P1 约定字段（qm-history 异步写入，等它落完）
   await waitFor(() => h.state.messages().length === 2, '落库两条')
@@ -568,7 +579,8 @@ test('上下文只取本会话最近 20 条历史，并按 created_at 升序拼�
 
   const messages = h.state.requests[0].messages
   assert.equal(messages[0].role, 'system')
-  assert.equal(messages[0].content, PERSONA)
+  assert.match(String(messages[0].content), new RegExp(PERSONA))
+  assert.match(String(messages[0].content), /【行动协议】/)
 
   const history = messages.slice(1, -1)
   assert.equal(history.length, 20)
@@ -653,8 +665,10 @@ test('同一会话的两个回合串行执行，后一回合能看到前一回�
     ['一二三', '一二三'],
   )
 
-  assert.deepEqual(h.state.requests[1].messages, [
-    { role: 'system', content: PERSONA },
+  const [secondSystem, ...secondRest] = h.state.requests[1].messages
+  assert.match(String(secondSystem?.content), new RegExp(PERSONA))
+  assert.match(String(secondSystem?.content), /【行动协议】/)
+  assert.deepEqual(secondRest, [
     { role: 'user', content: '第一条' },
     { role: 'assistant', content: '一二三' },
     { role: 'user', content: '第二条' },
@@ -858,4 +872,50 @@ test('任务完成回投：映射落库，重启后也能通知', async () => {
   const text = (h.state.sent[0].blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
   assert.match(text, /三国检查/)
   assert.match(text, /发现两个 bug/)
+})
+
+test('行动块：明确任务直接建任务，正文不显示行动块', async () => {
+  const h = await boot({
+    chunks: [
+      '好，我去整理。',
+      '<qm-action>{"kind":"task.create","title":"整理资料","prompt":"整理明天出行的资料"}</qm-action>',
+    ],
+  })
+  h.ctx.events.emit(EVENTS.inbound, inbound('帮我整理一下明天出行的资料', 'owner'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  const created = (h.ctx.reflect.get('task', false) as unknown as { created: any[] }).created
+  assert.equal(created.length, 1)
+  assert.equal(created[0].title, '整理资料')
+  const text = (h.state.sent.at(-1)?.blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
+  assert.equal(text, '好，我去整理。')
+  assert.ok(!text.includes('qm-action'))
+})
+
+test('行动块：模糊愿望走审批，不直接建任务', async () => {
+  const h = await boot({
+    chunks: [
+      '听起来两个都不错。',
+      '<qm-action>{"kind":"approval.request","action":"qm.plan","prompt":"要不要我帮你规划明天出行计划和路线？"}</qm-action>',
+    ],
+  })
+  h.ctx.events.emit(EVENTS.inbound, inbound('明天想去看演唱会，但是又想去看电影', 'owner'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  const approval = (h.ctx.reflect.get('approval', false) as unknown as { created: any[] }).created
+  assert.equal(approval.length, 1)
+  assert.equal(approval[0].action, 'qm.plan')
+  const tasks = (h.ctx.reflect.get('task', false) as unknown as { created: any[] }).created
+  assert.equal(tasks.length, 0)
+  const text = (h.state.sent.at(-1)?.blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
+  assert.equal(text, '听起来两个都不错。')
+})
+
+test('明确动作：审查项目进度直接派任务，不再多问一句', async () => {
+  const h = await boot()
+  h.ctx.events.emit(EVENTS.inbound, inbound('审查一下三国的进度', 'owner'))
+  await waitFor(() => h.ends.length === 1, 'turn/end')
+  const created = (h.ctx.reflect.get('task', false) as unknown as { created: any[] }).created
+  assert.equal(created.length, 1)
+  assert.equal(created[0].target.executorId, 'device:dev-1')
+  const text = (h.state.sent.at(-1)?.blocks ?? []).map((block) => ('text' in block ? block.text : '')).join('')
+  assert.match(text, /已派/)
 })
